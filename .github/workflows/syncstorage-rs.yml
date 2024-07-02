@@ -1,0 +1,118 @@
+name: syncstorage-rs-mysql
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '5 6 * * 1'
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    env:
+      # generic variables
+      REPOSITORY_SITE: ghcr.io
+      REPOSITORY_OWNER: ${{ github.repository_owner }}
+      REPOSITORY_NAME: firefox-sync
+      SERVICE_NAME: syncstorage-rs
+      SERVICE_REPOSITORY: https://github.com/mozilla-services/syncstorage-rs
+      CHANGELOG_PATH: CHANGELOG.md
+      IMAGE_EXPIRY: 600000 # in seconds, slightly less than a week
+      IMAGE_PREFIX_TAGS: mysql-
+      # specific for this component
+      DATABASE_BACKEND: mysql
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch latest tags
+        id: get_latest_tag
+        run: |
+          latest_tag=$(git ls-remote --tags "${{ env.SERVICE_REPOSITORY }}" | grep -v '\^{}' | awk -F/ '{print $NF}' | sort -V | tail -n1)
+          echo "Latest tag: $latest_tag"
+          echo "::set-output name=tag::$latest_tag"
+
+      - name: Check if tag exists in docker repository
+        id: check_tag_exists
+        run: |
+          tag=${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
+          temporary_token=$(curl "https://${{ env.REPOSITORY_SITE }}/token?scope=${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:pull" | jq -r .token)
+          response=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${temporary_token}" \
+            "https://${{ env.REPOSITORY_SITE }}/v2/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}/manifests/${tag}")
+          echo "HTTP response code: $response"
+          if [ "$response" -eq 200 ]; then
+            echo "Tag $tag exists in docker repository."
+            echo "::set-output name=tag_exists::true"
+          else
+            echo "Tag $tag does not exist in docker repository."
+            echo "::set-output name=tag_exists::false"
+          fi
+
+      - name: Login to docker repository
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REPOSITORY_SITE }} -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull image to check timestamp
+        if: steps.check_tag_exists.outputs.tag_exists == 'true'
+        run: |
+          docker pull ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
+
+      - name: Check image age
+        id: check_image_age
+        if: steps.check_tag_exists.outputs.tag_exists == 'true'
+        run: |
+          tag=${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
+          image_creation=$(docker inspect --format='{{.Created}}' ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${tag})
+          image_timestamp=$(date -d "$image_creation" +%s)
+          current_timestamp=$(date +%s)
+          expiry_date=$(($current_timestamp - ${{ env.IMAGE_EXPIRY }}))
+          if [ "$image_timestamp" -lt "$expiry_date" ]; then
+            echo "Image is older than one week."
+            echo "::set-output name=image_old::true"
+          else
+            echo "Image is less than a week old."
+            echo "::set-output name=image_old::false"
+          fi
+
+      - name: Skip if tag exists and image is not old
+        if: steps.check_tag_exists.outputs.tag_exists == 'true' && steps.check_image_age.outputs.image_old == 'false'
+        run: echo "Tag exists and image is not old. Skipping build and push steps."
+
+      - name: Set current date as env variable
+        run: echo "NOW=$(date +'%Y%m%dT%H%M%S')" >> ${GITHUB_ENV}
+
+      - name: Clone third-party repository at the latest tag
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          git clone --depth 1 --branch ${{ steps.get_latest_tag.outputs.tag }} "${{ env.SERVICE_REPOSITORY }}" "${{ env.SERVICE_NAME }}"
+
+      - name: Build Docker image
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          docker build --build-arg DATABASE_BACKEND=${{ env.DATABASE_BACKEND }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}latest \
+                       "./${{ env.SERVICE_NAME }}"
+
+      - name: Push Docker image with version tag
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          docker image push --all-tags ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}
+
+      - name: Prepare changelog
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          sed -i -n '/<a name="${{ steps.get_latest_tag.outputs.tag }}"/,/^<a name=/ {/^<a name=/!p; /^<a name="${{ steps.get_latest_tag.outputs.tag }}"/p}' "./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
+          sed "2s/$/ - Built on ${NOW}/" -i "./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
+
+      - name: Create Release
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          name: ${{ env.SERVICE_NAME }}
+          tag: ${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ env.NOW }}-${{ steps.get_latest_tag.outputs.tag }}
+          bodyFile: ./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}

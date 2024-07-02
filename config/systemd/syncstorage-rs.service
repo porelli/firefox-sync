@@ -1,0 +1,19 @@
+[Unit]
+Description=Firefox sync server
+Requires=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+User=porelli
+Group=docker
+WorkingDirectory=/home/${HOME}/workspace/syncstorage-rs
+# Shutdown containers (if running) when unit is started
+ExecStartPre=/usr/bin/docker compose -f docker-compose.yaml down
+# Start containers when unit is started
+ExecStart=/usr/bin/docker compose -f docker-compose.yaml up
+# Stop containers when unit is stopped
+ExecStop=/usr/bin/docker compose -f docker-compose.yaml down
+
+[Install]
+WantedBy=multi-user.target
