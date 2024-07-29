@@ -11,9 +11,11 @@ The purpose of this repository is to provide a docker-compose that can be used t
 
 ## Security considerations
 
-1. ~~- syncstorage-rs does NOT support account allowlisting. This means that ANY person that has network access to your server can use it.~~ This has been implemented with a SQL trigger workaround that prevents the token database to insert more rows when a new user tries to use the server. This is tested and prevents a new account from using your server if the number of MAX_USERS defined in your .env file is already reached. Possible alternative (better) solutions:
-    - implement the feature directly in syncstorage-rs
-    - add the entire rest of the Mozilla stack so that authentication is performed and validated locally
+1. ~~- syncstorage-rs does NOT support account allowlisting. This means that ANY person that has network access to your server can use it.~~
+    - **This has been implemented with a SQL trigger workaround that prevents the token database to insert more rows when a new user tries to use the server. This is tested and prevents a new account from using your server if the number of MAX_USERS defined in your .env file is already reached.**
+    - Possible alternative (better) solutions:
+      - implement the feature directly in syncstorage-rs
+      - add the entire rest of the Mozilla stack so that authentication is performed and validated locally
 
 ## Background
 
@@ -29,20 +31,21 @@ Mozilla's server side components are open source and Firefox allows to easily ch
 ### Docker images currently published
 All the images are updated weekly to the latest tag available from Mozilla's official repositories
 - [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
-  - source: https://github.com/mozilla-services/syncstorage-rs
-  - code changes: none
-  - compile options: built to use MySQL as backend database
   - GitHub [workflow](/.github/workflows/syncstorage-rs.yml) and [logs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)
+  - [Mozilla's](https://github.com/mozilla-services/syncstorage-rs/blob/master/Dockerfile) container: [added](/syncstorage-rs/Dockerfile) MariaDB CLI client and [db_init.sh](/syncstorage-rs/db_init.sh) script
+  - source code: https://github.com/mozilla-services/syncstorage-rs
+    - code changes: none
+    - compile options: built to use MySQL as backend database
 
 ## Server setup
 
 1. clone this repositoy
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
 1. setup your reverse proxy server
-   1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs.conf) as example
+  1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs.conf) as example
 1. start docker compose: `docker compose up`
 1. OPTIONAL: Install the systemd service (see [firefox-sync.service](/config/systemd/syncstorage-rs.service)) and enable it
-   - all the containers are alredy set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
+  - all the containers are alredy set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
 
 ## Firefox setup
 
