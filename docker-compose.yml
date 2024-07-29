@@ -8,11 +8,11 @@ services:
       SYNC_HOST: 0.0.0.0
       SYNC_HUMAN_LOGS: 1
       SYNC_MASTER_SECRET: ${SYNC_MASTER_SECRET}
-      SYNC_SYNCSTORAGE__DATABASE_URL: mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@syncstorage_db:3306/syncstorage
+      SYNC_SYNCSTORAGE__DATABASE_URL: mysql://${MARIADB_SYNCSTORAGE_USER}:${MARIADB_SYNCSTORAGE_PASSWORD}@syncstorage_db:3306/syncstorage
       SYNC_TOKENSERVER__ENABLED: "true"
       SYNC_TOKENSERVER__RUN_MIGRATIONS: "true"
       SYNC_TOKENSERVER__NODE_TYPE: mysql
-      SYNC_TOKENSERVER__DATABASE_URL: mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@tokenserver_db:3306/tokenserver
+      SYNC_TOKENSERVER__DATABASE_URL: mysql://${MARIADB_TOKENSERVER_USER}:${MARIADB_TOKENSERVER_PASSWORD}@tokenserver_db:3306/tokenserver
       SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN: api.accounts.firefox.com
       SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL: https://oauth.accounts.firefox.com/v1
       SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET: ${METRICS_HASH_SECRET}
@@ -33,13 +33,13 @@ services:
       - ${CONTAINER_EXPORT_PORT}:8000
 
   syncstorage_db:
-    image: mariadb:11.4
+    image: mariadb:lts
     container_name: syncstorage-rs_db
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: syncstorage
-      MARIADB_USER: ${MARIADB_USER}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_USER: ${MARIADB_SYNCSTORAGE_USER}
+      MARIADB_PASSWORD: ${MARIADB_SYNCSTORAGE_PASSWORD}
       MARIADB_AUTO_UPGRADE: "true"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
@@ -52,13 +52,13 @@ services:
     restart: unless-stopped
 
   tokenserver_db:
-    image: mariadb:11.4
+    image: mariadb:lts
     container_name: firefox_tokenserver_db
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: tokenserver
-      MARIADB_USER: ${MARIADB_USER}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_USER: ${MARIADB_TOKENSERVER_USER}
+      MARIADB_PASSWORD: ${MARIADB_TOKENSERVER_PASSWORD}
       MARIADB_AUTO_UPGRADE: "true"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
@@ -72,34 +72,19 @@ services:
 
   tokenserver_db_init:
     container_name: firefox_tokenserver_db_init
-    image: mariadb:11.4
+    image: ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
     depends_on:
       tokenserver_db:
         condition: service_healthy
       syncstorage:
         condition: service_healthy
     restart: "no"
-    entrypoint: bash -c "
-      IS_DONE=10;
-      while [ $$IS_DONE -gt 0 ]; do
-      echo \"INSERT IGNORE INTO services (id, service, pattern) VALUES ('1', 'sync-1.5', '{node}/1.5/{uid}');
-      INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
-      VALUES ('1', '1', '${SYNCSTORAGE_DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${SYNCSTORAGE_DOMAIN}';\"|mariadb --host=firefox_tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} tokenserver;
-      RC=$$?;
-      echo \"mysql return code was $$RC\";
-      if [ $$RC == 0 ] ; then
-      IS_DONE=0;
-      echo 'Done!';
-      exit 0;
-      else
-      echo 'Waiting for tables...';
-      sleep 5;
-      ((IS_DONE--));
-      fi;
-      done;
-      echo 'Giving up, sorry';
-      exit 42;
-      "
+    environment:
+      MARIADB_DATABASE: tokenserver
+      MARIADB_USER: ${MARIADB_TOKENSERVER_USER}
+      MARIADB_PASSWORD: ${MARIADB_TOKENSERVER_PASSWORD}
+      MAX_USERS: ${MAX_USERS}
+    entrypoint: /db_init.sh
 
 volumes:
   syncstorage-db:

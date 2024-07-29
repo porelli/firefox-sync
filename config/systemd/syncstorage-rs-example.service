@@ -5,9 +5,9 @@ After=docker.service
 
 [Service]
 Restart=always
-User=porelli
+User=<DOCKER_USER>
 Group=docker
-WorkingDirectory=/home/${HOME}/workspace/syncstorage-rs
+WorkingDirectory=<COMPOSE_DIR>
 # Shutdown containers (if running) when unit is started
 ExecStartPre=/usr/bin/docker compose -f docker-compose.yaml down
 # Start containers when unit is started

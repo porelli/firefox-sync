@@ -11,9 +11,9 @@ The purpose of this repository is to provide a docker-compose that can be used t
 
 ## Security considerations
 
-- syncstorage-rs does NOT support account allowlisting. This means that ANY person that has network access to your server can use it. Possible solutions:
-  - implement the feature directly in server
-  - add the entire rest of the Mozilla stack so that authentication is performed and validated locally
+1. ~~- syncstorage-rs does NOT support account allowlisting. This means that ANY person that has network access to your server can use it.~~ This has been implemented with a SQL trigger workaround that prevents the token database to insert more rows when a new user tries to use the server. This is tested and prevents a new account from using your server if the number of MAX_USERS defined in your .env file is already reached. Possible alternative (better) solutions:
+    - implement the feature directly in syncstorage-rs
+    - add the entire rest of the Mozilla stack so that authentication is performed and validated locally
 
 ## Background
 
@@ -37,10 +37,7 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 ## Server setup
 
 1. clone this repositoy
-1. copy [.env-example](.env-example) into `.env` (including the dot at the beginning of the file)
-1. update the `.env` file
-   1. replace "REPLACE_WITH_SOMETHING_SECURE" with adequate passwords
-   1. replace "REPLACE_WITH_YOUR_DOMAIN" with the domain you own and intend to use for the syncstorage service
+1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
 1. setup your reverse proxy server
    1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs.conf) as example
 1. start docker compose: `docker compose up`
@@ -56,22 +53,25 @@ The below examples assume your server respond to this domain: `firefox-sync.exam
 ### Desktop
 
 1. point a browser tab to `about:config` and search for `identity.sync.tokenserver.uri`
-1. Change it from the default to `https://firefox-sync.example.com/1.0/sync/1.5`
-1. Log in to Firefox and start syncing.
+1. change it from the default to `https://firefox-sync.example.com/1.0/sync/1.5`
+1. log in to Firefox and start syncing.
+
+#### Debug
+1. check logs pointing a browser tab to `about:sync-log`
 
 ### Android
 
 1. go to App Menu `⋮` > `Settings` > `About Firefox` and click the logo 5 times. You should see a `debug menu enabled` notification
 1. go back to the main setting menu and you will see `Sync Debug` at the top, just under the `Syncronize and save your data` box. Tap on it
-1. Tap on `Custom Sync server` and set it to `https://firefox-sync.example.com/1.0/sync/1.5`
-1. Log in to Firefox and start syncing.
+1. tap on `Custom Sync server` and set it to `https://firefox-sync.example.com/1.0/sync/1.5`
+1. log in to Firefox and start syncing.
 
 ### iOS
 
 1. go to App Menu `≡` > `Settings` and tap 5 times on the version number (i.e.: `Firefox 127.1 (42781)`) towards the bottom
 1. go back at the top of the main setting menu and you will see `Advanced Sync Settings` at the top, just under the `Sync and Save Data`. Tap on it
-1. Activate `Use Custom FxA Content Server` and set `Custom Account Content Server URI` to `https://firefox-sync.example.com/1.0/sync/1.5`
-1. Log in to Firefox and start syncing.
+1. activate `Use Custom FxA Content Server` and set `Custom Account Content Server URI` to `https://firefox-sync.example.com/1.0/sync/1.5`
+1. log in to Firefox and start syncing.
 
 ## Credits
 - [Mozilla](https://www.mozilla.org/) for [Firefox](https://www.mozilla.org/firefox) and opensourcing all their software, incuding the backend

@@ -15,8 +15,7 @@ jobs:
     env:
       # generic variables
       REPOSITORY_SITE: ghcr.io
-      REPOSITORY_OWNER: ${{ github.repository_owner }}
-      REPOSITORY_NAME: firefox-sync
+      REPOSITORY_FULL_NAME: ${{ github.repository }}
       SERVICE_NAME: syncstorage-rs
       SERVICE_REPOSITORY: https://github.com/mozilla-services/syncstorage-rs
       CHANGELOG_PATH: CHANGELOG.md
@@ -24,6 +23,10 @@ jobs:
       IMAGE_PREFIX_TAGS: mysql-
       # specific for this component
       DATABASE_BACKEND: mysql
+
+    permissions:
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout
@@ -40,9 +43,9 @@ jobs:
         id: check_tag_exists
         run: |
           tag=${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
-          temporary_token=$(curl "https://${{ env.REPOSITORY_SITE }}/token?scope=${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:pull" | jq -r .token)
+          temporary_token=$(curl "https://${{ env.REPOSITORY_SITE }}/token?scope=${{ env.REPOSITORY_FULL_NAME }}:pull" | jq -r .token)
           response=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${temporary_token}" \
-            "https://${{ env.REPOSITORY_SITE }}/v2/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}/manifests/${tag}")
+            "https://${{ env.REPOSITORY_SITE }}/v2/${{ env.REPOSITORY_FULL_NAME }}/manifests/${tag}")
           echo "HTTP response code: $response"
           if [ "$response" -eq 200 ]; then
             echo "Tag $tag exists in docker repository."
@@ -58,14 +61,14 @@ jobs:
       - name: Pull image to check timestamp
         if: steps.check_tag_exists.outputs.tag_exists == 'true'
         run: |
-          docker pull ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
+          docker pull ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
 
       - name: Check image age
         id: check_image_age
         if: steps.check_tag_exists.outputs.tag_exists == 'true'
         run: |
           tag=${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }}
-          image_creation=$(docker inspect --format='{{.Created}}' ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${tag})
+          image_creation=$(docker inspect --format='{{.Created}}' ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${tag})
           image_timestamp=$(date -d "$image_creation" +%s)
           current_timestamp=$(date +%s)
           expiry_date=$(($current_timestamp - ${{ env.IMAGE_EXPIRY }}))
@@ -87,27 +90,35 @@ jobs:
       - name: Clone third-party repository at the latest tag
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
         run: |
-          git clone --depth 1 --branch ${{ steps.get_latest_tag.outputs.tag }} "${{ env.SERVICE_REPOSITORY }}" "${{ env.SERVICE_NAME }}"
+          mkdir mozilla-services
+          git clone --depth 1 --branch ${{ steps.get_latest_tag.outputs.tag }} "${{ env.SERVICE_REPOSITORY }}" mozilla-services/"${{ env.SERVICE_NAME }}"
 
-      - name: Build Docker image
+      - name: Build original Docker image
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
         run: |
           docker build --build-arg DATABASE_BACKEND=${{ env.DATABASE_BACKEND }} \
-                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }} \
-                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }} \
-                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}latest \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }}-original \
+                       "./mozilla-services/${{ env.SERVICE_NAME }}"
+
+      - name: Build Docker image with additional files
+        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          docker build --build-arg SYNCSTORAGE_IMAGE=${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }}-original \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}latest \
                        "./${{ env.SERVICE_NAME }}"
 
       - name: Push Docker image with version tag
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
         run: |
-          docker image push --all-tags ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_OWNER }}/${{ env.REPOSITORY_NAME }}
+          docker image push --all-tags ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}
 
       - name: Prepare changelog
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
         run: |
-          sed -i -n '/<a name="${{ steps.get_latest_tag.outputs.tag }}"/,/^<a name=/ {/^<a name=/!p; /^<a name="${{ steps.get_latest_tag.outputs.tag }}"/p}' "./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
-          sed "2s/$/ - Built on ${NOW}/" -i "./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
+          sed -i -n '/<a name="${{ steps.get_latest_tag.outputs.tag }}"/,/^<a name=/ {/^<a name=/!p; /^<a name="${{ steps.get_latest_tag.outputs.tag }}"/p}' "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
+          sed "2s/$/ - Built on ${NOW}/" -i "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}"
 
       - name: Create Release
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
@@ -115,4 +126,4 @@ jobs:
         with:
           name: ${{ env.SERVICE_NAME }}
           tag: ${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ env.NOW }}-${{ steps.get_latest_tag.outputs.tag }}
-          bodyFile: ./${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}
+          bodyFile: ./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.CHANGELOG_PATH }}
