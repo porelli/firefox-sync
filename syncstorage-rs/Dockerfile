@@ -31,7 +31,7 @@ RUN mkdir -p -m 0700 /var/lib/apt/lists/partial && \
     apt-get install -y default-mysql-client && \
     rm -rf /var/lib/apt/lists/*
 
-COPY db_init.sh /db_init.sh
+COPY --chmod=0755 db_init.sh /db_init.sh
 
 # Switch back to the original user and group
 RUN export ORIGINAL_USER=$(cat /tmp/userinfo/original_uid) && \
