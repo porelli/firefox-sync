@@ -41,6 +41,7 @@ services:
       MARIADB_USER: ${MARIADB_SYNCSTORAGE_USER}
       MARIADB_PASSWORD: ${MARIADB_SYNCSTORAGE_PASSWORD}
       MARIADB_AUTO_UPGRADE: "true"
+    command: [mariadbd, --explicit_defaults_for_timestamp]
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 10s
@@ -60,6 +61,7 @@ services:
       MARIADB_USER: ${MARIADB_TOKENSERVER_USER}
       MARIADB_PASSWORD: ${MARIADB_TOKENSERVER_PASSWORD}
       MARIADB_AUTO_UPGRADE: "true"
+    command: [mariadbd, --explicit_defaults_for_timestamp]
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 10s
