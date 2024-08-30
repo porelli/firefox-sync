@@ -86,6 +86,7 @@ services:
       MARIADB_USER: ${MARIADB_TOKENSERVER_USER}
       MARIADB_PASSWORD: ${MARIADB_TOKENSERVER_PASSWORD}
       MAX_USERS: ${MAX_USERS}
+      DOMAIN: ${SYNCSTORAGE_DOMAIN}
     entrypoint: /db_init.sh
 
 volumes:
