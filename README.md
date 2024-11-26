@@ -20,7 +20,7 @@ The purpose of this repository is to provide a docker-compose that can be used t
 ## Background
 
 Mozilla's server side components are open source and Firefox allows to easily change the official endpoints.
-[Some documentation](https://mozilla-services.readthedocs.io/en/latest/index.html) is provided to install the each component on your own server but this is neither offically supported or very well maintened. Furthermore, there are no official Docker images that can be used to avoid installing everything manually; all the instructions and artifacts provided are focused on setting up a developer environment rather than a production self hosted service. For example, `syncstorage-rs` has a [docker release on docker-hub](https://hub.docker.com/r/mozilla/syncstorage-rs/) but it is targeted to work exclusively with Google Spanner which is what Mozilla uses to provide the service.
+[Some documentation](https://mozilla-services.readthedocs.io/en/latest/index.html) is provided to install the each component on your own server but this is neither officially supported or very well maintained. Furthermore, there are no official Docker images that can be used to avoid installing everything manually; all the instructions and artifacts provided are focused on setting up a developer environment rather than a production self hosted service. For example, `syncstorage-rs` has a [docker release on docker-hub](https://hub.docker.com/r/mozilla/syncstorage-rs/) but it is targeted to work exclusively with Google Spanner which is what Mozilla uses to provide the service.
 
 ## Content and scope of this project
 - GitHub workflows to create docker images as vanilla as possible from Mozilla's code
@@ -39,13 +39,13 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 
 ## Server setup
 
-1. clone this repositoy
+1. clone this repository
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
 1. setup your reverse proxy server
     1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs.conf) as example
 1. start docker compose: `docker compose up`
 1. OPTIONAL: Install the systemd service (see [firefox-sync.service](/config/systemd/syncstorage-rs.service)) and enable it
-    - all the containers are alredy set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
+    - all the containers are already set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
 
 ## Firefox setup
 
@@ -77,5 +77,5 @@ The below examples assume your server respond to this domain: `firefox-sync.exam
 1. log in to Firefox and start syncing.
 
 ## Credits
-- [Mozilla](https://www.mozilla.org/) for [Firefox](https://www.mozilla.org/firefox) and opensourcing all their software, incuding the backend
+- [Mozilla](https://www.mozilla.org/) for [Firefox](https://www.mozilla.org/firefox) and opensourcing all their software, including the backend
 - [jeena](https://github.com/jeena) for [fxsync-docker](https://github.com/jeena/fxsync-docker) which is the inspiration for this project
