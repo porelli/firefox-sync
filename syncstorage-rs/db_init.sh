@@ -7,7 +7,7 @@ while [ ${IS_DONE} -gt 0 ]; do
         INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
         VALUES ('1', '1', '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}';" | mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
   RC=${?};
-  if [ $RC == 0 ] ; then
+  if [ ${RC} == 0 ] ; then
     IS_DONE=0;
     # setting users limit
     echo "DELIMITER //
@@ -33,7 +33,7 @@ while [ ${IS_DONE} -gt 0 ]; do
               CALL tokenserver.CheckUserLimit();
           END //
           DELIMITER ;" | mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
-    echo 'Database is correctly intialized!';
+    echo 'Database is correctly initialized!';
     current_users=`mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE} -sN -e 'SELECT COUNT(*) FROM users;'`
     echo "-----"
     echo "Current users: ${current_users}"
