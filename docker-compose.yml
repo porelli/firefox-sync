@@ -2,7 +2,6 @@ version: "3.8"
 
 services:
   syncstorage:
-    container_name: syncstorage-rs
     image: ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
     environment:
       SYNC_HOST: 0.0.0.0
@@ -34,7 +33,6 @@ services:
 
   syncstorage_db:
     image: mariadb:lts
-    container_name: syncstorage-rs_db
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: syncstorage
@@ -54,7 +52,6 @@ services:
 
   tokenserver_db:
     image: mariadb:lts
-    container_name: firefox_tokenserver_db
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: tokenserver
@@ -73,7 +70,6 @@ services:
     restart: unless-stopped
 
   tokenserver_db_init:
-    container_name: firefox_tokenserver_db_init
     image: ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
     depends_on:
       tokenserver_db:

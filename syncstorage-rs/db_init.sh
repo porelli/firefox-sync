@@ -2,11 +2,11 @@
 
 IS_DONE=10;
 # adding service info
-while [ $IS_DONE -gt 0 ]; do
+while [ ${IS_DONE} -gt 0 ]; do
   echo "INSERT IGNORE INTO services (id, service, pattern) VALUES ('1', 'sync-1.5', '{node}/1.5/{uid}');
         INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
-        VALUES ('1', '1', '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}';" | mariadb --host=firefox_tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
-  RC=$?;
+        VALUES ('1', '1', '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}';" | mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
+  RC=${?};
   if [ $RC == 0 ] ; then
     IS_DONE=0;
     # setting users limit
@@ -32,9 +32,9 @@ while [ $IS_DONE -gt 0 ]; do
           BEGIN
               CALL tokenserver.CheckUserLimit();
           END //
-          DELIMITER ;" | mariadb --host=firefox_tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
+          DELIMITER ;" | mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
     echo 'Database is correctly intialized!';
-    current_users=`mariadb --host=firefox_tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE} -sN -e 'SELECT COUNT(*) FROM users;'`
+    current_users=`mariadb --host=tokenserver_db --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE} -sN -e 'SELECT COUNT(*) FROM users;'`
     echo "-----"
     echo "Current users: ${current_users}"
     echo "Max users: ${MAX_USERS}"
