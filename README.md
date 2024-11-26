@@ -32,10 +32,16 @@ Mozilla's server side components are open source and Firefox allows to easily ch
 All the images are updated weekly to the latest tag available from Mozilla's official repositories
 - [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
     - GitHub [workflow](/.github/workflows/syncstorage-rs.yml) and [logs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)
-    - [Mozilla's](https://github.com/mozilla-services/syncstorage-rs/blob/master/Dockerfile) container: [added](/syncstorage-rs/Dockerfile) MariaDB CLI client and [db_init.sh](/syncstorage-rs/db_init.sh) script
+    - Base image: [Mozilla's](https://github.com/mozilla-services/syncstorage-rs/blob/master/Dockerfile) container
+    - Base image differences: image built with `DATABASE_BACKEND=mysql` to use the MySQL-compatible interface instead of Google Spanner
     - source code: https://github.com/mozilla-services/syncstorage-rs
         - code changes: none
-        - compile options: built to use MySQL as backend database
+- [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
+    - GitHub [workflow](/.github/workflows/syncstorage-rs.yml) and [logs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)
+    - Base image: [MariaDB's](https://github.com/MariaDB/mariadb-docker/blob/master/Dockerfile.template) container
+    - Base image differences: [added](/syncstorage-rs-init/Dockerfile) [db_init.sh](/syncstorage-rs/db_init.sh) script
+    - source code: https://github.com/MariaDB/server
+        - code changes: none
 
 ## Server setup
 
@@ -65,7 +71,7 @@ The below examples assume your server respond to this domain: `firefox-sync.exam
 ### Android
 
 1. go to App Menu `⋮` > `Settings` > `About Firefox` and click the logo 5 times. You should see a `debug menu enabled` notification
-1. go back to the main setting menu and you will see `Sync Debug` at the top, just under the `Syncronize and save your data` box. Tap on it
+1. go back to the main setting menu and you will see `Sync Debug` at the top, just under the `Synchronize and save your data` box. Tap on it
 1. tap on `Custom Sync server` and set it to `https://firefox-sync.example.com/1.0/sync/1.5`
 1. log in to Firefox and start syncing.
 

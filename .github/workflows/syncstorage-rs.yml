@@ -21,6 +21,7 @@ jobs:
       CHANGELOG_PATH: CHANGELOG.md
       IMAGE_EXPIRY: 600000 # in seconds, slightly less than a week
       IMAGE_PREFIX_TAGS: mysql-
+      SERVICE_REQUIRE_INIT: true
       # specific for this component
       DATABASE_BACKEND: mysql
 
@@ -37,7 +38,7 @@ jobs:
         run: |
           latest_tag=$(git ls-remote --tags "${{ env.SERVICE_REPOSITORY }}" | grep -v '\^{}' | awk -F/ '{print $NF}' | sort -V | tail -n1)
           echo "Latest tag: $latest_tag"
-          echo "::set-output name=tag::$latest_tag"
+          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
 
       - name: Check if tag exists in docker repository
         id: check_tag_exists
@@ -49,10 +50,10 @@ jobs:
           echo "HTTP response code: $response"
           if [ "$response" -eq 200 ]; then
             echo "Tag $tag exists in docker repository."
-            echo "::set-output name=tag_exists::true"
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
           else
             echo "Tag $tag does not exist in docker repository."
-            echo "::set-output name=tag_exists::false"
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Login to docker repository
@@ -74,10 +75,10 @@ jobs:
           expiry_date=$(($current_timestamp - ${{ env.IMAGE_EXPIRY }}))
           if [ "$image_timestamp" -lt "$expiry_date" ]; then
             echo "Image is older than one week."
-            echo "::set-output name=image_old::true"
+            echo "image_old=true" >> $GITHUB_OUTPUT
           else
             echo "Image is less than a week old."
-            echo "::set-output name=image_old::false"
+            echo "image_old=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Skip if tag exists and image is not old
@@ -93,24 +94,30 @@ jobs:
           mkdir mozilla-services
           git clone --depth 1 --branch ${{ steps.get_latest_tag.outputs.tag }} "${{ env.SERVICE_REPOSITORY }}" mozilla-services/"${{ env.SERVICE_NAME }}"
 
-      - name: Build original Docker image
+      - name: Build service Docker image
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
         run: |
           docker build --build-arg DATABASE_BACKEND=${{ env.DATABASE_BACKEND }} \
-                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }}-original \
-                       "./mozilla-services/${{ env.SERVICE_NAME }}"
-
-      - name: Build Docker image with additional files
-        if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
-        run: |
-          docker build --build-arg SYNCSTORAGE_IMAGE=${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }}-original \
                        -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${NOW}-${{ steps.get_latest_tag.outputs.tag }} \
                        -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}${{ steps.get_latest_tag.outputs.tag }} \
                        -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}latest \
-                       "./${{ env.SERVICE_NAME }}"
+                       "./mozilla-services/${{ env.SERVICE_NAME }}"
 
-      - name: Push Docker image with version tag
+      - name: Push service Docker image with version tag
         if: steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true'
+        run: |
+          docker image push --all-tags ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}
+
+      - name: Build service initialization Docker image
+        if: (steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true') && env.SERVICE_REQUIRE_INIT == 'true'
+        run: |
+          docker build -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}init-${NOW}-${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}init-${{ steps.get_latest_tag.outputs.tag }} \
+                       -t ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ env.IMAGE_PREFIX_TAGS }}init-latest \
+                       "./${{ env.SERVICE_NAME }}-init"
+
+      - name: Push service initialization Docker image with version tag
+        if: (steps.check_tag_exists.outputs.tag_exists == 'false' || steps.check_image_age.outputs.image_old == 'true') && env.SERVICE_REQUIRE_INIT == 'true'
         run: |
           docker image push --all-tags ${{ env.REPOSITORY_SITE }}/${{ env.REPOSITORY_FULL_NAME }}
 

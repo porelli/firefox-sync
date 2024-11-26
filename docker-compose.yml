@@ -1,8 +1,6 @@
-version: "3.8"
-
 services:
   syncstorage:
-    image: ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
+    image: ${REPOSITORY}:${SYNCSTORAGE_IMAGE}-${SYNCSTORAGE_IMAGE_TAG}
     environment:
       SYNC_HOST: 0.0.0.0
       SYNC_HUMAN_LOGS: 1
@@ -70,7 +68,7 @@ services:
     restart: unless-stopped
 
   tokenserver_db_init:
-    image: ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
+    image: ${REPOSITORY}:${SYNCSTORAGE_INIT_IMAGE}-${SYNCSTORAGE_INIT_IMAGE_TAG}
     depends_on:
       tokenserver_db:
         condition: service_healthy
