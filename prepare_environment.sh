@@ -22,7 +22,7 @@ MAX_USERS=${MAX_USERS:-${DEFAULT_MAX_USERS}}
 
 # docker user
 DEFAULT_DOCKER_USER=${USER}
-read -e -p "Max allowed users [${DEFAULT_DOCKER_USER}]: " DOCKER_USER
+read -e -p "Docker user [${DEFAULT_DOCKER_USER}]: " DOCKER_USER
 DOCKER_USER=${DOCKER_USER:-${DEFAULT_DOCKER_USER}}
 
 # random passwords
