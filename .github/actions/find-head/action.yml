@@ -1,0 +1,63 @@
+name: Find head
+
+inputs:
+  event_name:
+    required: true
+    type: string
+  repository_main_branch:
+    required: true
+    type: string
+
+outputs:
+  internal_commit_branch_name:
+    value: ${{ steps.checkout.outputs.internal_commit_branch_name }}
+  internal_commit_head:
+    value: ${{ steps.checkout.outputs.internal_commit_head }}
+  internal_commit_tag_present:
+    value: ${{ steps.checkout.outputs.internal_commit_tag_present }}
+  internal_commit_tag:
+    value: ${{ steps.checkout.outputs.internal_commit_tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-tags: true
+        fetch-depth: 0
+
+    - name: Handle checkout based on trigger type
+      id: checkout
+      shell: bash
+      run: |
+        if [ "${{ inputs.event_name }}" == "schedule" ]; then
+          echo "Triggered by schedule, looking for the latest tag on main branch."
+
+          # Fetch all tags from the repository
+          git fetch --tags
+
+          echo "internal_commit_branch_name=${{ inputs.repository_main_branch }}" >> ${GITHUB_OUTPUT}
+
+          # Check for the latest tag on the main branch
+          latest_tag=$(git describe --tags --abbrev=0 ${{ inputs.repository_main_branch }})
+
+          if [ -z "${latest_tag}" ]; then
+            echo "No tag found on the main branch."
+            echo "internal_commit_tag_present=true" >> ${GITHUB_OUTPUT}
+            git checkout ${latest_tag}
+          else
+            echo "Latest tag: ${latest_tag}"
+            echo "internal_commit_tag=${latest_tag}" >> ${GITHUB_OUTPUT}
+            echo "internal_commit_tag_present=false" >> ${GITHUB_OUTPUT}
+          fi
+        elif [ "${{ github.event_name }}" == "push" ]; then
+          # Check if the last commit has an associated tag
+          echo "internal_commit_branch_name=$(git rev-parse --abbrev-ref HEAD)" >> ${GITHUB_OUTPUT}
+          latest_tag=$(git describe --tags --always --exact-match || echo "")
+          echo "internal_commit_tag=${latest_tag}" >> ${GITHUB_OUTPUT}
+          echo "internal_commit_tag_present=true" >> ${GITHUB_OUTPUT}
+        fi
+
+        head=`git rev-parse HEAD`
+        echo "internal_commit_head=${head}" >> ${GITHUB_OUTPUT}

@@ -1,0 +1,41 @@
+name: Prepare image suffix
+
+inputs:
+  image_type:
+    required: true
+    type: string
+  image_tags:
+    required: true
+    type: string
+  service_tag:
+      required: false
+      type: string
+  platform_pair:
+    required: false
+    type: string
+
+outputs:
+  docker_image_name_suffix:
+    value: ${{ steps.image_name_suffix.outputs.docker_image_name_suffix }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare image suffix
+      id: image_name_suffix
+      shell: bash
+      run: |
+        platform_pair=${{ inputs.platform_pair }}
+        service_tag=${{ inputs.service_tag }}
+        case ${{ inputs.image_type }} in
+          app)
+            docker_image_name_suffix="${{ inputs.image_tags }}${service_tag:+-$service_tag}${platform_pair:+-$platform_pair}"
+            echo ${docker_image_name_suffix}
+            echo docker_image_name_suffix="${docker_image_name_suffix}" >> ${GITHUB_OUTPUT}
+            ;;
+          *)
+            docker_image_name_suffix="${{ inputs.image_tags }}-${{ inputs.image_type }}${service_tag:+-$service_tag}${platform_pair:+-$platform_pair}"
+            echo ${docker_image_name_suffix}
+            echo docker_image_name_suffix="${docker_image_name_suffix}" >> ${GITHUB_OUTPUT}
+            ;;
+        esac
