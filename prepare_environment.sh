@@ -1,5 +1,27 @@
 #!/bin/bash
 
+# Set the locale to UTF-8
+export LC_CTYPE=C
+
+generate_random_string() {
+  local length="${1}"
+  tr -dc '[:alnum:]' < /dev/urandom | head -c "${length}"
+}
+
+apply_sed() {
+    local file=${1}
+    shift
+    local expression=${@}
+
+    if [[ "${OSTYPE}" == "darwin"* ]]; then
+        # macOS: BSD sed requires an empty string with -i option
+        sed -i '' "${expression}" "${file}"
+    else
+        # Linux and other Unix-like systems: GNU sed does not require anything after -i
+        sed -i "${expression}" "${file}"
+    fi
+}
+
 # domain
 DOMAIN_EXAMPLE='firefox-sync.example.com'
 read -e -p "Enter FQDN for your Firefox sync server [${DOMAIN_EXAMPLE}]: " SYNCSTORAGE_DOMAIN
@@ -26,26 +48,32 @@ read -e -p "Docker user [${DEFAULT_DOCKER_USER}]: " DOCKER_USER
 DOCKER_USER=${DOCKER_USER:-${DEFAULT_DOCKER_USER}}
 
 # random passwords
-MARIADB_TOKENSERVER_PASSWORD=$(cat /dev/urandom | tr -dc '[:alnum:]' | head -c 24)
-MARIADB_SYNCSTORAGE_PASSWORD=$(cat /dev/urandom | tr -dc '[:alnum:]' | head -c 24)
-SYNC_MASTER_SECRET=$(cat /dev/urandom | tr -dc '[:alnum:]' | head -c 24)
-METRICS_HASH_SECRET=$(cat /dev/urandom | tr -dc '[:alnum:]' | head -c 24)
+MARIADB_TOKENSERVER_PASSWORD=$(generate_random_string 24)
+MARIADB_SYNCSTORAGE_PASSWORD=$(generate_random_string 24)
+SYNC_MASTER_SECRET=$(generate_random_string 24)
+METRICS_HASH_SECRET=$(generate_random_string 24)
 
 # prepare .env file
 cp ${SCRIPT_DIR}/.env-example ${SCRIPT_DIR}/.env
-sed -i "s|MARIADB_TOKENSERVER_PASSWORD=.*|MARIADB_TOKENSERVER_PASSWORD=${MARIADB_TOKENSERVER_PASSWORD}|" ${SCRIPT_DIR}/.env
-sed -i "s|MARIADB_SYNCSTORAGE_PASSWORD=.*|MARIADB_SYNCSTORAGE_PASSWORD=${MARIADB_SYNCSTORAGE_PASSWORD}|" ${SCRIPT_DIR}/.env
-sed -i "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER_SECRET}|" ${SCRIPT_DIR}/.env
-sed -i "s|METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=${METRICS_HASH_SECRET}|" ${SCRIPT_DIR}/.env
-sed -i "s|SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=https://${SYNCSTORAGE_DOMAIN}|" ${SCRIPT_DIR}/.env
-sed -i "s|CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=${CONTAINER_EXPORT_PORT}|" ${SCRIPT_DIR}/.env
-sed -i "s|MAX_USERS=.*|MAX_USERS=${MAX_USERS}|" ${SCRIPT_DIR}/.env
+apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_TOKENSERVER_PASSWORD=.*|MARIADB_TOKENSERVER_PASSWORD=${MARIADB_TOKENSERVER_PASSWORD}|"
+apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_SYNCSTORAGE_PASSWORD=.*|MARIADB_SYNCSTORAGE_PASSWORD=${MARIADB_SYNCSTORAGE_PASSWORD}|"
+apply_sed ${SCRIPT_DIR}/.env "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER_SECRET}|"
+apply_sed ${SCRIPT_DIR}/.env "s|METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=${METRICS_HASH_SECRET}|"
+apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=https://${SYNCSTORAGE_DOMAIN}|"
+apply_sed ${SCRIPT_DIR}/.env "s|CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=${CONTAINER_EXPORT_PORT}|"
+apply_sed ${SCRIPT_DIR}/.env "s|MAX_USERS=.*|MAX_USERS=${MAX_USERS}|"
 
 # prepare nginx example
 cp ${SCRIPT_DIR}/config/nginx/syncstorage-rs-example.conf   ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf
-sed -i "s/firefox-sync.example.com/${SYNCSTORAGE_DOMAIN}/g" ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf
+apply_sed ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf "s/firefox-sync.example.com/${SYNCSTORAGE_DOMAIN}/g"
 
-# prepare systemd example
-cp ${SCRIPT_DIR}/config/systemd/syncstorage-rs-example.service ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service
-sed -i "s|<DOCKER_USER>|${DOCKER_USER}|" ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service
-sed -i "s|<COMPOSE_DIR>|${SCRIPT_DIR}|"  ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service
+apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_TOKENSERVER_PASSWORD=.*|MARIADB_TOKENSERVER_PASSWORD=${MARIADB_TOKENSERVER_PASSWORD}|"
+apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_SYNCSTORAGE_PASSWORD=.*|MARIADB_SYNCSTORAGE_PASSWORD=${MARIADB_SYNCSTORAGE_PASSWORD}|"
+apply_sed ${SCRIPT_DIR}/.env "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER_SECRET}|"
+apply_sed ${SCRIPT_DIR}/.env "s|METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=${METRICS_HASH_SECRET}|"
+apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=https://${SYNCSTORAGE_DOMAIN}|"
+apply_sed ${SCRIPT_DIR}/.env "s|CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=${CONTAINER_EXPORT_PORT}|"
+apply_sed ${SCRIPT_DIR}/.env "s|MAX_USERS=.*|MAX_USERS=${MAX_USERS}|"
+
+apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|<DOCKER_USER>|${DOCKER_USER}|"
+apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|<COMPOSE_DIR>|${SCRIPT_DIR}|"
