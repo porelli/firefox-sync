@@ -230,6 +230,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,"name=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}",name-canonical=true,push=true
           context: ${{ steps.prepare-variables.outputs.code_dockerfile_path }}
+          build-args: |
+            DATABASE_BACKEND=${{ env.DATABASE_BACKEND }}
           cache-from: type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
           cache-to: type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }},mode=max
 
