@@ -150,12 +150,12 @@ jobs:
             app)
               echo code_repository="${{ env.SERVICE_REPOSITORY_NAME }}" >> ${GITHUB_OUTPUT}
               echo code_dockerfile_path='./' >> ${GITHUB_OUTPUT}
-              echo code_commit_head="${{ needs.prepare-env.outputs.service_tag }}"
+              echo code_commit_head="${{ needs.prepare-env.outputs.service_tag }}" >> ${GITHUB_OUTPUT}
               ;;
             *)
               echo code_repository="${{ env.REPOSITORY_FULL_NAME }}" >> ${GITHUB_OUTPUT}
               echo code_dockerfile_path="./${{ env.SERVICE_NAME }}-${{ matrix.config.image_type }}/" >> ${GITHUB_OUTPUT}
-              echo code_commit_head="${{ needs.prepare-env.outputs.internal_commit_head }}"
+              echo code_commit_head="${{ needs.prepare-env.outputs.internal_commit_head }}" >> ${GITHUB_OUTPUT}
               ;;
           esac
 
