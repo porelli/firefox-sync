@@ -48,9 +48,9 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 1. clone this repository
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
 1. setup your reverse proxy server
-    1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs.conf) as example
+    1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs-example.conf) as example
 1. start docker compose: `docker compose up`
-1. OPTIONAL: Install the systemd service (see [firefox-sync.service](/config/systemd/syncstorage-rs.service)) and enable it
+1. OPTIONAL: Install the systemd service (see [firefox-sync.service](/config/systemd/syncstorage-rs-example.service)) and enable it
     - all the containers are already set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
 
 ## Firefox setup
