@@ -2,6 +2,8 @@
 
 The purpose of this repository is to provide a docker-compose that can be used to self host what otherwise Firefox sync would send to Mozilla's servers. A Mozilla account is required to use this self-hosted setup.
 
+**🐳 Docker and 🦭 Podman supported** - See [PODMAN.md](PODMAN.md) for Podman-specific instructions, including rootless setup and Quadlet integration.
+
 ## Disclaimer
 
 - ⚠️ The project is under development
@@ -47,13 +49,37 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 
 ## Server setup
 
+### Docker / Podman Compose
+
 1. clone this repository
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
 1. setup your reverse proxy server
     1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs-example.conf) as example
-1. start docker compose: `docker compose up`
-1. OPTIONAL: Install the systemd service (see [firefox-sync.service](/config/systemd/syncstorage-rs-example.service)) and enable it
-    - all the containers are already set to restart automatically; stopping Docker (for example when you shutdown your computer) will automatically stop all the services gracefully and restart them once Docker is starting again
+1. start docker compose:
+    ```bash
+    # Docker
+    docker compose up -d
+    
+    # Podman (basic)
+    podman-compose up -d
+    
+    # Podman (with rootless optimizations)
+    podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
+    ```
+1. OPTIONAL: Install the systemd service
+    - **Docker**: See [firefox-sync.service](/config/systemd/syncstorage-rs-example.service)
+    - **Podman**: See [PODMAN.md](PODMAN.md#method-2-using-quadlets) for Quadlet setup (recommended)
+    - All containers are set to restart automatically
+
+### Podman with Quadlets (Recommended for Production)
+
+For native systemd integration with Podman, see the comprehensive [Podman Guide](PODMAN.md#method-2-using-quadlets).
+
+Quick start:
+```bash
+./prepare_environment.sh  # Choose option 2 (Quadlets) when prompted
+systemctl --user start firefox-sync-tokenserver-db-init.service
+```
 
 ## Firefox setup
 

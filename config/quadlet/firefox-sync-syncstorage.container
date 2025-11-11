@@ -1,0 +1,38 @@
+[Unit]
+Description=Firefox Sync - Syncstorage Service
+After=firefox-sync-network.service firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
+Requires=firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
+
+[Container]
+Image=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
+ContainerName=firefox-sync-syncstorage
+Network=firefox-sync-network.network
+PublishPort=%CONTAINER_EXPORT_PORT%:8000
+
+Environment=SYNC_HOST=0.0.0.0
+Environment=SYNC_HUMAN_LOGS=1
+Environment=SYNC_MASTER_SECRET=%SYNC_MASTER_SECRET%
+Environment=SYNC_SYNCSTORAGE__DATABASE_URL=mysql://%MARIADB_SYNCSTORAGE_USER%:%MARIADB_SYNCSTORAGE_PASSWORD%@firefox-sync-syncstorage-db:3306/%MARIADB_SYNCSTORAGE_DATABASE%
+Environment=SYNC_TOKENSERVER__ENABLED=true
+Environment=SYNC_TOKENSERVER__RUN_MIGRATIONS=true
+Environment=SYNC_TOKENSERVER__NODE_TYPE=mysql
+Environment=SYNC_TOKENSERVER__DATABASE_URL=mysql://%MARIADB_TOKENSERVER_USER%:%MARIADB_TOKENSERVER_PASSWORD%@firefox-sync-tokenserver-db:3306/%MARIADB_TOKENSERVER_DATABASE%
+Environment=SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN=%FXA_EMAIL_DOMAIN%
+Environment=SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL=%FXA_OAUTH_SERVER_URL%
+Environment=SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET=%METRICS_HASH_SECRET%
+Environment=SYNC_TOKENSERVER__ADDITIONAL_BLOCKING_THREADS_FOR_FXA_REQUESTS=2
+Environment=RUST_LOG=info
+
+HealthCmd=curl -f http://localhost:8000/__heartbeat__
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=5
+
+SecurityLabelDisable=true
+AutoUpdate=registry
+
+[Service]
+Restart=unless-stopped
+
+[Install]
+WantedBy=multi-user.target default.target

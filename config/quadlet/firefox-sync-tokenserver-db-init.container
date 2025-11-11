@@ -1,0 +1,27 @@
+[Unit]
+Description=Firefox Sync - Tokenserver Database Initialization
+After=firefox-sync-network.service firefox-sync-syncstorage.service
+Requires=firefox-sync-syncstorage.service
+
+[Container]
+Image=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-latest
+ContainerName=firefox-sync-tokenserver-db-init
+Network=firefox-sync-network.network
+
+Environment=MARIADB_SERVER=firefox-sync-tokenserver-db
+Environment=MARIADB_SERVER_PORT=3306
+Environment=MARIADB_DATABASE=%MARIADB_TOKENSERVER_DATABASE%
+Environment=MARIADB_USER=%MARIADB_TOKENSERVER_USER%
+Environment=MARIADB_PASSWORD=%MARIADB_TOKENSERVER_PASSWORD%
+Environment=MAX_USERS=%MAX_USERS%
+Environment=DOMAIN=%SYNCSTORAGE_DOMAIN%
+
+SecurityLabelDisable=true
+AutoUpdate=registry
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target default.target
