@@ -1,6 +1,6 @@
 # firefox-sync
 
-The purpose of this repository is to provide a docker-compose that can be used to self host what otherwise Firefox sync would send to Mozilla's servers.
+The purpose of this repository is to provide a docker-compose that can be used to self host what otherwise Firefox sync would send to Mozilla's servers. A Mozilla account is required to use this self-hosted setup.
 
 ## Disclaimer
 
@@ -27,6 +27,7 @@ Mozilla's server side components are open source and Firefox allows to easily ch
 - Docker compose to setup required component to self host Mozilla sync components
 - examples to configure other parts of the infrastructure
 - instructions to setup your browser to use the self hosted infrastructure
+- run [Mozilla accounts (fxa)](https://github.com/mozilla/fxa), is out of scope. You will need to use the Mozilla's servers to authenticate or setup your own ([example](https://github.com/jackyzy823/fxa-selfhosting))
 
 ### Docker images currently published
 All the images are updated weekly to the latest tag available from Mozilla's official repositories
