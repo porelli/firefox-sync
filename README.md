@@ -40,7 +40,8 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 - [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
     - GitHub [workflow](/.github/workflows/syncstorage-rs.yml) and [logs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)
     - Base image: [MariaDB's](https://github.com/MariaDB/mariadb-docker/blob/master/Dockerfile.template) container
-    - Base image differences: [added](/syncstorage-rs-init/Dockerfile) [db_init.sh](/syncstorage-rs-init/db_init.sh) script
+    - Purpose: Post-migration database initialization and handling of MAX_USERS
+    - Base image differences: [added](/syncstorage-rs-init/Dockerfile) [`db_init.sh`](/syncstorage-rs-init/db_init.sh) and [`db_init.sql`](/syncstorage-rs-init/db_init.sql) scripts
     - source code: https://github.com/MariaDB/server
         - code changes: none
 

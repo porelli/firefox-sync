@@ -1,50 +1,144 @@
 #!/bin/bash
+set -e  # Exit on error
+set -u  # Exit on undefined variable
 
-IS_DONE=10;
-# adding service info
-while [ ${IS_DONE} -gt 0 ]; do
-  echo "INSERT IGNORE INTO services (id, service, pattern) VALUES ('1', 'sync-1.5', '{node}/1.5/{uid}');
-        INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
-        VALUES ('1', '1', '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}';" | mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
-  RC=${?};
-  if [ ${RC} == 0 ] ; then
-    IS_DONE=0;
-    # setting users limit
-    echo "DELIMITER //
-          DROP PROCEDURE IF EXISTS tokenserver.CheckUserLimit;
-          CREATE PROCEDURE tokenserver.CheckUserLimit()
-          BEGIN
-              DECLARE user_count INT;
-              DECLARE max_users INT DEFAULT 0;
-              SELECT COUNT(*) INTO user_count FROM tokenserver.users;
-              SET max_users = ${MAX_USERS};
-              IF user_count >= max_users THEN
-                  SIGNAL SQLSTATE '45000'
-                  SET MESSAGE_TEXT = 'User limit exceeded';
-              END IF;
-          END //
-          DELIMITER ;
-          DELIMITER //
-          DROP TRIGGER IF EXISTS tokenserver.BeforeInsertUser;
-          CREATE TRIGGER tokenserver.BeforeInsertUser
-          BEFORE INSERT ON tokenserver.users
-          FOR EACH ROW
-          BEGIN
-              CALL tokenserver.CheckUserLimit();
-          END //
-          DELIMITER ;" | mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
-    echo 'Database is correctly initialized!';
-    current_users=`mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE} -sN -e 'SELECT COUNT(*) FROM users;'`
-    echo "-----"
-    echo "Current users: ${current_users}"
-    echo "Max users: ${MAX_USERS}"
-    echo "-----"
-    exit 0;
-  else
-    echo 'Waiting for tables...';
-    sleep 5;
-    ((IS_DONE--));
-  fi;
-done;
-echo 'Giving up, sorry';
-exit 42;
+# Configuration
+readonly MAX_WAIT=120  # Wait up to 2 minutes
+readonly SLEEP_INTERVAL=2
+readonly REQUIRED_TABLES=("users" "services" "nodes")
+readonly SQL_TEMPLATE="/scripts/db_init.sql"
+readonly SQL_FILE="/tmp/db_init_processed.sql"
+
+echo "=========================================="
+echo "Firefox Sync Database Initialization"
+echo "=========================================="
+echo "Domain: ${DOMAIN}"
+echo "Max Users: ${MAX_USERS}"
+echo "Database: ${MARIADB_DATABASE}"
+echo "=========================================="
+
+# Function to check if database is accessible
+check_db_connection() {
+  mariadb --host="${MARIADB_SERVER}" \
+          --port="${MARIADB_SERVER_PORT}" \
+          --user="${MARIADB_USER}" \
+          --password="${MARIADB_PASSWORD}" \
+          --connect-timeout=5 \
+          -e "SELECT 1;" >/dev/null 2>&1
+}
+
+# Function to check if a table exists
+table_exists() {
+  local table_name="$1"
+  local count
+  count=$(mariadb --host="${MARIADB_SERVER}" \
+                   --port="${MARIADB_SERVER_PORT}" \
+                   --user="${MARIADB_USER}" \
+                   --password="${MARIADB_PASSWORD}" \
+                   "${MARIADB_DATABASE}" \
+                   -sN \
+                   -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MARIADB_DATABASE}' AND table_name='${table_name}';" 2>/dev/null || echo "0")
+  [ "${count}" = "1" ]
+}
+
+# Wait for database connection
+echo "Checking database connection..."
+WAIT_COUNT=0
+while [ ${WAIT_COUNT} -lt ${MAX_WAIT} ]; do
+  if check_db_connection; then
+    echo "✓ Database connection established!"
+    break
+  fi
+  echo "  Waiting for database... (${WAIT_COUNT}/${MAX_WAIT}s)"
+  sleep ${SLEEP_INTERVAL}
+  ((WAIT_COUNT+=SLEEP_INTERVAL))
+done
+
+if [ ${WAIT_COUNT} -ge ${MAX_WAIT} ]; then
+  echo "✗ ERROR: Timeout waiting for database connection"
+  exit 1
+fi
+
+# Wait for required tables to be created by syncstorage migrations
+echo ""
+echo "Waiting for syncstorage migrations to create tables..."
+WAIT_COUNT=0
+
+while [ ${WAIT_COUNT} -lt ${MAX_WAIT} ]; do
+  all_tables_exist=true
+  missing_tables=""
+  
+  for table in "${REQUIRED_TABLES[@]}"; do
+    if ! table_exists "${table}"; then
+      all_tables_exist=false
+      missing_tables="${missing_tables} ${table}"
+    fi
+  done
+  
+  if [ "${all_tables_exist}" = true ]; then
+    echo "✓ All required tables found!"
+    break
+  fi
+  
+  echo "  Missing tables:${missing_tables} (${WAIT_COUNT}/${MAX_WAIT}s)"
+  sleep ${SLEEP_INTERVAL}
+  ((WAIT_COUNT+=SLEEP_INTERVAL))
+done
+
+if [ ${WAIT_COUNT} -ge ${MAX_WAIT} ]; then
+  echo "✗ ERROR: Timeout waiting for tables to be created"
+  echo "  Missing tables:${missing_tables}"
+  exit 1
+fi
+
+# Process SQL template with environment variables
+echo ""
+echo "Processing SQL template..."
+sed -e "s|@DOMAIN@|${DOMAIN}|g" \
+    -e "s|@MAX_USERS@|${MAX_USERS}|g" \
+    "${SQL_TEMPLATE}" > "${SQL_FILE}"
+
+# Apply SQL initialization
+echo "Applying database initialization..."
+if mariadb --host="${MARIADB_SERVER}" \
+           --port="${MARIADB_SERVER_PORT}" \
+           --user="${MARIADB_USER}" \
+           --password="${MARIADB_PASSWORD}" \
+           "${MARIADB_DATABASE}" < "${SQL_FILE}"; then
+  echo "✓ SQL initialization completed successfully!"
+else
+  echo "✗ ERROR: Failed to apply SQL initialization"
+  exit 1
+fi
+
+# Display current status
+current_users=$(mariadb --host="${MARIADB_SERVER}" \
+                        --port="${MARIADB_SERVER_PORT}" \
+                        --user="${MARIADB_USER}" \
+                        --password="${MARIADB_PASSWORD}" \
+                        "${MARIADB_DATABASE}" \
+                        -sN \
+                        -e 'SELECT COUNT(*) FROM users;')
+
+max_users_in_db=$(mariadb --host="${MARIADB_SERVER}" \
+                           --port="${MARIADB_SERVER_PORT}" \
+                           --user="${MARIADB_USER}" \
+                           --password="${MARIADB_PASSWORD}" \
+                           "${MARIADB_DATABASE}" \
+                           -sN \
+                           -e "SELECT config_value FROM config WHERE config_key='max_users';")
+
+echo ""
+echo "=========================================="
+echo "✓ Database initialization completed!"
+echo "=========================================="
+echo "Current users: ${current_users}"
+echo "Max users (configured): ${max_users_in_db}"
+echo "Domain: ${DOMAIN}"
+echo ""
+echo "Note: To change max_users, update MAX_USERS"
+echo "in .env and restart the init container:"
+echo "  docker compose up tokenserver_db_init"
+echo "=========================================="
+
+exit 0
