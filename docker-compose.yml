@@ -83,7 +83,6 @@ services:
       MARIADB_PASSWORD: ${MARIADB_TOKENSERVER_PASSWORD}
       MAX_USERS: ${MAX_USERS}
       DOMAIN: ${SYNCSTORAGE_DOMAIN}
-    entrypoint: /db_init.sh
 
 volumes:
   syncstorage-db:
