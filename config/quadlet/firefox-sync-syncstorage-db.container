@@ -1,0 +1,32 @@
+[Unit]
+Description=Firefox Sync - Syncstorage Database
+After=firefox-sync-network.service firefox-sync-syncstorage-db.service
+
+[Container]
+Image=docker.io/library/mariadb:lts
+ContainerName=firefox-sync-syncstorage-db
+Network=firefox-sync-network.network
+Volume=firefox-sync-syncstorage-db.volume:/var/lib/mysql
+
+Environment=MARIADB_RANDOM_ROOT_PASSWORD=true
+Environment=MARIADB_DATABASE=%MARIADB_SYNCSTORAGE_DATABASE%
+Environment=MARIADB_USER=%MARIADB_SYNCSTORAGE_USER%
+Environment=MARIADB_PASSWORD=%MARIADB_SYNCSTORAGE_PASSWORD%
+Environment=MARIADB_AUTO_UPGRADE=true
+
+Exec=mariadbd --explicit_defaults_for_timestamp
+
+HealthCmd=healthcheck.sh --connect --innodb_initialized
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+
+SecurityLabelDisable=true
+AutoUpdate=registry
+
+[Service]
+Restart=unless-stopped
+
+[Install]
+WantedBy=multi-user.target default.target
