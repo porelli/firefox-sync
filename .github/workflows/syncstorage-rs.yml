@@ -211,14 +211,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      #############################################################################################################################
-      ## non-amd64 is not natively supported in syncstorage-rs, see https://github.com/mozilla-services/syncstorage-rs/pull/1635 ##
-      #############################################################################################################################
-      - name: Replace MySQL client with MariaDB client where architecture is not supported
-        if: steps.prepare-variables.outputs.code_repository == 'mozilla-services/syncstorage-rs' && steps.prepare-variables.outputs.docker_architecture != 'amd64'
-        run: |
-          sed -i 's/libmysqlclient-dev/libmariadb-dev-compat libmariadb-dev/g' "./Dockerfile"
-
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
