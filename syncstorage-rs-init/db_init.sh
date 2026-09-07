@@ -3,9 +3,9 @@
 IS_DONE=10;
 # adding service info
 while [ ${IS_DONE} -gt 0 ]; do
-  echo "INSERT IGNORE INTO services (id, service, pattern) VALUES ('1', 'sync-1.5', '{node}/1.5/{uid}');
+  echo "INSERT INTO services (service, pattern) SELECT 'sync-1.5', '{node}/1.5/{uid}' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM services WHERE service = 'sync-1.5');
         INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
-        VALUES ('1', '1', '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}';" | mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
+        VALUES ('1', (SELECT id FROM services WHERE service = 'sync-1.5'), '${DOMAIN}', '1', '0', '5', '0', '0') ON DUPLICATE KEY UPDATE node='${DOMAIN}', service=(SELECT id FROM services WHERE service = 'sync-1.5');" | mariadb --host="${MARIADB_SERVER}" --port="${MARIADB_SERVER_PORT}" --user="${MARIADB_USER}" --password="${MARIADB_PASSWORD}" "${MARIADB_DATABASE}";
   RC=${?};
   if [ ${RC} == 0 ] ; then
     IS_DONE=0;
@@ -32,9 +32,9 @@ while [ ${IS_DONE} -gt 0 ]; do
           BEGIN
               CALL tokenserver.CheckUserLimit();
           END //
-          DELIMITER ;" | mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE};
+          DELIMITER ;" | mariadb --host="${MARIADB_SERVER}" --port="${MARIADB_SERVER_PORT}" --user="${MARIADB_USER}" --password="${MARIADB_PASSWORD}" "${MARIADB_DATABASE}";
     echo 'Database is correctly initialized!';
-    current_users=`mariadb --host=${MARIADB_SERVER} --port=${MARIADB_SERVER_PORT} --user=${MARIADB_USER} --password=${MARIADB_PASSWORD} ${MARIADB_DATABASE} -sN -e 'SELECT COUNT(*) FROM users;'`
+    current_users=$(mariadb --host="${MARIADB_SERVER}" --port="${MARIADB_SERVER_PORT}" --user="${MARIADB_USER}" --password="${MARIADB_PASSWORD}" "${MARIADB_DATABASE}" -sN -e 'SELECT COUNT(*) FROM users;')
     echo "-----"
     echo "Current users: ${current_users}"
     echo "Max users: ${MAX_USERS}"
