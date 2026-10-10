@@ -8,14 +8,9 @@ CREATE TABLE IF NOT EXISTS config (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- Add service info (idempotent)
-INSERT IGNORE INTO services (id, service, pattern) 
-VALUES ('1', 'sync-1.5', '{node}/1.5/{uid}');
-
--- Add/update node info (idempotent)
-INSERT INTO nodes (id, service, node, available, current_load, capacity, downed, backoff)
-VALUES ('1', '1', '@DOMAIN@', '1', '0', '5', '0', '0') 
-ON DUPLICATE KEY UPDATE node='@DOMAIN@';
+-- The sync-1.5 service and the node for @DOMAIN@ are created by syncstorage-rs
+-- itself (tokenserver migrations and SYNC_TOKENSERVER__INIT_NODE_URL).
+-- Do not hardcode their ids here: on fresh databases sync-1.5 is not id 1.
 
 -- Update MAX_USERS configuration (always update to current value)
 INSERT INTO config (config_key, config_value) 
