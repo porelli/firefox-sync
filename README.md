@@ -91,7 +91,7 @@ For native systemd integration with Podman, see the comprehensive [Podman Guide]
 Quick start:
 ```bash
 ./prepare_environment.sh  # Choose option 2 (Quadlets) when prompted
-systemctl --user start firefox-sync-tokenserver-db-init.service
+systemctl --user start firefox-sync-syncstorage.service
 ```
 
 ## Firefox setup

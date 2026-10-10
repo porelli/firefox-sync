@@ -28,15 +28,18 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        /app/bin/syncserver &
-        pid=$$!
+        pid=
         for i in $$(seq 1 120); do
+          # (re)start syncstorage-rs until the databases accept connections
+          if [ -z "$$pid" ] || ! kill -0 $$pid 2> /dev/null; then
+            /app/bin/syncserver &
+            pid=$$!
+          fi
           if curl -sf http://localhost:8000/__heartbeat__ > /dev/null; then
             kill $$pid; wait $$pid
             echo "Migrations completed"
             exit 0
           fi
-          kill -0 $$pid 2> /dev/null || exit 1
           sleep 1
         done
         echo "Timeout waiting for syncstorage-rs to start"

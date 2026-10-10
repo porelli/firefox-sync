@@ -1,7 +1,7 @@
 [Unit]
 Description=Firefox Sync - Syncstorage Service
-After=firefox-sync-network.service firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
-Requires=firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
+After=firefox-sync-network.service firefox-sync-tokenserver-db-init.service
+Requires=firefox-sync-tokenserver-db-init.service
 
 [Container]
 Image=%REPOSITORY%:%SYNCSTORAGE_IMAGE%-%SYNCSTORAGE_IMAGE_TAG%
@@ -29,7 +29,6 @@ HealthInterval=30s
 HealthTimeout=10s
 HealthRetries=5
 
-SecurityLabelDisable=true
 AutoUpdate=registry
 
 [Service]

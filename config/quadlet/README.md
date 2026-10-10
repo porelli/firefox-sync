@@ -22,11 +22,12 @@ Quadlets are systemd unit files that Podman automatically converts into containe
 ### Containers
 - `firefox-sync-syncstorage-db.container` - Syncstorage MariaDB database
 - `firefox-sync-tokenserver-db.container` - Tokenserver MariaDB database
-- `firefox-sync-syncstorage.container` - Main Firefox Sync service
-- `firefox-sync-tokenserver-db-init.container` - Database initialization (runs once)
+- `firefox-sync-syncstorage-migrate.container` - Database migrations, without exposing the service (runs once)
+- `firefox-sync-tokenserver-db-init.container` - Database initialization and MAX_USERS (runs once, after the migrations)
+- `firefox-sync-syncstorage.container` - Main Firefox Sync service (starts only after the init succeeded)
 
 ### Setup Script
-- `setup-quadlets.sh` - Automated setup script that:
+- `../../prepare_environment.sh` (choose Quadlets) - Automated setup that:
   - Copies files to `~/.config/containers/systemd/`
   - Replaces environment variables from your `.env` file
   - Reloads systemd
@@ -41,18 +42,13 @@ Quadlets are systemd unit files that Podman automatically converts into containe
    
    The script will automatically set up quadlets for you.
 
-2. Start the services:
+2. Start the services (dependencies are started automatically):
    ```bash
-   systemctl --user start firefox-sync-tokenserver-db-init.service
+   systemctl --user start firefox-sync-syncstorage.service
    ```
 
-3. Enable services to start on boot:
-   ```bash
-   systemctl --user enable firefox-sync-syncstorage.service
-   systemctl --user enable firefox-sync-syncstorage-db.service
-   systemctl --user enable firefox-sync-tokenserver-db.service
-   systemctl --user enable firefox-sync-tokenserver-db-init.service
-   ```
+3. Services start on boot automatically through their `[Install]` section
+   (quadlets are generated units and cannot be enabled with `systemctl enable`)
 
 4. (Optional) Enable lingering to start services without login:
    ```bash
@@ -103,7 +99,7 @@ If you need to change settings (like MAX_USERS):
    Choose option 2 (Quadlets) again when prompted
 3. Restart the affected services:
    ```bash
-   systemctl --user restart firefox-sync-tokenserver-db-init.service
+   systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-syncstorage.service
    ```
 
 ## Automatic Updates
@@ -172,7 +168,7 @@ For rootless Podman, ensure:
 
 If port 5000 (or your configured port) is in use:
 1. Edit `.env` and change `CONTAINER_EXPORT_PORT`
-2. Re-run `./setup-quadlets.sh`
+2. Re-run `./prepare_environment.sh` from the project root
 3. Restart services
 
 ## Advanced Configuration
@@ -182,13 +178,8 @@ If port 5000 (or your configured port) is in use:
 By default, quadlets are installed to `~/.config/containers/systemd/`. To use a different location:
 
 ```bash
-# System-wide (requires root)
-sudo cp *.{network,volume,container} /etc/containers/systemd/
-sudo systemctl daemon-reload
-
-# Custom user location
-export QUADLET_DIR=/path/to/custom/location
-./setup-quadlets.sh
+# Custom location (from the project root)
+QUADLET_DIR=/path/to/custom/location ./prepare_environment.sh
 ```
 
 ### Resource Limits
