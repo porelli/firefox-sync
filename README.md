@@ -94,6 +94,14 @@ Quick start:
 systemctl --user start firefox-sync-syncstorage.service
 ```
 
+## Tests
+
+Every image build runs the tests in [tests/](/tests) before the multi-arch tags (e.g. `syncstorage-rs-mysql-latest`) are published:
+- [`tests/e2e.sh`](/tests/e2e.sh) `<mysql|postgres>`: starts the docker compose stack and checks start-up order, MAX_USERS, domain changes, a Firefox-like sign-in and sync through the tokenserver ([`test_client_flow.py`](/tests/test_client_flow.py), using upstream's mock FxA server) and runs upstream's storage and tokenserver integration tests
+- [`tests/podman.sh`](/tests/podman.sh): rootless podman-compose and quadlets, configured with `prepare_environment.sh`
+
+Both can be run locally against any published tag, e.g. `TAG=latest tests/e2e.sh mysql`.
+
 ## Firefox setup
 
 **Pre-requisite**: if you already logged into your Firefox account you need to temporarily disconnect it
