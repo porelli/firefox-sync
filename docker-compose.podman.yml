@@ -9,10 +9,7 @@ services:
       timeout: 15s
       retries: 5
       start_period: 30s
-    # Add security options for rootless
-    security_opt:
-      - label=disable
-    
+
   syncstorage_db:
     # Increase healthcheck timing for rootless environments
     healthcheck:
@@ -20,12 +17,9 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-    # Add security options for rootless
-    security_opt:
-      - label=disable
     # Ensure proper permissions for rootless volumes
     userns_mode: "keep-id"
-    
+
   tokenserver_db:
     # Increase healthcheck timing for rootless environments
     healthcheck:
@@ -33,13 +27,5 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-    # Add security options for rootless
-    security_opt:
-      - label=disable
     # Ensure proper permissions for rootless volumes
     userns_mode: "keep-id"
-    
-  tokenserver_db_init:
-    # Add security options for rootless
-    security_opt:
-      - label=disable

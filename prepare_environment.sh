@@ -153,7 +153,7 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
     echo ""
     echo "Setting up Podman Quadlets..."
     
-    QUADLET_DIR="${HOME}/.config/containers/systemd"
+    QUADLET_DIR="${QUADLET_DIR:-${HOME}/.config/containers/systemd}"
 
     # load the generated values (database names, users, FxA endpoints, etc.)
     set -a
@@ -217,9 +217,8 @@ echo ""
 
 if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
     echo "Next steps for Quadlet deployment:"
-    echo "  1. systemctl --user start firefox-sync-tokenserver-db-init.service"
-    echo "  2. systemctl --user enable firefox-sync-syncstorage.service"
-    echo "  3. (Optional) loginctl enable-linger \$USER"
+    echo "  1. systemctl --user start firefox-sync-syncstorage.service"
+    echo "  2. (Optional) loginctl enable-linger \$USER"
     echo ""
     echo "To check status:"
     echo "  systemctl --user status firefox-sync-syncstorage.service"

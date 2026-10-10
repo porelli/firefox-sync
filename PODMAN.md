@@ -38,7 +38,7 @@ This project has been specifically optimized for rootless podman environments:
 
 - **Slower Startup**: Rootless containers may start slower than rootful ones
 - **Volume Permissions**: Handled automatically with `userns_mode: keep-id`
-- **SELinux**: Disabled via `security_opt: label=disable` in podman override file
+- **SELinux**: Labels stay enabled. Only named volumes are used, and Podman labels them automatically
 
 ## Installation Methods
 
@@ -135,20 +135,12 @@ Quadlets are systemd unit files that Podman converts into container configuratio
 
 2. Start the services:
    ```bash
-   # Start all services (init will start dependencies automatically)
-   systemctl --user start firefox-sync-tokenserver-db-init.service
-   
-   # Or start individual services
+   # Starts the databases, the migrations and the init first, then the service
    systemctl --user start firefox-sync-syncstorage.service
    ```
 
-3. Enable services to start on boot:
-   ```bash
-   systemctl --user enable firefox-sync-syncstorage.service
-   systemctl --user enable firefox-sync-syncstorage-db.service
-   systemctl --user enable firefox-sync-tokenserver-db.service
-   systemctl --user enable firefox-sync-tokenserver-db-init.service
-   ```
+3. Services start on boot automatically (quadlets are generated units and cannot be
+   enabled with `systemctl enable`, the `[Install]` section takes care of it)
 
 5. Enable lingering (optional - allows services to start without login):
    ```bash
@@ -187,9 +179,9 @@ To update MAX_USERS or other settings:
    ./prepare_environment.sh
    ```
    Or manually update quadlets by re-running with the same answers
-3. Restart the init service:
+3. Restart the service (this also re-runs the migrations and the init):
    ```bash
-   systemctl --user restart firefox-sync-tokenserver-db-init.service
+   systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-syncstorage.service
    ```
 
 ## Troubleshooting

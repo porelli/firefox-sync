@@ -1,6 +1,6 @@
 [Unit]
 Description=Firefox Sync - Tokenserver Database
-After=firefox-sync-network.service firefox-sync-tokenserver-db.service
+After=firefox-sync-network.service
 
 [Container]
 Image=docker.io/library/mariadb:lts
@@ -22,7 +22,6 @@ HealthTimeout=5s
 HealthRetries=3
 HealthStartPeriod=10s
 
-SecurityLabelDisable=true
 AutoUpdate=registry
 
 [Service]
