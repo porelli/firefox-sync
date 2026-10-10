@@ -12,6 +12,25 @@ CREATE TABLE IF NOT EXISTS config (
 -- itself (tokenserver migrations and SYNC_TOKENSERVER__INIT_NODE_URL).
 -- Do not hardcode their ids here: on fresh databases sync-1.5 is not id 1.
 
+-- Keep a single sync node. If SYNCSTORAGE_DOMAIN changed, syncstorage-rs added a
+-- node for the new domain but the old one is still in rotation and its users still
+-- point to it: move them to the current node and take the old nodes out
+UPDATE nodes n
+JOIN services s ON s.service = 'sync-1.5' AND n.service = s.id
+SET n.downed = 0, n.available = n.capacity
+WHERE n.node = '@DOMAIN@' AND n.downed = 1;
+
+UPDATE users u
+JOIN services s ON s.service = 'sync-1.5' AND u.service = s.id
+JOIN nodes n ON n.service = s.id AND n.node = '@DOMAIN@'
+SET u.nodeid = n.id
+WHERE u.nodeid <> n.id;
+
+UPDATE nodes n
+JOIN services s ON s.service = 'sync-1.5' AND n.service = s.id
+SET n.available = 0, n.downed = 1
+WHERE n.node <> '@DOMAIN@';
+
 -- Update MAX_USERS configuration (always update to current value)
 INSERT INTO config (config_key, config_value) 
 VALUES ('max_users', '@MAX_USERS@')
