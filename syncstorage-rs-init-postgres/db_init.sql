@@ -9,6 +9,28 @@ CREATE TABLE IF NOT EXISTS config (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Keep a single sync node. If SYNCSTORAGE_DOMAIN changed, syncstorage-rs added a
+-- node for the new domain but the old one is still in rotation and its users still
+-- point to it: move them to the current node and take the old nodes out
+UPDATE nodes n
+SET downed = 0, available = n.capacity
+FROM services s
+WHERE s.service = 'sync-1.5' AND n.service = s.id
+  AND n.node = '@DOMAIN@' AND n.downed = 1;
+
+UPDATE users u
+SET nodeid = n.id
+FROM services s, nodes n
+WHERE s.service = 'sync-1.5' AND u.service = s.id
+  AND n.service = s.id AND n.node = '@DOMAIN@'
+  AND u.nodeid <> n.id;
+
+UPDATE nodes n
+SET available = 0, downed = 1
+FROM services s
+WHERE s.service = 'sync-1.5' AND n.service = s.id
+  AND n.node <> '@DOMAIN@';
+
 -- Update MAX_USERS configuration (always update to current value)
 INSERT INTO config (config_key, config_value)
 VALUES ('max_users', '@MAX_USERS@')
