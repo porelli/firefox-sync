@@ -18,26 +18,31 @@ VALUES ('max_users', '@MAX_USERS@')
 ON DUPLICATE KEY UPDATE config_value='@MAX_USERS@', updated_at=CURRENT_TIMESTAMP;
 
 -- Create user limit stored procedure (idempotent)
+-- syncstorage-rs inserts a new row for an existing account when its keys
+-- change (e.g. password reset), so count accounts (emails), not rows, and
+-- never block an account that is already registered.
 DROP PROCEDURE IF EXISTS CheckUserLimit;
 
 DELIMITER //
-CREATE PROCEDURE CheckUserLimit()
+CREATE PROCEDURE CheckUserLimit(IN new_email VARCHAR(255))
 BEGIN
     DECLARE user_count INT;
     DECLARE max_users_setting INT;
-    
-    -- Get current user count
-    SELECT COUNT(*) INTO user_count FROM users;
-    
-    -- Get max_users from config table
-    SELECT CAST(config_value AS UNSIGNED) INTO max_users_setting 
-    FROM config 
-    WHERE config_key = 'max_users';
-    
-    -- Check if limit is exceeded
-    IF user_count >= max_users_setting THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'User limit exceeded';
+
+    IF NOT EXISTS (SELECT 1 FROM users WHERE email = new_email) THEN
+        -- Get current account count
+        SELECT COUNT(DISTINCT email) INTO user_count FROM users;
+
+        -- Get max_users from config table
+        SELECT CAST(config_value AS UNSIGNED) INTO max_users_setting
+        FROM config
+        WHERE config_key = 'max_users';
+
+        -- Check if limit is exceeded
+        IF user_count >= max_users_setting THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'User limit exceeded';
+        END IF;
     END IF;
 END //
 DELIMITER ;
@@ -50,6 +55,6 @@ CREATE TRIGGER BeforeInsertUser
 BEFORE INSERT ON users
 FOR EACH ROW
 BEGIN
-    CALL CheckUserLimit();
+    CALL CheckUserLimit(NEW.email);
 END //
 DELIMITER ;

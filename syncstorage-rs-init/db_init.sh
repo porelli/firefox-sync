@@ -118,7 +118,7 @@ current_users=$(mariadb --host="${MARIADB_SERVER}" \
                         --password="${MARIADB_PASSWORD}" \
                         "${MARIADB_DATABASE}" \
                         -sN \
-                        -e 'SELECT COUNT(*) FROM users;')
+                        -e 'SELECT COUNT(DISTINCT email) FROM users;')
 
 max_users_in_db=$(mariadb --host="${MARIADB_SERVER}" \
                            --port="${MARIADB_SERVER_PORT}" \
