@@ -242,11 +242,81 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  ## Test the amd64 images before publishing the multi-arch tags ##
+  test:
+    needs:
+      - prepare-env
+      - build-and-push-containers
+
+    permissions:
+      contents: read
+      packages: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        database_backend: [mysql, postgres]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REPOSITORY_REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: End-to-end tests
+        env:
+          REPOSITORY: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
+          TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
+        run: ./tests/e2e.sh ${{ matrix.database_backend }}
+
+  ## Test rootless podman (podman-compose and quadlets) ##
+  test-podman:
+    needs:
+      - prepare-env
+      - build-and-push-containers
+
+    permissions:
+      contents: read
+      packages: read
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up rootless podman and a systemd user session
+        run: |
+          pipx install podman-compose
+          sudo loginctl enable-linger "${USER}"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> ${GITHUB_ENV}
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> ${GITHUB_ENV}
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ${{ env.REPOSITORY_REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Podman tests
+        env:
+          REPOSITORY: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
+          TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
+        run: ./tests/podman.sh
+
   ## Collect digests from previus builds and create a single manifest ##
   build-and-push-manifests:
     needs:
       - prepare-env
       - build-and-push-containers
+      - test
+      - test-podman
 
     permissions:
       contents: write
