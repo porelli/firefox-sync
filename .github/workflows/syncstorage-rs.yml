@@ -23,9 +23,8 @@ env:
   SERVICE_REPOSITORY_SERVER: github.com
   SERVICE_REPOSITORY_NAME: mozilla-services/syncstorage-rs
   SERVICE_CHANGELOG_PATH: CHANGELOG.md
-  # specific for this component
+  # specific for this component (image tags used to name the GitHub release)
   IMAGE_TAGS: mysql
-  DATABASE_BACKEND: mysql
 
 jobs:
 
@@ -110,28 +109,23 @@ jobs:
 
     strategy:
       matrix:
-        config:
+        database_backend: [mysql, postgres]
+        image_type: [app, init]
+        docker_architecture: [amd64, arm64]
+        include:
           - docker_architecture: amd64
             github_runner_image: ubuntu-latest
-            image_type: app
-          - docker_architecture: amd64
-            github_runner_image: ubuntu-latest
-            image_type: init
           - docker_architecture: arm64
             github_runner_image: ubuntu-24.04-arm
-            image_type: app
-          - docker_architecture: arm64
-            github_runner_image: ubuntu-24.04-arm
-            image_type: init
 
-    runs-on: ${{ matrix.config.github_runner_image }}
+    runs-on: ${{ matrix.github_runner_image }}
 
     steps:
       - name: Prepare variables
         id: prepare-variables
         run: |
           # setting docker and github variables
-          case ${{ matrix.config.docker_architecture }} in
+          case ${{ matrix.docker_architecture }} in
             amd64)
               echo docker_architecture='amd64' >> ${GITHUB_OUTPUT}
               echo docker_target='linux/amd64' >> ${GITHUB_OUTPUT}
@@ -147,7 +141,7 @@ jobs:
           esac
 
           # setting image-specific paths
-          case ${{ matrix.config.image_type }} in
+          case ${{ matrix.image_type }} in
             app)
               echo code_repository="${{ env.SERVICE_REPOSITORY_NAME }}" >> ${GITHUB_OUTPUT}
               echo code_dockerfile_path='./' >> ${GITHUB_OUTPUT}
@@ -155,7 +149,11 @@ jobs:
               ;;
             *)
               echo code_repository="${{ env.REPOSITORY_FULL_NAME }}" >> ${GITHUB_OUTPUT}
-              echo code_dockerfile_path="./${{ env.SERVICE_NAME }}-${{ matrix.config.image_type }}/" >> ${GITHUB_OUTPUT}
+              if [ "${{ matrix.database_backend }}" = "mysql" ]; then
+                echo code_dockerfile_path="./${{ env.SERVICE_NAME }}-${{ matrix.image_type }}/" >> ${GITHUB_OUTPUT}
+              else
+                echo code_dockerfile_path="./${{ env.SERVICE_NAME }}-${{ matrix.image_type }}-${{ matrix.database_backend }}/" >> ${GITHUB_OUTPUT}
+              fi
               echo code_commit_head="${{ needs.prepare-env.outputs.internal_commit_head }}" >> ${GITHUB_OUTPUT}
               ;;
           esac
@@ -175,8 +173,8 @@ jobs:
         id: image_name
         uses: ./workflows/.github/actions/image-name-suffix
         with:
-          image_type: ${{ matrix.config.image_type }}
-          image_tags: ${{ env.IMAGE_TAGS }}
+          image_type: ${{ matrix.image_type }}
+          image_tags: ${{ matrix.database_backend }}
           # service_tag: ${{ needs.prepare-env.outputs.service_tag }}
           # platform_pair: ${{ steps.prepare-platform-pair.outputs.platform_pair }}
 
@@ -224,9 +222,9 @@ jobs:
           outputs: type=image,"name=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}",name-canonical=true,push=true
           context: ${{ steps.prepare-variables.outputs.code_dockerfile_path }}
           build-args: |
-            DATABASE_BACKEND=${{ env.DATABASE_BACKEND }}
-            SYNCSTORAGE_DATABASE_BACKEND=${{ env.DATABASE_BACKEND }}
-            TOKENSERVER_DATABASE_BACKEND=${{ env.DATABASE_BACKEND }}
+            DATABASE_BACKEND=${{ matrix.database_backend }}
+            SYNCSTORAGE_DATABASE_BACKEND=${{ matrix.database_backend }}
+            TOKENSERVER_DATABASE_BACKEND=${{ matrix.database_backend }}
           cache-from: type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
           cache-to: type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }},mode=max
 
@@ -239,7 +237,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.config.image_type }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
+          name: ${{ matrix.database_backend }}-${{ matrix.image_type }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -256,6 +254,7 @@ jobs:
 
     strategy:
       matrix:
+        database_backend: [mysql, postgres]
         image_type: [app, init]
     runs-on: ubuntu-latest
 
@@ -270,7 +269,7 @@ jobs:
         uses: ./workflows/.github/actions/image-name-suffix
         with:
           image_type: ${{ matrix.image_type }}
-          image_tags: ${{ env.IMAGE_TAGS }}
+          image_tags: ${{ matrix.database_backend }}
 
       - name: Clean workflows
         run: |
@@ -280,7 +279,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ runner.temp }}/digests
-          pattern: ${{ matrix.image_type }}-*
+          pattern: ${{ matrix.database_backend }}-${{ matrix.image_type }}-*
           merge-multiple: true
 
       - name: Login to GitHub Container Registry
