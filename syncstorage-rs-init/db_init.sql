@@ -30,13 +30,16 @@ BEGIN
     DECLARE max_users_setting INT;
 
     IF NOT EXISTS (SELECT 1 FROM users WHERE email = new_email) THEN
-        -- Get current account count
-        SELECT COUNT(DISTINCT email) INTO user_count FROM users;
-
-        -- Get max_users from config table
+        -- Get max_users from config table, locking the row so concurrent
+        -- sign-ups are counted one at a time; a missing value denies
         SELECT CAST(config_value AS UNSIGNED) INTO max_users_setting
         FROM config
-        WHERE config_key = 'max_users';
+        WHERE config_key = 'max_users'
+        FOR UPDATE;
+        SET max_users_setting = COALESCE(max_users_setting, 0);
+
+        -- Get current account count
+        SELECT COUNT(DISTINCT email) INTO user_count FROM users;
 
         -- Check if limit is exceeded
         IF user_count >= max_users_setting THEN
