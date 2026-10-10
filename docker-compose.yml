@@ -1,21 +1,52 @@
+x-syncstorage: &syncstorage
+  image: ${REPOSITORY}:${SYNCSTORAGE_IMAGE}-${SYNCSTORAGE_IMAGE_TAG}
+  environment:
+    SYNC_HOST: 0.0.0.0
+    SYNC_HUMAN_LOGS: 1
+    SYNC_MASTER_SECRET: ${SYNC_MASTER_SECRET}
+    SYNC_SYNCSTORAGE__DATABASE_URL: mysql://${MARIADB_SYNCSTORAGE_USER}:${MARIADB_SYNCSTORAGE_PASSWORD}@${MARIADB_SYNCSTORAGE_SERVER}:${MARIADB_SYNCSTORAGE_SERVER_PORT}/${MARIADB_SYNCSTORAGE_DATABASE}
+    SYNC_TOKENSERVER__ENABLED: "true"
+    SYNC_TOKENSERVER__RUN_MIGRATIONS: "true"
+    SYNC_TOKENSERVER__NODE_TYPE: mysql
+    SYNC_TOKENSERVER__DATABASE_URL: mysql://${MARIADB_TOKENSERVER_USER}:${MARIADB_TOKENSERVER_PASSWORD}@${MARIADB_TOKENSERVER_SERVER}:${MARIADB_TOKENSERVER_SERVER_PORT}/${MARIADB_TOKENSERVER_DATABASE}
+    SYNC_TOKENSERVER__INIT_NODE_URL: ${SYNCSTORAGE_DOMAIN}
+    SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN: ${FXA_EMAIL_DOMAIN}
+    SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL: ${FXA_OAUTH_SERVER_URL}
+    SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET: ${METRICS_HASH_SECRET}
+    SYNC_TOKENSERVER__ADDITIONAL_BLOCKING_THREADS_FOR_FXA_REQUESTS: 2
+    RUST_LOG: info
+
 services:
+  syncstorage_migrate:
+    <<: *syncstorage
+    # Runs the database migrations (and creates the sync node) without exposing
+    # the service, so that MAX_USERS is enforced before anybody can reach it
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /app/bin/syncserver &
+        pid=$$!
+        for i in $$(seq 1 120); do
+          if curl -sf http://localhost:8000/__heartbeat__ > /dev/null; then
+            kill $$pid; wait $$pid
+            echo "Migrations completed"
+            exit 0
+          fi
+          kill -0 $$pid 2> /dev/null || exit 1
+          sleep 1
+        done
+        echo "Timeout waiting for syncstorage-rs to start"
+        kill $$pid
+        exit 1
+    restart: "no"
+    depends_on:
+      syncstorage_db:
+        condition: service_healthy
+      tokenserver_db:
+        condition: service_healthy
+
   syncstorage:
-    image: ${REPOSITORY}:${SYNCSTORAGE_IMAGE}-${SYNCSTORAGE_IMAGE_TAG}
-    environment:
-      SYNC_HOST: 0.0.0.0
-      SYNC_HUMAN_LOGS: 1
-      SYNC_MASTER_SECRET: ${SYNC_MASTER_SECRET}
-      SYNC_SYNCSTORAGE__DATABASE_URL: mysql://${MARIADB_SYNCSTORAGE_USER}:${MARIADB_SYNCSTORAGE_PASSWORD}@${MARIADB_SYNCSTORAGE_SERVER}:${MARIADB_SYNCSTORAGE_SERVER_PORT}/${MARIADB_SYNCSTORAGE_DATABASE}
-      SYNC_TOKENSERVER__ENABLED: "true"
-      SYNC_TOKENSERVER__RUN_MIGRATIONS: "true"
-      SYNC_TOKENSERVER__NODE_TYPE: mysql
-      SYNC_TOKENSERVER__DATABASE_URL: mysql://${MARIADB_TOKENSERVER_USER}:${MARIADB_TOKENSERVER_PASSWORD}@${MARIADB_TOKENSERVER_SERVER}:${MARIADB_TOKENSERVER_SERVER_PORT}/${MARIADB_TOKENSERVER_DATABASE}
-      SYNC_TOKENSERVER__INIT_NODE_URL: ${SYNCSTORAGE_DOMAIN}
-      SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN: ${FXA_EMAIL_DOMAIN}
-      SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL: ${FXA_OAUTH_SERVER_URL}
-      SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET: ${METRICS_HASH_SECRET}
-      SYNC_TOKENSERVER__ADDITIONAL_BLOCKING_THREADS_FOR_FXA_REQUESTS: 2
-      RUST_LOG: info
+    <<: *syncstorage
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/__heartbeat__"]
       interval: 30s
@@ -23,10 +54,8 @@ services:
       retries: 5
     restart: unless-stopped
     depends_on:
-      syncstorage_db:
-        condition: service_healthy
-      tokenserver_db:
-        condition: service_healthy
+      tokenserver_db_init:
+        condition: service_completed_successfully
     ports:
       - ${CONTAINER_EXPORT_PORT}:8000
 
@@ -73,8 +102,8 @@ services:
     depends_on:
       tokenserver_db:
         condition: service_healthy
-      syncstorage:
-        condition: service_healthy
+      syncstorage_migrate:
+        condition: service_completed_successfully
     restart: "no"
     environment:
       MARIADB_SERVER: ${MARIADB_TOKENSERVER_SERVER}
