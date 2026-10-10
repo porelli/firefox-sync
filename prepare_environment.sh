@@ -58,6 +58,18 @@ DEFAULT_MAX_USERS=1
 read -e -p "Max allowed users [${DEFAULT_MAX_USERS}]: " MAX_USERS
 MAX_USERS=${MAX_USERS:-${DEFAULT_MAX_USERS}}
 
+# database backend
+DEFAULT_DATABASE_BACKEND=mariadb
+read -e -p "Database backend [mariadb/postgres] [${DEFAULT_DATABASE_BACKEND}]: " DATABASE_BACKEND
+DATABASE_BACKEND=${DATABASE_BACKEND:-${DEFAULT_DATABASE_BACKEND}}
+case "${DATABASE_BACKEND}" in
+    mariadb|postgres) ;;
+    *)
+        echo "ERROR: unknown database backend '${DATABASE_BACKEND}'"
+        exit 1
+        ;;
+esac
+
 # Container runtime detection
 echo ""
 echo "Detected container runtime: ${CONTAINER_RUNTIME}"
@@ -79,6 +91,10 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ]; then
     echo "  2) Quadlets (systemd integration, recommended for production)"
     read -e -p "Deployment method [1]: " DEPLOY_METHOD
     DEPLOY_METHOD=${DEPLOY_METHOD:-1}
+    if [ "${DEPLOY_METHOD}" = "2" ] && [ "${DATABASE_BACKEND}" = "postgres" ]; then
+        echo "WARNING: Quadlets are only provided for MariaDB, falling back to podman-compose"
+        DEPLOY_METHOD=1
+    fi
 fi
 
 # docker/podman user (for systemd service)
@@ -94,6 +110,7 @@ SYNCSTORAGE_IMAGE_TAG=${SYNCSTORAGE_IMAGE_TAG:-${DEFAULT_SYNCSTORAGE_IMAGE_TAG}}
 # random passwords
 MARIADB_TOKENSERVER_PASSWORD=$(generate_random_string 24)
 MARIADB_SYNCSTORAGE_PASSWORD=$(generate_random_string 24)
+POSTGRES_PASSWORD=$(generate_random_string 24)
 SYNC_MASTER_SECRET=$(generate_random_string 24)
 METRICS_HASH_SECRET=$(generate_random_string 24)
 
@@ -101,12 +118,18 @@ METRICS_HASH_SECRET=$(generate_random_string 24)
 cp ${SCRIPT_DIR}/.env-example ${SCRIPT_DIR}/.env
 apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_TOKENSERVER_PASSWORD=.*|MARIADB_TOKENSERVER_PASSWORD=${MARIADB_TOKENSERVER_PASSWORD}|"
 apply_sed ${SCRIPT_DIR}/.env "s|MARIADB_SYNCSTORAGE_PASSWORD=.*|MARIADB_SYNCSTORAGE_PASSWORD=${MARIADB_SYNCSTORAGE_PASSWORD}|"
+apply_sed ${SCRIPT_DIR}/.env "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|"
 apply_sed ${SCRIPT_DIR}/.env "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER_SECRET}|"
 apply_sed ${SCRIPT_DIR}/.env "s|METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=${METRICS_HASH_SECRET}|"
 apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=https://${SYNCSTORAGE_DOMAIN}|"
 apply_sed ${SCRIPT_DIR}/.env "s|CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=${CONTAINER_EXPORT_PORT}|"
 apply_sed ${SCRIPT_DIR}/.env "s|MAX_USERS=.*|MAX_USERS=${MAX_USERS}|"
 apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_IMAGE_TAG=.*|SYNCSTORAGE_IMAGE_TAG=${SYNCSTORAGE_IMAGE_TAG}|"
+if [ "${DATABASE_BACKEND}" = "postgres" ]; then
+    apply_sed ${SCRIPT_DIR}/.env "s|# COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.postgres.yml|"
+    apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_IMAGE=.*|SYNCSTORAGE_IMAGE=syncstorage-rs-postgres|"
+    apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_INIT_IMAGE=.*|SYNCSTORAGE_INIT_IMAGE=syncstorage-rs-postgres-init|"
+fi
 
 # prepare nginx example
 cp ${SCRIPT_DIR}/config/nginx/syncstorage-rs-example.conf ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf
@@ -180,6 +203,7 @@ echo "Configuration complete!"
 echo "=========================================="
 echo ""
 echo "Container Runtime: ${CONTAINER_RUNTIME}"
+echo "Database Backend: ${DATABASE_BACKEND}"
 echo "Configuration files created:"
 echo "  - .env"
 echo "  - config/nginx/syncstorage-rs.conf"
@@ -199,6 +223,11 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
     echo ""
     echo "To check status:"
     echo "  systemctl --user status firefox-sync-syncstorage.service"
+    echo ""
+    echo "See PODMAN.md for detailed instructions"
+elif [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DATABASE_BACKEND}" = "postgres" ]; then
+    echo "Next steps for podman-compose:"
+    echo "  1. podman-compose -f docker-compose.postgres.yml up -d"
     echo ""
     echo "See PODMAN.md for detailed instructions"
 elif [ "${CONTAINER_RUNTIME}" = "podman" ]; then

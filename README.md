@@ -36,7 +36,7 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 - [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
     - GitHub [workflow](/.github/workflows/syncstorage-rs.yml) and [logs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)
     - Base image: [Mozilla's](https://github.com/mozilla-services/syncstorage-rs/blob/master/Dockerfile) container
-    - Base image differences: image built with `DATABASE_BACKEND=mysql` to use the MySQL-compatible interface instead of Google Spanner
+    - Base image differences: image built with `SYNCSTORAGE_DATABASE_BACKEND=mysql` and `TOKENSERVER_DATABASE_BACKEND=mysql` (`DATABASE_BACKEND=mysql` for releases before 0.23) to use the MySQL-compatible interface instead of Google Spanner
     - source code: https://github.com/mozilla-services/syncstorage-rs
         - code changes: none
 - [ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
@@ -46,6 +46,14 @@ All the images are updated weekly to the latest tag available from Mozilla's off
     - Base image differences: [added](/syncstorage-rs-init/Dockerfile) [`db_init.sh`](/syncstorage-rs-init/db_init.sh) and [`db_init.sql`](/syncstorage-rs-init/db_init.sql) scripts
     - source code: https://github.com/MariaDB/server
         - code changes: none
+- [ghcr.io/porelli/firefox-sync:syncstorage-rs-postgres-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
+    - same as `syncstorage-rs-mysql` but built with `SYNCSTORAGE_DATABASE_BACKEND=postgres` and `TOKENSERVER_DATABASE_BACKEND=postgres` to use PostgreSQL
+- [ghcr.io/porelli/firefox-sync:syncstorage-rs-postgres-init-latest](https://github.com/porelli/firefox-sync/pkgs/container/firefox-sync/versions)
+    - Base image: [PostgreSQL's](https://github.com/docker-library/postgres) container
+    - Purpose: Post-migration database initialization and handling of MAX_USERS
+    - Base image differences: [added](/syncstorage-rs-init-postgres/Dockerfile) [`db_init.sh`](/syncstorage-rs-init-postgres/db_init.sh) and [`db_init.sql`](/syncstorage-rs-init-postgres/db_init.sql) scripts
+    - source code: https://github.com/postgres/postgres
+        - code changes: none
 
 ## Server setup
 
@@ -53,6 +61,8 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 
 1. clone this repository
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
+    - you can choose between MariaDB (default, [docker-compose.yml](/docker-compose.yml)) and PostgreSQL ([docker-compose.postgres.yml](/docker-compose.postgres.yml)) as database backend. For PostgreSQL, the script sets `COMPOSE_FILE` in `.env` so that `docker compose` picks the right file automatically
+    - you can pin the syncstorage image to a specific tag (default: `latest`)
 1. setup your reverse proxy server
     1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs-example.conf) as example
 1. start docker compose:
@@ -65,6 +75,9 @@ All the images are updated weekly to the latest tag available from Mozilla's off
     
     # Podman (with rootless optimizations)
     podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
+
+    # Podman with PostgreSQL
+    podman-compose -f docker-compose.postgres.yml up -d
     ```
 1. OPTIONAL: Install the systemd service
     - **Docker**: See [firefox-sync.service](/config/systemd/syncstorage-rs-example.service)
@@ -73,7 +86,7 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 
 ### Podman with Quadlets (Recommended for Production)
 
-For native systemd integration with Podman, see the comprehensive [Podman Guide](PODMAN.md#method-2-using-quadlets).
+For native systemd integration with Podman, see the comprehensive [Podman Guide](PODMAN.md#method-2-using-quadlets). Quadlets are currently provided for MariaDB only.
 
 Quick start:
 ```bash

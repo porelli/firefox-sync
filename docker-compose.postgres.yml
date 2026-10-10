@@ -1,0 +1,69 @@
+# PostgreSQL variant: one PostgreSQL database shared by syncstorage and tokenserver
+# Usage: docker compose -f docker-compose.postgres.yml up -d
+# (or set COMPOSE_FILE=docker-compose.postgres.yml in .env, prepare_environment.sh does it for you)
+
+services:
+  syncstorage:
+    image: ${REPOSITORY}:${SYNCSTORAGE_IMAGE}-${SYNCSTORAGE_IMAGE_TAG}
+    environment:
+      SYNC_HOST: 0.0.0.0
+      SYNC_HUMAN_LOGS: 1
+      SYNC_MASTER_SECRET: ${SYNC_MASTER_SECRET}
+      SYNC_SYNCSTORAGE__DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVER}:${POSTGRES_SERVER_PORT}/${POSTGRES_DATABASE}
+      SYNC_TOKENSERVER__ENABLED: "true"
+      SYNC_TOKENSERVER__RUN_MIGRATIONS: "true"
+      SYNC_TOKENSERVER__NODE_TYPE: postgres
+      SYNC_TOKENSERVER__DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVER}:${POSTGRES_SERVER_PORT}/${POSTGRES_DATABASE}
+      SYNC_TOKENSERVER__INIT_NODE_URL: ${SYNCSTORAGE_DOMAIN}
+      SYNC_TOKENSERVER__FXA_EMAIL_DOMAIN: ${FXA_EMAIL_DOMAIN}
+      SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL: ${FXA_OAUTH_SERVER_URL}
+      SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET: ${METRICS_HASH_SECRET}
+      SYNC_TOKENSERVER__ADDITIONAL_BLOCKING_THREADS_FOR_FXA_REQUESTS: 2
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/__heartbeat__"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    ports:
+      - ${CONTAINER_EXPORT_PORT}:8000
+
+  postgres_db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DATABASE}"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - postgres-db:/var/lib/postgresql
+    restart: unless-stopped
+
+  tokenserver_db_init:
+    image: ${REPOSITORY}:${SYNCSTORAGE_INIT_IMAGE}-${SYNCSTORAGE_INIT_IMAGE_TAG}
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      syncstorage:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      POSTGRES_SERVER: ${POSTGRES_SERVER}
+      POSTGRES_SERVER_PORT: ${POSTGRES_SERVER_PORT}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MAX_USERS: ${MAX_USERS}
+      DOMAIN: ${SYNCSTORAGE_DOMAIN}
+
+volumes:
+  postgres-db:
