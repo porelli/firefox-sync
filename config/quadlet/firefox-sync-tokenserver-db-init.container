@@ -4,7 +4,7 @@ After=firefox-sync-network.service firefox-sync-syncstorage.service
 Requires=firefox-sync-syncstorage.service
 
 [Container]
-Image=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-latest
+Image=%REPOSITORY%:%SYNCSTORAGE_INIT_IMAGE%-%SYNCSTORAGE_INIT_IMAGE_TAG%
 ContainerName=firefox-sync-tokenserver-db-init
 Network=firefox-sync-network.network
 

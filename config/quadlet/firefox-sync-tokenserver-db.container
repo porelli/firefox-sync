@@ -26,7 +26,7 @@ SecurityLabelDisable=true
 AutoUpdate=registry
 
 [Service]
-Restart=unless-stopped
+Restart=always
 
 [Install]
 WantedBy=multi-user.target default.target
