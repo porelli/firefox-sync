@@ -4,7 +4,7 @@ After=firefox-sync-network.service firefox-sync-syncstorage-db.service firefox-s
 Requires=firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
 
 [Container]
-Image=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-latest
+Image=%REPOSITORY%:%SYNCSTORAGE_IMAGE%-%SYNCSTORAGE_IMAGE_TAG%
 ContainerName=firefox-sync-syncstorage
 Network=firefox-sync-network.network
 PublishPort=%CONTAINER_EXPORT_PORT%:8000
@@ -33,7 +33,7 @@ SecurityLabelDisable=true
 AutoUpdate=registry
 
 [Service]
-Restart=unless-stopped
+Restart=always
 
 [Install]
 WantedBy=multi-user.target default.target

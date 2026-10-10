@@ -86,6 +86,11 @@ DEFAULT_CONTAINER_USER=${USER}
 read -e -p "Container user [${DEFAULT_CONTAINER_USER}]: " CONTAINER_USER
 CONTAINER_USER=${CONTAINER_USER:-${DEFAULT_CONTAINER_USER}}
 
+# syncstorage image tag
+DEFAULT_SYNCSTORAGE_IMAGE_TAG=latest
+read -e -p "Syncstorage image tag [latest/<tag>] [${DEFAULT_SYNCSTORAGE_IMAGE_TAG}]: " SYNCSTORAGE_IMAGE_TAG
+SYNCSTORAGE_IMAGE_TAG=${SYNCSTORAGE_IMAGE_TAG:-${DEFAULT_SYNCSTORAGE_IMAGE_TAG}}
+
 # random passwords
 MARIADB_TOKENSERVER_PASSWORD=$(generate_random_string 24)
 MARIADB_SYNCSTORAGE_PASSWORD=$(generate_random_string 24)
@@ -101,6 +106,7 @@ apply_sed ${SCRIPT_DIR}/.env "s|METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=${MET
 apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=https://${SYNCSTORAGE_DOMAIN}|"
 apply_sed ${SCRIPT_DIR}/.env "s|CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=${CONTAINER_EXPORT_PORT}|"
 apply_sed ${SCRIPT_DIR}/.env "s|MAX_USERS=.*|MAX_USERS=${MAX_USERS}|"
+apply_sed ${SCRIPT_DIR}/.env "s|SYNCSTORAGE_IMAGE_TAG=.*|SYNCSTORAGE_IMAGE_TAG=${SYNCSTORAGE_IMAGE_TAG}|"
 
 # prepare nginx example
 cp ${SCRIPT_DIR}/config/nginx/syncstorage-rs-example.conf ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf
@@ -125,6 +131,11 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
     echo "Setting up Podman Quadlets..."
     
     QUADLET_DIR="${HOME}/.config/containers/systemd"
+
+    # load the generated values (database names, users, FxA endpoints, etc.)
+    set -a
+    source ${SCRIPT_DIR}/.env
+    set +a
     mkdir -p "${QUADLET_DIR}"
     
     echo "Processing quadlet files..."
@@ -147,6 +158,11 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
                 -e "s|%MAX_USERS%|${MAX_USERS}|g" \
                 -e "s|%FXA_EMAIL_DOMAIN%|${FXA_EMAIL_DOMAIN}|g" \
                 -e "s|%FXA_OAUTH_SERVER_URL%|${FXA_OAUTH_SERVER_URL}|g" \
+                -e "s|%REPOSITORY%|${REPOSITORY}|g" \
+                -e "s|%SYNCSTORAGE_IMAGE%|${SYNCSTORAGE_IMAGE}|g" \
+                -e "s|%SYNCSTORAGE_IMAGE_TAG%|${SYNCSTORAGE_IMAGE_TAG}|g" \
+                -e "s|%SYNCSTORAGE_INIT_IMAGE%|${SYNCSTORAGE_INIT_IMAGE}|g" \
+                -e "s|%SYNCSTORAGE_INIT_IMAGE_TAG%|${SYNCSTORAGE_INIT_IMAGE_TAG}|g" \
                 "$file" > "${QUADLET_DIR}/$filename"
             
             echo "    ✓ Installed to ${QUADLET_DIR}/$filename"
