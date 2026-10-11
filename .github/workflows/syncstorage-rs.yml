@@ -2,6 +2,11 @@ name: syncstorage-rs-mysql
 
 on:
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Rebuild all images from scratch instead of reusing identical ones
+        type: boolean
+        default: false
   schedule:
     - cron: '15 6 * * 1' # Run every Monday at 06:15 UTC
     # - cron: '*/7 * * * *' # Test
@@ -25,6 +30,9 @@ env:
   SERVICE_CHANGELOG_PATH: CHANGELOG.md
   # specific for this component (image tags used to name the GitHub release)
   IMAGE_TAGS: mysql
+  # bump when the way the app image is built changes (build args, platforms, ...):
+  # app images are otherwise reused as long as the upstream tag does not change
+  APP_BUILD_REVISION: 1
 
 jobs:
 
@@ -80,14 +88,6 @@ jobs:
       packages: write
 
     steps:
-      - name: Clean all build cache if there is a push
-        if: github.event_name == 'push'
-        uses: dataaxiom/ghcr-cleanup-action@v1
-        with:
-          dry-run: false
-          use-regex: true
-          delete-tags: buildcache-*
-
       - name: Clean old build cache
         if: github.event_name == 'schedule'
         uses: dataaxiom/ghcr-cleanup-action@v1
@@ -209,16 +209,55 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Look for an identical image
+        id: reuse
+        run: |
+          # the key only changes when the inputs of the image change: the upstream tag for
+          # the app, the content of its directory in this repository for the init image
+          if [ "${{ matrix.image_type }}" = app ]; then
+            key="${{ needs.prepare-env.outputs.service_tag }}-r${{ env.APP_BUILD_REVISION }}"
+          else
+            dir="${{ steps.prepare-variables.outputs.code_dockerfile_path }}"
+            dir=${dir#./}
+            key="src-$(git rev-parse --short=12 "HEAD:${dir%/}")"
+          fi
+          key_tag="${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-key-${key}-${{ steps.prepare-platform-pair.outputs.platform_pair }}"
+          echo "key_tag=${key_tag}" >> ${GITHUB_OUTPUT}
+
+          # scheduled builds, releases and manual rebuilds start from scratch to pick up
+          # base image (security) updates
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.rebuild }}" = true ] || [ "${{ needs.prepare-env.outputs.github_release }}" = true ]; then
+            echo "Fresh build (${{ github.event_name }})"
+            echo "fresh=true" >> ${GITHUB_OUTPUT}
+          elif digest=$(docker buildx imagetools inspect "${key_tag}" --format '{{json .Manifest}}' 2> /dev/null | jq -r .digest) && [ -n "${digest}" ]; then
+            echo "Reusing ${key_tag} (${digest})"
+            echo "digest=${digest}" >> ${GITHUB_OUTPUT}
+          else
+            echo "No image for ${key_tag}, building it"
+          fi
+
+      - name: Tag the identical image
+        if: steps.reuse.outputs.digest != ''
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-${{ steps.prepare-platform-pair.outputs.platform_pair }} \
+            -t ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }} \
+            -t ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}-latest \
+            "${{ steps.reuse.outputs.key_tag }}"
+
       - name: Build and push
         id: build
+        if: steps.reuse.outputs.digest == ''
         uses: docker/build-push-action@v7
         with:
           platforms: ${{ steps.prepare-variables.outputs.docker_target }}
           tags: |
             ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-${{ steps.prepare-platform-pair.outputs.platform_pair }},
             ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }},
-            ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}-latest
+            ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}-latest,
+            ${{ steps.reuse.outputs.key_tag }}
           labels: ${{ steps.meta.outputs.labels }}
+          no-cache: ${{ steps.reuse.outputs.fresh == 'true' }}
           outputs: type=image,"name=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}",name-canonical=true,push=true
           context: ${{ steps.prepare-variables.outputs.code_dockerfile_path }}
           build-args: |
@@ -231,7 +270,7 @@ jobs:
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="${{ steps.build.outputs.digest || steps.reuse.outputs.digest }}"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
