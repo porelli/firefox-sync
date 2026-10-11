@@ -1,5 +1,6 @@
-# Podman-specific docker-compose override
-# Usage: podman-compose -f docker-compose.yml -f docker-compose.podman.yml up
+# Podman-specific override: longer healthcheck timings for rootless environments
+# Usage (see PODMAN.md): DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/podman/podman.sock \
+#   docker compose -f docker-compose.yml -f docker-compose.podman.yml up -d
 
 services:
   syncstorage:
@@ -17,8 +18,6 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-    # Ensure proper permissions for rootless volumes
-    userns_mode: "keep-id"
 
   tokenserver_db:
     # Increase healthcheck timing for rootless environments
@@ -27,5 +26,3 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-    # Ensure proper permissions for rootless volumes
-    userns_mode: "keep-id"

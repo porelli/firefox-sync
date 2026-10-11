@@ -34,7 +34,7 @@ Quadlets are systemd unit files that Podman automatically converts into containe
 
 ## Quick Start
 
-1. Run the main setup script and choose Quadlets (option 2) when prompted:
+1. Run the main setup script and choose Quadlets (option 1, the default) when prompted:
    ```bash
    cd ../..
    ./prepare_environment.sh
@@ -96,7 +96,7 @@ If you need to change settings (like MAX_USERS):
    cd ../..
    ./prepare_environment.sh
    ```
-   Choose option 2 (Quadlets) again when prompted
+   Choose option 1 (Quadlets) again when prompted
 3. Restart the affected services:
    ```bash
    systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-syncstorage.service
@@ -153,7 +153,7 @@ The setup script replaces `%VARIABLE%` placeholders with values from your `.env`
 
 1. Ensure `.env` exists in the project root
 2. Check that variables are defined in `.env`
-3. Re-run `./prepare_environment.sh` and choose Quadlets (option 2)
+3. Re-run `./prepare_environment.sh` and choose Quadlets (option 1)
 
 ### Permission Issues
 

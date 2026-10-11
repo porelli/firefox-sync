@@ -4,16 +4,17 @@ Requires=docker.service
 After=docker.service
 
 [Service]
+# docker compose reads COMPOSE_FILE from .env (set for PostgreSQL by prepare_environment.sh)
 Restart=always
 User=<DOCKER_USER>
 Group=docker
 WorkingDirectory=<COMPOSE_DIR>
 # Shutdown containers (if running) when unit is started
-ExecStartPre=/usr/bin/docker compose -f docker-compose.yaml down
+ExecStartPre=/usr/bin/docker compose down
 # Start containers when unit is started
-ExecStart=/usr/bin/docker compose -f docker-compose.yaml up
+ExecStart=/usr/bin/docker compose up
 # Stop containers when unit is stopped
-ExecStop=/usr/bin/docker compose -f docker-compose.yaml down
+ExecStop=/usr/bin/docker compose down
 
 [Install]
 WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 #!/bin/bash
-# Rootless podman test: podman-compose (MariaDB and PostgreSQL) and quadlets (MariaDB),
-# set up with prepare_environment.sh exactly like a user would.
-# Needs rootless podman, podman-compose and a systemd user session.
+# Rootless podman test: docker compose on the Podman socket (MariaDB and PostgreSQL) and
+# quadlets (MariaDB), set up with prepare_environment.sh exactly like a user would.
+# Needs rootless podman, docker compose (v2, no Docker daemon) and a systemd user session.
 #
 # Usage: tests/podman.sh
 # Environment:
@@ -44,7 +44,9 @@ diagnose() {
 }
 
 podman --version
-podman-compose --version 2> /dev/null | tail -1
+systemctl --user enable --now podman.socket > /dev/null 2>&1
+export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/podman/podman.sock
+docker compose version
 podman info --format 'rootless={{.Host.Security.Rootless}} selinux={{.Host.Security.SELinuxEnabled}} cgroups={{.Host.CgroupsVersion}}'
 
 # a copy of the repository, configured by prepare_environment.sh
@@ -57,26 +59,27 @@ setup() { printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "$1" "$2" "" "${TAG}" | .
 
 compose_test() {
   local backend=$1; shift
-  echo "== podman-compose (${backend})"
-  setup "${backend}" 1
-  check "$?" 0 "prepare_environment.sh (${backend}, podman-compose)"
-  timeout 600 podman-compose "$@" up -d > "compose-${backend}.log" 2>&1
-  check "$?" 0 "podman-compose up (${backend})"
-  check "$(hb)" 200 "/__heartbeat__ (podman-compose, ${backend})"
+  echo "== docker compose on the Podman socket (${backend})"
+  setup "${backend}" 2
+  check "$?" 0 "prepare_environment.sh (${backend}, compose)"
+  check "$(grep -c "docker compose $* up -d" "setup-${backend}-2.log")" 1 "prepare_environment.sh prints the compose command (${backend})"
+  timeout 600 docker compose "$@" up -d > "compose-${backend}.log" 2>&1
+  check "$?" 0 "docker compose up (${backend})"
+  check "$(hb)" 200 "/__heartbeat__ (compose, ${backend})"
   check "$(podman inspect -f '{{.State.ExitCode}}' "$(ctr syncstorage_migrate)")" 0 "migrate container exit code (${backend})"
   check "$(podman inspect -f '{{.State.ExitCode}}' "$(ctr tokenserver_db_init)")" 0 "init container exit code (${backend})"
   check "$([ "$(started "$(ctr syncstorage)" StartedAt)" -gt "$(started "$(ctr tokenserver_db_init)" FinishedAt)" ] && echo yes)" yes \
-    "syncstorage started after the init (podman-compose, ${backend})"
+    "syncstorage started after the init (compose, ${backend})"
   podman logs "$(ctr tokenserver_db_init)" 2>&1 | grep -E "Max users|ERROR"
   [ "${FAILED}" = 0 ] || diagnose "compose-${backend}.log"
-  podman-compose "$@" down -v > /dev/null 2>&1
+  docker compose "$@" down -v > /dev/null 2>&1
 }
 compose_test mariadb -f docker-compose.yml -f docker-compose.podman.yml
 compose_test postgres -f docker-compose.postgres.yml
 
 echo "== quadlets (mariadb)"
 export QUADLET_DIR=${HOME}/.config/containers/systemd
-setup mariadb 2
+setup mariadb 1
 check "$?" 0 "prepare_environment.sh (quadlets)"
 check "$(grep -l '%[A-Z_]*%' "${QUADLET_DIR}"/firefox-sync-* | wc -l)" 0 "no unreplaced placeholders in quadlets"
 QUADLET=$(ls /usr/libexec/podman/quadlet /usr/lib/podman/quadlet 2> /dev/null | head -1)
@@ -104,7 +107,7 @@ systemctl --user stop firefox-sync-syncstorage.service firefox-sync-tokenserver-
   firefox-sync-syncstorage-migrate.service firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service 2> /dev/null
 rm -f "${QUADLET_DIR}"/firefox-sync-*
 systemctl --user daemon-reload
-podman volume rm -f systemd-firefox-sync-syncstorage-db systemd-firefox-sync-tokenserver-db > /dev/null 2>&1
+podman volume rm -f firefox-sync-syncstorage-db firefox-sync-tokenserver-db > /dev/null 2>&1
 rm -rf "${WORK}"
 
 [ ${FAILED} = 0 ] && echo "RESULT podman: all checks passed" || echo "RESULT podman: some checks FAILED"
