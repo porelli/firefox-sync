@@ -31,8 +31,9 @@ runs:
       id: checkout
       shell: bash
       run: |
-        if [ "${{ inputs.event_name }}" == "schedule" ]; then
-          echo "Triggered by schedule, looking for the latest tag on main branch."
+        # scheduled runs and manual runs on the main branch build a release
+        if [ "${{ inputs.event_name }}" == "schedule" ] || { [ "${{ inputs.event_name }}" == "workflow_dispatch" ] && [ "${{ github.ref_name }}" == "${{ inputs.repository_main_branch }}" ]; }; then
+          echo "Triggered by ${{ inputs.event_name }}, looking for the latest tag on main branch."
 
           # Fetch all tags from the repository
           git fetch --tags

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       rebuild:
-        description: Rebuild all images from scratch instead of reusing identical ones
+        description: Rebuild all images from scratch instead of reusing identical ones (manual runs on main always do, they publish a release)
         type: boolean
         default: false
   schedule:
