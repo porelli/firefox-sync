@@ -462,6 +462,36 @@ jobs:
           sed -i -n '/<a name="${{ needs.prepare-env.outputs.service_tag }}"/,/^<a name=/ {/^<a name=/!p; /^<a name="${{ needs.prepare-env.outputs.service_tag }}"/p}' "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
           sed "2s/$/ - Built on ${{ needs.prepare-env.outputs.build_date }}/" -i "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
 
+      - name: Checkout repository history
+        if: needs.prepare-env.outputs.github_release == 'true'
+        uses: actions/checkout@v7
+        with:
+          path: repository
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Add the changes of this repository
+        if: needs.prepare-env.outputs.github_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # commits since the previous release, i.e. the latest one before this run creates a new one
+          previous=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName 2> /dev/null || true)
+          cd repository
+          {
+            echo ""
+            echo "#### Changes in this repository"
+            echo ""
+            if [ -n "${previous}" ] && git rev-parse -q --verify "refs/tags/${previous}" > /dev/null; then
+              changes=$(git log --no-merges --reverse --format='* %s ([%h](${{ github.server_url }}/${{ github.repository }}/commit/%H))' "${previous}..HEAD")
+              echo "Since ${previous}:"
+              echo ""
+              echo "${changes:-* no changes}"
+            else
+              git log --no-merges --reverse --format='* %s ([%h](${{ github.server_url }}/${{ github.repository }}/commit/%H))' HEAD
+            fi
+          } >> "../mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
+
       - name: Create Release
         if: needs.prepare-env.outputs.github_release == 'true'
         uses: ncipollo/release-action@v1
