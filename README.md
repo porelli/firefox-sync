@@ -57,7 +57,7 @@ All the images are updated weekly to the latest tag available from Mozilla's off
 
 ## Server setup
 
-### Docker / Podman Compose
+### Docker Compose
 
 1. clone this repository
 1. run `./prepare_environment.sh` to automatically prepare your `.env` file and conf examples according with your variables
@@ -67,30 +67,21 @@ All the images are updated weekly to the latest tag available from Mozilla's off
     1. if you use nginx, check the [syncstorage-rs.conf](/config/nginx/syncstorage-rs-example.conf) as example
 1. start docker compose:
     ```bash
-    # Docker
     docker compose up -d
-    
-    # Podman (basic)
-    podman-compose up -d
-    
-    # Podman (with rootless optimizations)
-    podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
-
-    # Podman with PostgreSQL
-    podman-compose -f docker-compose.postgres.yml up -d
     ```
+    - with Podman, use the Quadlets below or `docker compose` with the Podman socket, see [PODMAN.md](PODMAN.md#method-2-using-docker-compose-with-the-podman-socket). `podman-compose` is not supported because it cannot run the one-shot migration and init containers before the service ([why](PODMAN.md#why-not-podman-compose))
 1. OPTIONAL: Install the systemd service
     - **Docker**: See [firefox-sync.service](/config/systemd/syncstorage-rs-example.service)
-    - **Podman**: See [PODMAN.md](PODMAN.md#method-2-using-quadlets) for Quadlet setup (recommended)
+    - **Podman**: See [PODMAN.md](PODMAN.md#method-1-using-quadlets) for Quadlet setup (recommended)
     - All containers are set to restart automatically
 
-### Podman with Quadlets (Recommended for Production)
+### Podman with Quadlets (Recommended for Podman)
 
-For native systemd integration with Podman, see the comprehensive [Podman Guide](PODMAN.md#method-2-using-quadlets). Quadlets are currently provided for MariaDB only.
+For native systemd integration with Podman, see the comprehensive [Podman Guide](PODMAN.md#method-1-using-quadlets). Quadlets are currently provided for MariaDB only.
 
 Quick start:
 ```bash
-./prepare_environment.sh  # Choose option 2 (Quadlets) when prompted
+./prepare_environment.sh  # Choose option 1 (Quadlets, the default) when prompted
 systemctl --user start firefox-sync-syncstorage.service
 ```
 
@@ -98,7 +89,7 @@ systemctl --user start firefox-sync-syncstorage.service
 
 Every image build runs the tests in [tests/](/tests) before the multi-arch tags (e.g. `syncstorage-rs-mysql-latest`) are published:
 - [`tests/e2e.sh`](/tests/e2e.sh) `<mysql|postgres>`: starts the docker compose stack and checks start-up order, MAX_USERS, domain changes, a Firefox-like sign-in and sync through the tokenserver ([`test_client_flow.py`](/tests/test_client_flow.py), using upstream's mock FxA server) and runs upstream's storage and tokenserver integration tests
-- [`tests/podman.sh`](/tests/podman.sh): rootless podman-compose and quadlets, configured with `prepare_environment.sh`
+- [`tests/podman.sh`](/tests/podman.sh): rootless Podman, with Quadlets and with `docker compose` on the Podman socket, configured with `prepare_environment.sh`
 
 Both can be run locally against any published tag, e.g. `TAG=latest tests/e2e.sh mysql`.
 

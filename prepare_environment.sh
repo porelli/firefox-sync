@@ -87,13 +87,17 @@ fi
 if [ "${CONTAINER_RUNTIME}" = "podman" ]; then
     echo ""
     echo "Podman detected! Choose deployment method:"
-    echo "  1) podman-compose (similar to docker-compose)"
-    echo "  2) Quadlets (systemd integration, recommended for production)"
+    echo "  1) Quadlets (systemd integration, recommended, MariaDB only)"
+    echo "  2) docker compose with the Podman socket"
     read -e -p "Deployment method [1]: " DEPLOY_METHOD
-    DEPLOY_METHOD=${DEPLOY_METHOD:-1}
-    if [ "${DEPLOY_METHOD}" = "2" ] && [ "${DATABASE_BACKEND}" = "postgres" ]; then
-        echo "WARNING: Quadlets are only provided for MariaDB, falling back to podman-compose"
-        DEPLOY_METHOD=1
+    case "${DEPLOY_METHOD:-1}" in
+        1) DEPLOY_METHOD=quadlets ;;
+        2) DEPLOY_METHOD=compose ;;
+        *) echo "ERROR: unknown deployment method '${DEPLOY_METHOD}'"; exit 1 ;;
+    esac
+    if [ "${DEPLOY_METHOD}" = "quadlets" ] && [ "${DATABASE_BACKEND}" = "postgres" ]; then
+        echo "WARNING: Quadlets are only provided for MariaDB, using docker compose with the Podman socket"
+        DEPLOY_METHOD=compose
     fi
 fi
 
@@ -136,20 +140,13 @@ cp ${SCRIPT_DIR}/config/nginx/syncstorage-rs-example.conf ${SCRIPT_DIR}/config/n
 apply_sed ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf "s/firefox-sync.example.com/${SYNCSTORAGE_DOMAIN}/g"
 apply_sed ${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf "s|<CONTAINER_EXPORT_PORT>|${CONTAINER_EXPORT_PORT}|"
 
-# prepare systemd example (for docker-compose/podman-compose)
+# prepare systemd example (for docker compose; with Podman, Quadlets start at boot instead)
 cp ${SCRIPT_DIR}/config/systemd/syncstorage-rs-example.service ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service
 apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|<DOCKER_USER>|${CONTAINER_USER}|"
 apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|<COMPOSE_DIR>|${SCRIPT_DIR}|"
 
-# Update systemd service for podman if needed
-if [ "${CONTAINER_RUNTIME}" = "podman" ]; then
-    apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|docker.service|podman.service|g"
-    apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|/usr/bin/docker|/usr/bin/podman|g"
-    apply_sed ${SCRIPT_DIR}/config/systemd/syncstorage-rs.service "s|Group=docker|Group=${CONTAINER_USER}|"
-fi
-
 # Setup Quadlets if requested
-if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
+if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ]; then
     echo ""
     echo "Setting up Podman Quadlets..."
     
@@ -209,13 +206,13 @@ echo "  - .env"
 echo "  - config/nginx/syncstorage-rs.conf"
 echo "  - config/systemd/syncstorage-rs.service"
 
-if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
+if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ]; then
     echo "  - Quadlet files in ${QUADLET_DIR}"
 fi
 
 echo ""
 
-if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
+if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ]; then
     echo "Next steps for Quadlet deployment:"
     echo "  1. systemctl --user start firefox-sync-syncstorage.service"
     echo "  2. (Optional) loginctl enable-linger \$USER"
@@ -224,16 +221,18 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "2" ]; then
     echo "  systemctl --user status firefox-sync-syncstorage.service"
     echo ""
     echo "See PODMAN.md for detailed instructions"
-elif [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DATABASE_BACKEND}" = "postgres" ]; then
-    echo "Next steps for podman-compose:"
-    echo "  1. podman-compose -f docker-compose.postgres.yml up -d"
-    echo ""
-    echo "See PODMAN.md for detailed instructions"
 elif [ "${CONTAINER_RUNTIME}" = "podman" ]; then
-    echo "Next steps for podman-compose:"
-    echo "  1. podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d"
+    if [ "${DATABASE_BACKEND}" = "postgres" ]; then
+        COMPOSE_FILES="-f docker-compose.postgres.yml"
+    else
+        COMPOSE_FILES="-f docker-compose.yml -f docker-compose.podman.yml"
+    fi
+    echo "Next steps for docker compose with the Podman socket:"
+    echo "  1. systemctl --user enable --now podman.socket"
+    echo "  2. export DOCKER_HOST=unix://\${XDG_RUNTIME_DIR}/podman/podman.sock"
+    echo "  3. docker compose ${COMPOSE_FILES} up -d"
     echo ""
-    echo "See PODMAN.md for detailed instructions"
+    echo "See PODMAN.md for detailed instructions (podman-compose is not supported)"
 else
     echo "Next steps:"
     echo "  1. docker compose up -d"

@@ -7,8 +7,9 @@ This guide covers running Firefox Sync with Podman, including rootless configura
 - [Why Podman?](#why-podman)
 - [Rootless Podman Compatibility](#rootless-podman-compatibility)
 - [Installation Methods](#installation-methods)
-  - [Method 1: Using podman-compose (Recommended for Testing)](#method-1-using-podman-compose)
-  - [Method 2: Using Quadlets (Recommended for Production)](#method-2-using-quadlets)
+  - [Method 1: Using Quadlets (Recommended)](#method-1-using-quadlets)
+  - [Method 2: Using docker compose with the Podman socket](#method-2-using-docker-compose-with-the-podman-socket)
+  - [Why not podman-compose?](#why-not-podman-compose)
 - [Troubleshooting](#troubleshooting)
 - [Performance Considerations](#performance-considerations)
 
@@ -37,7 +38,7 @@ This project has been specifically optimized for rootless podman environments:
 ### Known Considerations
 
 - **Slower Startup**: Rootless containers may start slower than rootful ones
-- **Volume Permissions**: Handled automatically with `userns_mode: keep-id`
+- **Volume Permissions**: Only named volumes are used, rootless Podman handles their ownership
 - **SELinux**: Labels stay enabled. Only named volumes are used, and Podman labels them automatically
 
 ## Installation Methods
@@ -47,14 +48,17 @@ This project has been specifically optimized for rootless podman environments:
 1. Install Podman:
    ```bash
    # Fedora/RHEL/CentOS
-   sudo dnf install podman podman-compose
-   
+   sudo dnf install podman
+
    # Ubuntu/Debian
-   sudo apt install podman podman-compose
-   
+   sudo apt install podman
+
    # Arch Linux
-   sudo pacman -S podman podman-compose
+   sudo pacman -S podman
    ```
+
+   Quadlets need Podman 4.4 or newer. For Method 2 you also need `docker compose` (v2), e.g.
+   `docker-compose-v2` on Ubuntu/Debian or `docker-compose` on Fedora; the Docker daemon is not needed.
 
 2. For rootless setup, configure subuid/subgid:
    ```bash
@@ -70,43 +74,9 @@ This project has been specifically optimized for rootless podman environments:
    ./prepare_environment.sh
    ```
 
-### Method 1: Using podman-compose
+### Method 1: Using Quadlets
 
-This method is similar to docker-compose and good for testing.
-
-#### Basic Usage
-
-```bash
-# Start services
-podman-compose up -d
-
-# With podman-specific optimizations
-podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
-
-# View logs
-podman-compose logs -f
-
-# Stop services
-podman-compose down
-```
-
-#### Rootless Considerations
-
-When using rootless podman-compose:
-
-1. **Port Binding**: Ports below 1024 require special handling
-   ```bash
-   # If using port 80, you need to allow it
-   sudo sysctl net.ipv4.ip_unprivileged_port_start=80
-   ```
-
-2. **Volume Permissions**: The podman override file handles this automatically
-
-3. **Systemd Integration**: See Method 2 for better systemd integration
-
-### Method 2: Using Quadlets
-
-Quadlets provide native systemd integration for Podman. This is the **recommended method for production**.
+Quadlets provide native systemd integration for Podman. This is the **recommended method**.
 
 #### What are Quadlets?
 
@@ -125,7 +95,7 @@ Quadlets are systemd unit files that Podman converts into container configuratio
    ./prepare_environment.sh
    ```
    
-   When asked about deployment method, select option 2 (Quadlets).
+   When asked about deployment method, select option 1 (Quadlets, the default).
    
    The script will automatically:
    - Create your `.env` file with configuration
@@ -184,6 +154,40 @@ To update MAX_USERS or other settings:
    systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-syncstorage.service
    ```
 
+### Method 2: Using docker compose with the Podman socket
+
+`docker compose` (v2) can drive Podman through its Docker-compatible API, using the same
+`docker-compose.yml` as Docker and without the Docker daemon:
+
+```bash
+# once: start the Podman API socket for your user
+systemctl --user enable --now podman.socket
+export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/podman/podman.sock
+
+# MariaDB, with longer healthcheck timings for rootless
+docker compose -f docker-compose.yml -f docker-compose.podman.yml up -d
+
+# PostgreSQL
+docker compose -f docker-compose.postgres.yml up -d
+
+# logs / stop
+docker compose logs -f
+docker compose down
+```
+
+Ports below 1024 need `sudo sysctl net.ipv4.ip_unprivileged_port_start=80` in rootless mode.
+
+### Why not podman-compose?
+
+The stack starts in a precise order: the databases, then a one-shot container running the
+migrations, then the one-shot init that installs the MAX_USERS limit, and only then the
+public syncstorage service, so that nobody can sign up before the limit exists.
+
+podman-compose links containers with `podman create --requires`, and Podman refuses to start
+a container whose required container has already exited ("generating dependency graph for
+container"), so the init and the service never start. It also does not check that a one-shot
+container exited successfully. Use Quadlets or `docker compose` instead.
+
 ## Troubleshooting
 
 ### Issue: "Table 'tokenserver.users' doesn't exist"
@@ -197,11 +201,11 @@ This was the original rootless podman issue. If you still see this:
 
 2. Check the init container logs:
    ```bash
-   # With podman-compose
-   podman-compose logs tokenserver_db_init
-   
    # With quadlets
    journalctl --user -u firefox-sync-tokenserver-db-init.service
+
+   # With docker compose
+   docker compose logs tokenserver_db_init
    ```
 
 3. The script should show "Waiting for tables..." messages. If it times out, increase the wait time in the init script.
@@ -211,9 +215,6 @@ This was the original rootless podman issue. If you still see this:
 ```bash
 # Check volume ownership
 podman volume inspect firefox-sync-syncstorage-db
-
-# If using podman-compose, ensure you're using the podman override:
-podman-compose -f docker-compose.yml -f docker-compose.podman.yml up -d
 ```
 
 ### Issue: Services Not Starting with Quadlets
@@ -311,7 +312,7 @@ If you're migrating from Docker:
    podman run --rm -v firefox-sync-syncstorage-db:/data -v $(pwd):/backup alpine tar xzf /backup/syncstorage-db.tar.gz -C /
    ```
 
-3. **Use podman-compose** with the same docker-compose.yml file
+3. **Use Quadlets**, or `docker compose` with the Podman socket and the same docker-compose.yml file
 
 ## Additional Resources
 
@@ -325,7 +326,7 @@ If you're migrating from Docker:
 If you encounter issues:
 
 1. Check this guide's troubleshooting section
-2. Review the logs (podman-compose logs or journalctl)
+2. Review the logs (journalctl or docker compose logs)
 3. Open an issue on GitHub with:
    - Your podman version (`podman --version`)
    - Whether you're using rootless or rootful

@@ -276,7 +276,7 @@ jobs:
           TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
         run: ./tests/e2e.sh ${{ matrix.database_backend }}
 
-  ## Test rootless podman (podman-compose and quadlets) ##
+  ## Test rootless podman (quadlets, docker compose on the Podman socket) ##
   test-podman:
     needs:
       - prepare-env
@@ -295,14 +295,16 @@ jobs:
 
       - name: Set up rootless podman and a systemd user session
         run: |
-          pipx install podman-compose
           sudo loginctl enable-linger "${USER}"
           for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
           echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> ${GITHUB_ENV}
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> ${GITHUB_ENV}
 
       - name: Login to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ${{ env.REPOSITORY_REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+        # docker compose sends the docker CLI credentials to the Podman socket when pulling
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ${{ env.REPOSITORY_REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REPOSITORY_REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Podman tests
         env:
