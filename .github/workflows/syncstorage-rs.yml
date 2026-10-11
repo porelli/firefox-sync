@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Find local code to build
         id: find-code
@@ -165,7 +165,7 @@ jobs:
           echo "platform_pair=${platform//\//-}" >> ${GITHUB_OUTPUT}
 
       - name: Checkout workflows
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: workflows
 
@@ -183,14 +183,14 @@ jobs:
           rm -Rf ./workflows
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.prepare-variables.outputs.code_commit_head }}
           repository: ${{ steps.prepare-variables.outputs.code_repository }}
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
@@ -200,18 +200,18 @@ jobs:
             latest=false
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REPOSITORY_REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           platforms: ${{ steps.prepare-variables.outputs.docker_target }}
           tags: |
@@ -235,7 +235,7 @@ jobs:
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.database_backend }}-${{ matrix.image_type }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
           path: ${{ runner.temp }}/digests/*
@@ -261,10 +261,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REPOSITORY_REGISTRY }}
           username: ${{ github.repository_owner }}
@@ -291,7 +291,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up rootless podman and a systemd user session
         run: |
@@ -330,7 +330,7 @@ jobs:
 
     steps:
       - name: Checkout workflows
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: workflows
 
@@ -346,21 +346,21 @@ jobs:
           rm -Rf ./workflows
 
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests
           pattern: ${{ matrix.database_backend }}-${{ matrix.image_type }}-*
           merge-multiple: true
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REPOSITORY_REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Docker tags
         id: docker_tags
@@ -393,7 +393,7 @@ jobs:
 
     steps:
       - name: Checkout workflows
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: workflows
 
