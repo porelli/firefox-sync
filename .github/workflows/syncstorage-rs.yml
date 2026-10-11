@@ -456,12 +456,6 @@ jobs:
           mkdir -p mozilla-services/${{ env.SERVICE_NAME }}
           curl -H 'Accept: application/vnd.github.v3.raw' -L -s https://github.com/mozilla-services/syncstorage-rs/raw/refs/tags/${{ needs.prepare-env.outputs.service_tag }}/CHANGELOG.md -o mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}
 
-      - name: Prepare changelog
-        if: needs.prepare-env.outputs.github_release == 'true'
-        run: |
-          sed -i -n '/<a name="${{ needs.prepare-env.outputs.service_tag }}"/,/^<a name=/ {/^<a name=/!p; /^<a name="${{ needs.prepare-env.outputs.service_tag }}"/p}' "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
-          sed "2s/$/ - Built on ${{ needs.prepare-env.outputs.build_date }}/" -i "./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
-
       - name: Checkout repository history
         if: needs.prepare-env.outputs.github_release == 'true'
         uses: actions/checkout@v7
@@ -470,27 +464,22 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Add the changes of this repository
+      - name: Prepare release notes
         if: needs.prepare-env.outputs.github_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # commits since the previous release, i.e. the latest one before this run creates a new one
+          # the previous release is the latest one, before this run creates a new one
           previous=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName 2> /dev/null || true)
           cd repository
-          {
-            echo ""
-            echo "#### Changes in this repository"
-            echo ""
-            if [ -n "${previous}" ] && git rev-parse -q --verify "refs/tags/${previous}" > /dev/null; then
-              changes=$(git log --no-merges --reverse --format='* %s ([%h](${{ github.server_url }}/${{ github.repository }}/commit/%H))' "${previous}..HEAD")
-              echo "Since ${previous}:"
-              echo ""
-              echo "${changes:-* no changes}"
-            else
-              git log --no-merges --reverse --format='* %s ([%h](${{ github.server_url }}/${{ github.repository }}/commit/%H))' HEAD
-            fi
-          } >> "../mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}"
+          ./.github/scripts/release-notes.sh \
+            "${{ needs.prepare-env.outputs.service_tag }}" \
+            "${{ needs.prepare-env.outputs.build_date }}" \
+            "../mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}" \
+            "${previous}" \
+            "${{ github.repository }}" \
+            "${{ github.server_url }}" > ../release-notes.md
+          cat ../release-notes.md
 
       - name: Create Release
         if: needs.prepare-env.outputs.github_release == 'true'
@@ -498,4 +487,4 @@ jobs:
         with:
           name: ${{ env.SERVICE_NAME }}
           tag: ${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.build_date }}
-          bodyFile: ./mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}
+          bodyFile: ./release-notes.md
