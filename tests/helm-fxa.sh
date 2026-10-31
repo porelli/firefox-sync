@@ -1937,7 +1937,7 @@ PY
   if out=$(helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set fxa.enabled=true --set admin.fxaSignIn=true --timeout 5m 2>&1); then
     fail "helm upgrade --set fxa.enabled=true accepted with existingSecret ffs-own"
   fi
-  want="firefox-sync: existingSecret ffs-own lacks FXA_ADMIN_DB_PASSWORD, FXA_AUTH_SECRET, FXA_CONTENT_SESSION_SECRET, FXA_FLOW_ID_KEY, FXA_MYSQL_PASSWORD, FXA_OAUTH_SECRET, FXA_PROFILE_SECRET, FXA_REDIS_PASSWORD, FXA_SESSION_TOKEN_HANDLE_KEY, which the self-hosted accounts need"
+  want="firefox-sync: existingSecret ffs-own lacks FXA_ADMIN_DB_PASSWORD, FXA_AUTH_SECRET, FXA_CONTENT_SESSION_SECRET, FXA_FLOW_ID_KEY, FXA_MYSQL_PASSWORD, FXA_OAUTH_SECRET, FXA_PROFILE_SECRET, FXA_REDIS_PASSWORD, FXA_SESSION_TOKEN_HANDLE_KEY, which the self-hosted accounts or the bootstrap accounts of your own servers need"
   grep -qF "${want}" <<< "${out}" || fail "helm upgrade --set fxa.enabled=true refused, but not by the existingSecret check: ${out}"
   [[ "$(helm history "${REL}" -o json | jq -r 'last | "\(.revision) \(.status)"')" == "${revision} deployed" ]] || fail "the refused upgrade left: $(helm history "${REL}" | tail -2)"
   ! kubectl get deploy,sts -o name | grep -q -- '-fxa-' || fail "the refused upgrade created: $(kubectl get deploy,sts -o name | grep -- '-fxa-')"
