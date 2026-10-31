@@ -222,6 +222,22 @@ for ENGINE in "$@"; do
       admin_case "a dynamic privilege only (BACKUP_ADMIN)" "GRANT BACKUP_ADMIN ON *.* TO 'ffs_dba'@'%';"
       admin_case "SELECT on mysql.user" "GRANT SELECT ON mysql.user TO 'ffs_dba'@'%';"
       admin_case "a role with SUPER" "CREATE ROLE ffs_super; GRANT SUPER ON *.* TO ffs_super; GRANT ffs_super TO 'ffs_dba'@'%';"
+      admin_case "a proxy grant (PROXY ON 'root'@'%')" "GRANT PROXY ON 'root'@'%' TO 'ffs_dba'@'%';"
+      # the accounts' bootstrap account on the same server: the stack's too, left to its own start
+      # by its name (FXA_DB_BOOTSTRAP_USER), else an administrator without SYSTEM_USER
+      printf '%s\n' "CREATE USER 'ffs_peer'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_peer'@'%';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}"
+      check "$? $(saidF "lack SYSTEM_USER: 'ffs_peer'@'%'")" "1 1" "mysql: another account with CREATE USER, not named as the other bootstrap account: refused"
+      db_setup sync -- "${BOOT[@]}" FXA_DB_BOOTSTRAP_USER=ffs_peer
+      check "$? $(said 'lack SYSTEM_USER')" "0 0" "mysql: the accounts' bootstrap account on the same server (FXA_DB_BOOTSTRAP_USER): left to its own start"
+      admin -e "DROP USER 'ffs_peer'@'%'" < /dev/null
+      # an account of a stack name with administrator privileges, on another host: refused, whatever it holds
+      printf '%s\n' "CREATE USER 'syncstorage'@'localhost' IDENTIFIED BY '${THEIRS}';" "GRANT SUPER ON *.* TO 'syncstorage'@'localhost';" \
+        "GRANT SYSTEM_USER ON *.* TO 'syncstorage'@'localhost';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}"
+      check "$? $(saidF "accounts of the stack's names on ${NAME}:3306 hold administrator privileges (on the whole server, on the mysql schema, a proxy, also through a role): 'syncstorage'@'localhost'")" "1 1" \
+        "mysql: 'syncstorage'@'localhost' with SUPER (and SYSTEM_USER): the bootstrap refused, naming it"
+      admin -e "DROP USER 'syncstorage'@'localhost'" < /dev/null
       printf '%s\n' "CREATE USER 'ffs_dba'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_dba'@'%';" "GRANT SYSTEM_USER ON *.* TO 'ffs_dba'@'%';" \
         "CREATE DATABASE other_app;" "CREATE USER 'other_app'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT ALL PRIVILEGES ON other_app.* TO 'other_app'@'%';" | admin > /dev/null
       db_setup sync -- "${BOOT[@]}"

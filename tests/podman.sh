@@ -1091,7 +1091,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # answers as above, no accounts, then: your own server? host, port, the databases and users
   # (MariaDB, MySQL: tokenserver database and user, storage database and user; PostgreSQL: the
   # database and its user), the alerts' destination, the nightly backups: yes
-  rm -f .env database-setup.sql database-bootstrap.sql
+  rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
   if [ "${SYNC_DB}" = postgres ]; then ext_names=("" ""); else ext_names=("" "" "" ""); fi
   # DB_BOOTSTRAP=1: then the stack applies database-setup.sql itself (the last question: yes,
   # the account ffs_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
@@ -1212,7 +1212,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   stop_quadlets
   podman rm -f "${EXTDB}" > /dev/null 2>&1
   podman network rm -f firefox-sync > /dev/null 2>&1
-  rm -f .env database-setup.sql database-bootstrap.sql
+  rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
 
   # the accounts on your own MySQL server: only what is installed (no MySQL here)
   # answers: ..., admin host, your own server for Sync? the accounts? host, port, user, policy user
