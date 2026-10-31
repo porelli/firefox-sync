@@ -16,6 +16,8 @@ Environment=FFS_DB_ENGINE=postgres
 Environment=SYNC_DB_CONTAINERS=%SYNC_DB_CONTAINERS%
 Environment=SYNC_DB_BOOTSTRAP_USER=%SYNC_DB_BOOTSTRAP_USER%
 Environment=SYNC_DB_BOOTSTRAP_PASSWORD=%SYNC_DB_BOOTSTRAP_PASSWORD%
+# the accounts' bootstrap account (its name only): the stack's too, on a server shared with them
+Environment=FXA_DB_BOOTSTRAP_USER=%FXA_DB_BOOTSTRAP_USER%
 Environment=SYNC_POSTGRES_HOST=%SYNC_POSTGRES_HOST%
 Environment=SYNC_POSTGRES_PORT=%SYNC_POSTGRES_PORT%
 Environment=SYNC_POSTGRES_NAME=%SYNC_POSTGRES_NAME%

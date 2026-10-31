@@ -115,6 +115,9 @@ spec:
             - name: SYNC_DB_BOOTSTRAP_PASSWORD
               value: ""
             {{- end }}
+            # the accounts' bootstrap account (its name only): the stack's too, on a server shared with them
+            - name: FXA_DB_BOOTSTRAP_USER
+              value: {{ ternary .Values.fxa.database.external.bootstrap.user "" (and .Values.fxa.enabled (not .Values.fxa.database.bundled)) | quote }}
             {{- if eq $backend "postgres" }}
             - name: FFS_DB_ENGINE
               value: postgres

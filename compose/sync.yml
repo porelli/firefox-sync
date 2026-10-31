@@ -60,6 +60,8 @@ services:
       SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
       SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
       SYNC_DB_BOOTSTRAP_PASSWORD: ${SYNC_DB_BOOTSTRAP_PASSWORD:-}
+      # the accounts' bootstrap account (its name only): the stack's too, on a server shared with them
+      FXA_DB_BOOTSTRAP_USER: ${FXA_DB_BOOTSTRAP_USER:-}
       ADMIN_DB_USER: ${ADMIN_DB_USER:-ffs_admin_ui}
       ADMIN_DB_SYNC_USER: ${ADMIN_DB_SYNC_USER:-ffs_admin_sync}
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}

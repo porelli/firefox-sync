@@ -65,6 +65,8 @@ services:
       FXA_DB_CONTAINERS: ${FXA_DB_CONTAINERS:-1}
       FXA_DB_BOOTSTRAP_USER: ${FXA_DB_BOOTSTRAP_USER:-}
       FXA_DB_BOOTSTRAP_PASSWORD: ${FXA_DB_BOOTSTRAP_PASSWORD:-}
+      # Sync's bootstrap account (its name only): the stack's too, on a server shared with Sync
+      SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
       FXA_MYSQL_HOST: ${FXA_MYSQL_HOST:-fxa-db}
       FXA_MYSQL_PORT: ${FXA_MYSQL_PORT:-3306}
       FXA_MYSQL_USER: ${FXA_MYSQL_USER:-root}

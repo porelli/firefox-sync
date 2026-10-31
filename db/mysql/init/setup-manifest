@@ -4,10 +4,10 @@
 # Copies, kept identical (the same test): db/mysql/init/setup-manifest, db/postgres/init/setup-manifest
 # (the init containers record them with the stack's database containers), admin/setup-manifest
 # (the version the admin UI expects).
-mysql/setup/fxa-bootstrap/001-bootstrap-account.sql 91883c6d524151c5a6b849765b420edc436cede8506dbe307933927cdc57ea05
+mysql/setup/fxa-bootstrap/001-bootstrap-account.sql 230635f3bf6ce75c6a4d8bfb755453fa8324b600333642d0fdcadc2bb327cf03
 mysql/setup/fxa-mariadb/001-accounts-and-policy.sql a5cd4018094b12dd3aafcb99652bc8fe2276dcacd225c972894c505d23016cde
 mysql/setup/fxa-mysql/001-accounts-and-policy.sql df3688c38345bbcd74cc6fd230b3c4d4c5d002a292584cfbd5a690af22d7fa53
-mysql/setup/sync-bootstrap/001-bootstrap-account.sql 519d250240e7830477a067d250331137cc91d6b151774ef74742bfb711040a43
+mysql/setup/sync-bootstrap/001-bootstrap-account.sql d0f35fdf01a23174f398221b4201234196ce6e73f0be5dde4564f433e04dba0b
 mysql/setup/sync/001-sync-and-admin-ui.sql 36e7d5054872053487d47918911948c3b11255e826a6209b11bbe86d45b1a533
 postgres/setup/sync-bootstrap/001-bootstrap-account.sql 74a1c18b344e2fde71e960c95c6b0b3f31c9a75a5b56aff921d408a91982d711
 postgres/setup/sync/001-sync-and-admin-ui.sql 711ba12269598a998633cda17bfb77466045b365112ecd9a4f033c6f85918710

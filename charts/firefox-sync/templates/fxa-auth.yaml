@@ -180,6 +180,9 @@ spec:
             - name: FXA_DB_BOOTSTRAP_PASSWORD
               value: ""
             {{- end }}
+            # Sync's bootstrap account (its name only): the stack's too, on a server shared with Sync
+            - name: SYNC_DB_BOOTSTRAP_USER
+              value: {{ ternary .Values.database.external.bootstrap.user "" (not .Values.database.bundled) | quote }}
             - name: FXA_MYSQL_HOST
               value: {{ $dbHost | quote }}
             - name: FXA_MYSQL_PORT

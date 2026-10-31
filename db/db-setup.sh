@@ -899,7 +899,7 @@ elif [ -n "${BOOT_USER}" ]; then
           case "${a# }" in User|Host|*_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
         done <<< "${p//,/$'\n'}" ;;
       "T \`mysql\`.\`global_grants\` SELECT"|"T \`mysql\`.\`role_edges\` SELECT"|"T \`mysql\`.\`db\` SELECT"|"T \`mysql\`.\`tables_priv\` SELECT") ;;
-      "T \`mysql\`.\`columns_priv\` SELECT"|"T \`mysql\`.\`procs_priv\` SELECT") ;;
+      "T \`mysql\`.\`columns_priv\` SELECT"|"T \`mysql\`.\`procs_priv\` SELECT"|"T \`mysql\`.\`proxies_priv\` SELECT") ;;
       "R "*|"X "*) ;;
       "T "*) p=${line#T } wide="${wide} ${p#* } on ${p%% *}," ;;
       # (a proxy, a line not understood)
@@ -922,11 +922,16 @@ elif [ -n "${BOOT_USER}" ]; then
     fi
     # an administrator: any privilege on the whole server beyond USAGE (the *_priv columns of
     # mysql.user, a dynamic privilege of mysql.global_grants), any grant on the mysql schema
-    # (mysql.db, tables_priv, columns_priv, procs_priv), itself or through its roles, recursively
-    # (mysql.role_edges); the bootstrap account and the stack's own users aside
+    # (mysql.db, tables_priv, columns_priv, procs_priv), a proxy grant (mysql.proxies_priv),
+    # itself or through its roles, recursively (mysql.role_edges); the bootstrap account alone
+    # aside. A user of the stack's names that is one (on any host) never should be: refused
     privs=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT GROUP_CONCAT(CONCAT('u.', COLUMN_NAME, ' = ''Y''') SEPARATOR ' OR ')
         FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 'user' AND COLUMN_NAME LIKE '%\_priv'") || privs=""
     stack_users=$(sql_settings "${KIND}" | while read -r placeholder setting; do [[ "${setting}" == *_USER ]] && [ -n "${!setting:-}" ] && printf "'%s'," "${!setting}"; done)
+    # (the bootstrap account of the stack's other scope, Sync's or the accounts', on the same
+    # server: the stack's too, its name alone, which its own start checks as this one)
+    PEER_USER=$([ "${MAIN}" = sync ] && echo "${FXA_DB_BOOTSTRAP_USER:-}" || echo "${SYNC_DB_BOOTSTRAP_USER:-}")
+    [[ -z "${PEER_USER}" || "${PEER_USER}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || fail "the other bootstrap account '${PEER_USER}': A-Z, a-z, 0-9 and _ only, at most 32"
     [ "${KIND}" != fxa ] || stack_users="${stack_users}'ffs_admin',"
     if [ -z "${privs}" ] || ! admins=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "WITH RECURSIVE reach (u, h, ru, rh) AS (
           SELECT User, Host, User, Host FROM mysql.user
@@ -937,13 +942,17 @@ elif [ -n "${BOOT_USER}" ]; then
           UNION SELECT User, Host FROM mysql.db WHERE 'mysql' LIKE Db
           UNION SELECT User, Host FROM mysql.tables_priv WHERE Db = 'mysql'
           UNION SELECT User, Host FROM mysql.columns_priv WHERE Db = 'mysql'
-          UNION SELECT User, Host FROM mysql.procs_priv WHERE Db = 'mysql')
-        SELECT DISTINCT CONCAT('''', r.u, '''@''', r.h, '''') FROM reach r JOIN admin a ON a.u = r.ru AND a.h = r.rh
-        WHERE NOT (r.u = '${BOOT_USER}' AND r.h = '%') AND r.u NOT IN (${stack_users%,})
-          AND NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = r.u AND g.HOST = r.h AND g.PRIV = 'SYSTEM_USER') ORDER BY 1"); then
+          UNION SELECT User, Host FROM mysql.procs_priv WHERE Db = 'mysql'
+          UNION SELECT User, Host FROM mysql.proxies_priv)
+        SELECT DISTINCT CONCAT(IF(r.u IN (${stack_users%,}), 'stack ', 'admin '), '''', r.u, '''@''', r.h, '''') FROM reach r JOIN admin a ON a.u = r.ru AND a.h = r.rh
+        WHERE NOT (r.u = '${BOOT_USER}' AND r.h = '%') AND NOT (r.u = '${PEER_USER:-${BOOT_USER}}' AND r.h = '%')
+          AND (r.u IN (${stack_users%,}) OR NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = r.u AND g.HOST = r.h AND g.PRIV = 'SYSTEM_USER')) ORDER BY 1"); then
       fail "${BOOT_USER} cannot read the administrators of ${MAIN_HOST}:${MAIN_PORT} ($(head -n 1 <<< "${admins:-the columns of mysql.user}")): run its setup migrations again as the server's administrator, they give it SELECT on the privilege tables of the mysql schema (never the passwords' hashes; db-setup.sh print ${MAIN}-bootstrap, database-bootstrap$([ "${MAIN}" = fxa ] && echo -fxa).sql; ${DOC_BOOT})"
     fi
-    [ -z "${admins}" ] || fail "accounts of ${MAIN_HOST}:${MAIN_PORT} with administrator privileges (any privilege on the whole server, or on the mysql schema, also through a role) lack SYSTEM_USER: $(paste -sd ',' - <<< "${admins}" | sed -e 's/,/, /g'). ${BOOT_USER} could change or drop them (CREATE USER). As the server's administrator: GRANT SYSTEM_USER ON *.* TO each of them, or unset ${USER_SETTING} and run the setup by hand (${DOC_BOOT})"
+    stack=$(sed -n 's/^stack //p' <<< "${admins}" | paste -sd ',' - | sed -e 's/,/, /g')
+    [ -z "${stack}" ] || fail "accounts of the stack's names on ${MAIN_HOST}:${MAIN_PORT} hold administrator privileges (on the whole server, on the mysql schema, a proxy, also through a role): ${stack}. The stack's users never need them: REVOKE them as the server's administrator, or drop those accounts if they are not the stack's (${DOC_BOOT})"
+    admins=$(sed -n 's/^admin //p' <<< "${admins}" | paste -sd ',' - | sed -e 's/,/, /g')
+    [ -z "${admins}" ] || fail "accounts of ${MAIN_HOST}:${MAIN_PORT} with administrator privileges (any privilege on the whole server, on the mysql schema, a proxy, also through a role) lack SYSTEM_USER: ${admins}. ${BOOT_USER} could change or drop them (CREATE USER). As the server's administrator: GRANT SYSTEM_USER ON *.* TO each of them, or unset ${USER_SETTING} and run the setup by hand (${DOC_BOOT})"
     warn "MySQL: ${BOOT_USER} (CREATE USER) can change or drop the accounts without SYSTEM_USER of ${MAIN_HOST}:${MAIN_PORT}, those of other applications too; the administrators hold SYSTEM_USER. Unset ${USER_SETTING} after this start to hold no such password (${DOC_BOOT})"
   fi
   # the accounts of a name: "<host>" per line (mysql.user's names and hosts, setup migration
