@@ -235,19 +235,24 @@ With an account that can create users, the same step runs the [setup migrations]
 
 It runs the SQL as `prepare_environment.sh` writes it: users with the host part `'%'`, and both Sync databases on one server (with `SYNC_STORAGE_DB_HOST` on another server it refuses: run the SQL by hand there). For other host parts, run your edited file by hand instead: an account of a stack name on another host stops the bootstrap (below). One start at a time: replicas of the chart wait for the lock.
 
-**The trade-off.** The stack then holds the password of an account that can create users. Its rights on databases are limited to the stack's own, but its rights on users are not:
+**The trade-off.** It is opt-in, and the default (the check alone, the SQL run by you) is the safest. With it the stack holds the password of an account that can manage other database accounts. Its rights on databases are limited to the stack's own, but its rights on accounts are not:
 
-- MariaDB: `CREATE USER` can also change, rename or drop any account of the server, `root` too. MariaDB has nothing that protects an account from it. Whoever gets this password can make themselves the server's administrator.
-- MySQL 8.0.16 and later: the same, except for the accounts with `SYSTEM_USER`. `root` has it; give it to every administrator account of the server, so that the bootstrap account cannot change them.
-- PostgreSQL 16 and later: `CREATEROLE` reaches only the roles it created, or was given `ADMIN OPTION` on. Before 16 it reaches every role but the superusers, also the predefined ones such as `pg_read_server_files`: close to a superuser.
+- MariaDB: `CREATE USER` can change, rename or drop any account of the server, `root` too. MariaDB has nothing that protects an account from it: whoever gets this password can make themselves the server's administrator. The bootstrap account is an administrator's equivalent there. The stack allows it, and says so in a warning at every start.
+- MySQL: the same, except for the accounts with `SYSTEM_USER` (8.0.16 and later). The stack refuses the bootstrap unless every account of the server with administrator privileges (`SUPER`, `CREATE USER` or `GRANT OPTION` on the whole server, and `root`) holds `SYSTEM_USER`, and names those that lack it: `GRANT SYSTEM_USER ON *.* TO ...` as the server's administrator. `root` has it by default. The bootstrap account itself must not have it. Before 8.0.16 it is refused.
+- PostgreSQL: 16 or later only. There `CREATEROLE` reaches only the roles it created, or was given `ADMIN OPTION` on. Before 16 it reaches every role but the superusers, the predefined ones such as `pg_read_server_files` too: close to a superuser, so the stack refuses the bootstrap there and keeps the check alone.
 
-So use it with a database server, or an instance, that the stack has to itself. Otherwise keep the default: the stack then holds no such password, and you run the SQL after an upgrade yourself.
+So use it with a database server, or an instance, that the stack has to itself, and hold that password no longer than you need it:
+
+- docker compose and the Quadlets: set `SYNC_DB_BOOTSTRAP_USER` and `SYNC_DB_BOOTSTRAP_PASSWORD` (`FXA_DB_BOOTSTRAP_*`) for the first start after an upgrade, then empty them in `.env` (with the Quadlets, `./prepare_environment.sh --render-units`). The next starts check the setup migrations as before.
+- Helm: set `database.external.bootstrap.user` and the key `SYNC_DB_BOOTSTRAP_PASSWORD` of your `existingSecret` for the upgrade only, then empty the value and remove the key.
+
+Otherwise keep the default: the stack then holds no such password, and you run the SQL after an upgrade yourself.
 
 What the stack does with that account, whatever it could do:
 
 - It creates and changes the users of the SQL only, under the names of `.env`. It refuses a name of the server's own accounts (`root`, `mysql`, `postgres`...) and its own name as one of them.
 - MariaDB and MySQL: a user of such a name that exists already must be the one of the SQL, `'name'@'%'`, alone of its name, and sign in there with the password of `.env` (`CURRENT_USER()` that account): otherwise it is someone else's, and the start stops without changing it. Another account of that name (`'name'@'10.%'`, or a role) stops it too, named: the bootstrap never creates `'name'@'%'` beside it, which would widen where that name signs in from. Before any change of a file, every user of the file is checked.
-- PostgreSQL: a role of such a name is the stack's when the bootstrap account administers it (`ADMIN OPTION`: the roles it created, and those `database-bootstrap.sql` gives it), or when it owns the stack's database of its name. A sign-in proves nothing there (`pg_hba.conf` may trust it): a role it does not administer stops the start, untouched.
+- PostgreSQL: a role of such a name is the stack's when the bootstrap account administers it (`ADMIN OPTION`: the roles it created, and those `database-bootstrap.sql` gives it). A sign-in proves nothing there (`pg_hba.conf` may trust it): a role it does not administer stops the start, untouched.
 - It refuses an account that is an administrator, also through its roles (a `SET ROLE` away): on MariaDB and MySQL one with more than `CREATE USER` on the whole server (`SYSTEM_USER`, `SUPER`, `ALL PRIVILEGES`...), a privilege on the `mysql` schema, or a proxy grant; on PostgreSQL a superuser, `BYPASSRLS`, `REPLICATION`, or a member of a superuser role, of `pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`, `pg_read_all_data` or `pg_write_all_data`.
 
 #### The bootstrap account
@@ -260,7 +265,9 @@ MariaDB and MySQL, for Sync:
 CREATE USER IF NOT EXISTS 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 ALTER USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 GRANT CREATE USER ON *.* TO 'ffs_bootstrap'@'%';
-GRANT SELECT (User, Host) ON mysql.user TO 'ffs_bootstrap'@'%';
+GRANT SELECT (User, Host, Super_priv, Create_user_priv, Grant_priv) ON mysql.user TO 'ffs_bootstrap'@'%';
+-- MySQL only:
+GRANT SELECT ON mysql.global_grants TO 'ffs_bootstrap'@'%';
 GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
@@ -269,7 +276,7 @@ GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa_oauth`, `fxa_profile`, `pushbox` and `ffs` instead of the three above.
 
 - `CREATE USER` creates the stack's users, and sets their passwords again (`ALTER USER`).
-- `SELECT (User, Host) ON mysql.user`: which accounts of the stack's names exist, on which hosts. Nothing else of `mysql.user`, not the passwords' hashes.
+- `SELECT (User, Host, ...) ON mysql.user`: which accounts of the stack's names exist, on which hosts, and which accounts are administrators. Nothing else of `mysql.user`, not the passwords' hashes. On MySQL also `mysql.global_grants` (who holds `SYSTEM_USER`, no secret there). `prepare_environment.sh` writes the MySQL line for MySQL only.
 - `ALL PRIVILEGES ... WITH GRANT OPTION` on each database creates it, and gives the stack's users their grants there: a user can only grant what it has, with `GRANT OPTION`. The SQL grants `CREATE ROUTINE`, `TRIGGER`, `EXECUTE` and more; `ALL PRIVILEGES` covers them, `EVENT` too.
 - Nothing more. The procedures, triggers and events are created later by the init container and `fxa-policy`, as the stack's own users. The server still needs `log_bin_trust_function_creators=ON` for them with binary logging, see [Server requirements](#server-requirements); `SUPER` is not needed.
 
@@ -284,7 +291,7 @@ GRANT ffs_admin_ui TO ffs_bootstrap WITH ADMIN OPTION;
 GRANT ffs_admin_sync TO ffs_bootstrap WITH ADMIN OPTION;
 ```
 
-- `CREATEROLE` creates the roles and sets their passwords; on PostgreSQL 16 and later only of the roles it created or administers, hence `ADMIN OPTION` on those that exist. The bootstrap takes only the roles it administers for the stack's (before 16 it gives itself `ADMIN OPTION` on those it creates), so give it `ADMIN OPTION` only on roles that are the stack's.
+- `CREATEROLE` creates the roles and sets their passwords, of the roles it created or administers only (PostgreSQL 16 and later, which the bootstrap needs), hence `ADMIN OPTION` on those that exist. The bootstrap takes only the roles it administers for the stack's, so give it `ADMIN OPTION` only on roles that are the stack's.
 - `CREATEDB` creates the databases. The SQL makes the account a member of their owners, so that it may create them for those owners and close them to the other roles.
 
 The stack's tests run the bootstrap with exactly these accounts, on MariaDB, MySQL and PostgreSQL ([Testing](development/testing.md)).

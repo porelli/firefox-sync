@@ -739,11 +739,13 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
         -e "s|@FXA_ADMIN_PASSWORD@|${FXA_ADMIN_DB_PASSWORD}|g"; } > "${WORK}/database-setup.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-setup.sql")" 0 "external database: SQL templates filled in"
   if [ -n "${DB_BOOTSTRAP:-}" ]; then
-    # only the accounts of docs/databases.md#the-bootstrap-account: the stack does the rest
+    # only the accounts of docs/databases.md#the-bootstrap-account: the stack does the rest (their
+    # "-- MySQL: " lines on MySQL)
+    mysql_only=$([ "${FXA_DB}" = mysql ] && echo 's/^-- MySQL: //')
     { [ "${SYNC_DB_CONTAINERS:-1}" = 0 ] && sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
           -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
-          -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" "${CODE}"/db/mysql/setup/sync-bootstrap/*.sql
-      sed -e "s|@BOOTSTRAP_USER@|${FXA_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${FXA_DB_BOOTSTRAP_PASSWORD}|g" "${CODE}"/db/mysql/setup/fxa-bootstrap/*.sql; } \
+          -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "${mysql_only}" "${CODE}"/db/mysql/setup/sync-bootstrap/*.sql
+      sed -e "s|@BOOTSTRAP_USER@|${FXA_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${FXA_DB_BOOTSTRAP_PASSWORD}|g" -e "${mysql_only}" "${CODE}"/db/mysql/setup/fxa-bootstrap/*.sql; } \
       > "${WORK}/database-bootstrap.sql"
     check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap accounts' SQL filled in"
     extdb_admin < "${WORK}/database-bootstrap.sql"

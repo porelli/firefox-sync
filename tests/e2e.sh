@@ -475,7 +475,8 @@ extdb_bootstrap_account() {
   sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
       -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
       -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "s|@SYNC_POSTGRES_USER@|${SYNC_POSTGRES_USER}|g" \
-      -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" "${template[@]}" > "${WORK}/database-bootstrap.sql"
+      -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" \
+      -e "$([ "${BACKEND}" = mysql ] && echo 's/^-- MySQL: //')" "${template[@]}" > "${WORK}/database-bootstrap.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap account's SQL filled in" || return 1
   extdb_admin < "${WORK}/database-bootstrap.sql" > /dev/null || return 1
 }

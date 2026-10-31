@@ -25,7 +25,8 @@
 #     database-setup.sql run by hand stop, its owner as it was; a grant on the stack's
 #     database to another role and a table there of another role: warnings.
 # Environment: SLOT (tests/slot.sh: the names), MYSQL_IMAGE (mysql:lts), MARIADB_IMAGE (mariadb:lts),
-#   POSTGRES_IMAGE (postgres:latest), UPGRADE_FROM (a tree of an earlier release, its
+#   POSTGRES_IMAGE (postgres:latest), POSTGRES_OLD_IMAGE (postgres:15-alpine: the bootstrap
+#   refused before 16), UPGRADE_FROM (a tree of an earlier release, its
 #   db/<engine>/sync.sql for the baseline; else git's BASE, default main; neither: skipped)
 set -u
 TESTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -36,7 +37,7 @@ FAILED=0
 check() { if [ "$1" = "$2" ]; then echo "PASS: $3"; else echo "FAIL: $3 (expected '$2', got '$1')"; FAILED=1; [ -z "${WORK:-}" ] || { echo "---- the last db-setup.sh output:"; sed 's/^/    /' "${WORK}/out.log" 2> /dev/null | tail -40; }; fi; }
 rnd() { tr -dc '[:alnum:]' < /dev/urandom | head -c 20; }
 NAME=ffs-db-setup${SLOT_SUFFIX}
-cleanup() { docker rm -f "${NAME}" > /dev/null 2>&1; docker network rm "${NAME}" > /dev/null 2>&1; rm -rf "${WORK:-}"; }
+cleanup() { docker rm -f "${NAME}" "${NAME}-old" > /dev/null 2>&1; docker network rm "${NAME}" > /dev/null 2>&1; rm -rf "${WORK:-}"; }
 trap cleanup EXIT
 WORK=$(mktemp -d)
 
@@ -189,6 +190,8 @@ for ENGINE in "$@"; do
       "GRANT ffs_inner TO ffs_outer;" "GRANT ffs_outer TO 'ffs_wide'@'%';" | admin > /dev/null
     db_setup sync -- SYNC_DB_BOOTSTRAP_USER=ffs_wide "SYNC_DB_BOOTSTRAP_PASSWORD=${BOOT_PW}"
     check "$? $(said 'ffs_wide holds .*SUPER.* (itself or through its roles)')" "1 1" "${ENGINE}: a bootstrap account with SUPER through a role of a role refused"
+    # (accounts with CREATE USER or SUPER and no SYSTEM_USER: gone, the check below needs none)
+    printf '%s\n' "DROP USER 'ffs_wide'@'%';" "DROP ROLE ffs_outer;" "DROP ROLE ffs_inner;" | admin > /dev/null
     admin -e "GRANT INSERT ON mysql.* TO 'ffs_bootstrap'@'%'" < /dev/null
     db_setup sync -- "${BOOT[@]}"
     check "$? $(said 'ffs_bootstrap holds INSERT on the mysql schema')" "1 1" "${ENGINE}: a bootstrap account with a privilege on the mysql schema refused"
@@ -203,6 +206,20 @@ for ENGINE in "$@"; do
     db_setup sync -- "${BOOT[@]}"
     check "$? $(said 'ffs_bootstrap holds .*WITH GRANT OPTION on the whole server')" "1 1" "${ENGINE}: a bootstrap account with GRANT OPTION on the whole server refused"
     admin -e "REVOKE GRANT OPTION ON *.* FROM 'ffs_bootstrap'@'%'" < /dev/null
+    if [ "${ENGINE}" = mysql ]; then
+      # MySQL: CREATE USER reaches every account without SYSTEM_USER: every administrator of the
+      # server must hold it (root does), or the bootstrap is refused, naming them
+      printf '%s\n' "CREATE USER 'ffs_dba'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_dba'@'%';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}"
+      check "$? $(saidF "with administrator privileges (SUPER, CREATE USER or GRANT OPTION on the whole server, or root) lack SYSTEM_USER: 'ffs_dba'@'%'") $(as ffs_dba "${THEIRS}")" "1 1 1" \
+        "mysql: an administrator account without SYSTEM_USER: the bootstrap refused, naming it, the account untouched"
+      admin -e "GRANT SYSTEM_USER ON *.* TO 'ffs_dba'@'%'" < /dev/null
+      db_setup sync -- "${BOOT[@]}"
+      check "$? $(said 'lack SYSTEM_USER')" "0 0" "mysql: with SYSTEM_USER: the bootstrap goes on"
+      admin -e "DROP USER 'ffs_dba'@'%'" < /dev/null
+      # (and back to an empty server for the normal path)
+      printf '%s\n' "DROP DATABASE tokenserver;" "DROP DATABASE syncstorage;" "DROP DATABASE ffs_admin;" "DROP USER 'tokenserver'@'%', 'syncstorage'@'%', 'ffs_admin_ui'@'%', 'ffs_admin_sync'@'%';" | admin > /dev/null
+    fi
   fi
 
   # the normal path: two at once on an empty server (replicas of the chart: the lock), applied
@@ -213,6 +230,8 @@ for ENGINE in "$@"; do
   cat "${WORK}/a.log" "${WORK}/b.log" > "${WORK}/out.log"
   check "${first} ${second} $(said '✓ setup migrations 001 applied as ffs_bootstrap') $(said 'every user, grant and database of database-setup.sql is there') $(versions) $(state)" \
     "0 0 1 2 1 bootstrap ok" "${ENGINE}: two bootstraps at once on an empty server: one applies 001 (the lock), the other finds it there; both check it, it is recorded (how bootstrap)"
+  [ "${ENGINE}" != mariadb ] || check "$(said 'WARNING: MariaDB has no protection of accounts: ffs_bootstrap (CREATE USER) can change or drop any account')" 2 \
+    "mariadb: the bootstrap warns at every start that CREATE USER reaches every account (none protected)"
   db_setup sync -- "${BOOT[@]}"
   check "$? $(said '✓ setup migrations .* applied as')" "0 0" "${ENGINE}: run again, nothing pending, nothing in the way (the users exist, they are the stack's)"
   db_setup sync
@@ -326,6 +345,22 @@ for ENGINE in "$@"; do
   check "$? $(versions)" "0 1 manual" "${ENGINE}: database-setup.sql (db-setup.sh print sync) run by hand: recorded as manual"
   db_setup sync
   check "$? $(said 'setup version 001')" "0 1" "${ENGINE}: then the start finds it there"
+  if [ "${ENGINE}" = postgres ]; then
+    echo "== postgres: a server before 16 (${POSTGRES_OLD_IMAGE:-postgres:15-alpine}): no bootstrap, the check alone"
+    OLD=${NAME}-old
+    docker rm -f "${OLD}" > /dev/null 2>&1
+    docker run -d --rm --name "${OLD}" --network "${NAME}" --tmpfs /var/lib/postgresql/data -e POSTGRES_PASSWORD="${ROOT_PW}" "${POSTGRES_OLD_IMAGE:-postgres:15-alpine}" > /dev/null || exit 1
+    old_admin() { docker exec -i -e PGPASSWORD="${ROOT_PW}" "${OLD}" psql -X -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -tA "$@"; }
+    for _ in $(seq 1 60); do old_admin -c 'SELECT 1' < /dev/null > /dev/null 2>&1 && break; sleep 2; done
+    db_setup -o "${WORK}/boot.sql" print sync-bootstrap --passwords -- "${BOOT[@]}" && old_admin < "${WORK}/boot.sql" > /dev/null
+    db_setup sync -- "${BOOT[@]}" "SYNC_POSTGRES_HOST=${OLD}"
+    check "$? $(said 'the bootstrap needs PostgreSQL 16 or later') $(old_admin -c "SELECT COUNT(*) FROM pg_roles WHERE rolname = 'syncserver'" < /dev/null)" "1 1 0" \
+      "postgres before 16: the bootstrap refused (CREATEROLE close to a superuser there), nothing created"
+    db_setup -o "${WORK}/database-setup.sql" print sync --passwords && old_admin -q -f - < "${WORK}/database-setup.sql" > /dev/null 2>&1
+    db_setup sync -- "SYNC_POSTGRES_HOST=${OLD}"
+    check "$? $(said 'setup version 001')" "0 1" "postgres before 16: database-setup.sql by hand, then the check alone passes"
+    docker rm -f "${OLD}" > /dev/null 2>&1
+  fi
   cleanup
 done
 [ "${FAILED}" = 0 ] && echo "RESULT db_setup: all checks passed" || echo "RESULT db_setup: some checks FAILED"

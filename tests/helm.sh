@@ -1713,7 +1713,7 @@ start_extdb() {
     EXT_BOOT_SQL=$(mktemp)
     sed -e "s|@BOOTSTRAP_USER@|ffs_bootstrap|g" -e "s|@BOOTSTRAP_PASSWORD@|${EXT_BOOT}|g" -e "s|@SYNC_TOKENSERVER_DATABASE@|${EXT_TS_DB}|g" \
       -e "s|@SYNC_STORAGE_DATABASE@|${EXT_ST_DB}|g" -e "s|@ADMIN_DATABASE@|${EXT_ADMIN_DB}|g" -e "s|@SYNC_POSTGRES_USER@|${EXT_PG_USER}|g" \
-      -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" "${REPO_ROOT}"/db/"$([[ ${BACKEND} == postgres ]] && echo postgres || echo mysql)"/setup/sync-bootstrap/*.sql > "${EXT_BOOT_SQL}"
+      -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" -e "$([[ ${BACKEND} == mysql ]] && echo 's/^-- MySQL: //')" "${REPO_ROOT}"/db/"$([[ ${BACKEND} == postgres ]] && echo postgres || echo mysql)"/setup/sync-bootstrap/*.sql > "${EXT_BOOT_SQL}"
     extdb_server extdb "${EXT_BOOT_SQL}"
     check "your own database server (${EXTDB_IMAGE}, not the chart's) with only the bootstrap account of db/${BACKEND}/setup/sync-bootstrap"
   else
