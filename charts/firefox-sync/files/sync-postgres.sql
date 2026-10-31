@@ -1,10 +1,17 @@
 -- The Sync server on your PostgreSQL 11+ server (docs/databases.md#your-own-server).
--- Run with psql as a superuser (or a role with CREATEROLE and CREATEDB). prepare_environment.sh
--- fills in the placeholders from .env and writes the result to database-setup.sql.
--- Run again, it changes nothing but the passwords: the roles and databases are created when
--- they are missing (\gexec runs the statement the SELECT before it returns, none when it
--- returns no row), so it runs with ON_ERROR_STOP too, as the stack's bootstrap does
--- (docs/databases.md#let-the-stack-apply-them).
+-- Run with psql 10 or later as a superuser (or a role with CREATEROLE and CREATEDB).
+-- prepare_environment.sh fills in the placeholders from .env and writes the result to
+-- database-setup.sql. Run again, it changes nothing but the passwords: the roles and databases
+-- are created when they are missing (\gexec runs the statement the SELECT before it returns,
+-- none when it returns no row), so it runs with ON_ERROR_STOP too, as the stack's bootstrap
+-- does (docs/databases.md#let-the-stack-apply-them). A database of that name that another role
+-- owns is never taken over: it stops here, before any change.
+SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '@SYNC_POSTGRES_DATABASE@'
+  AND pg_catalog.pg_get_userbyid(datdba) <> '@SYNC_POSTGRES_USER@') AS ffs_sync_foreign \gset
+\if :ffs_sync_foreign
+DO $$ BEGIN RAISE EXCEPTION 'the database @SYNC_POSTGRES_DATABASE@ exists and is not @SYNC_POSTGRES_USER@''s: database-setup.sql does not take it over. Give it to @SYNC_POSTGRES_USER@ yourself (ALTER DATABASE @SYNC_POSTGRES_DATABASE@ OWNER TO @SYNC_POSTGRES_USER@) if it is the stack''s, or choose another SYNC_POSTGRES_NAME (docs/databases.md#create-the-databases-and-users)'; END $$;
+\quit
+\endif
 SELECT 'CREATE ROLE @SYNC_POSTGRES_USER@ LOGIN' WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '@SYNC_POSTGRES_USER@')
 \gexec
 -- (a new password after prepare_environment.sh ran again)
@@ -18,8 +25,6 @@ SELECT 'GRANT @SYNC_POSTGRES_USER@ TO CURRENT_USER' WHERE NOT pg_catalog.pg_has_
 -- needed.
 SELECT 'CREATE DATABASE @SYNC_POSTGRES_DATABASE@ OWNER @SYNC_POSTGRES_USER@' WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '@SYNC_POSTGRES_DATABASE@')
 \gexec
--- (an existing database, created by another role)
-ALTER DATABASE @SYNC_POSTGRES_DATABASE@ OWNER TO @SYNC_POSTGRES_USER@;
 -- other roles of a shared server: no connections, no temporary tables
 REVOKE ALL ON DATABASE @SYNC_POSTGRES_DATABASE@ FROM PUBLIC;
 -- The admin UI: its own database (the event log, the audit trail, notes, metrics, backup
@@ -28,6 +33,12 @@ REVOKE ALL ON DATABASE @SYNC_POSTGRES_DATABASE@ FROM PUBLIC;
 -- (the code the owner above can put in its database runs as it). The init container (as
 -- the owner of the Sync tables) gives it SELECT on them, UPDATE of max users, DELETE of rows
 -- of users and of what they store (docs/reference/database-users.md#postgresql)
+SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '@ADMIN_DATABASE@'
+  AND pg_catalog.pg_get_userbyid(datdba) <> '@ADMIN_USER@') AS ffs_admin_foreign \gset
+\if :ffs_admin_foreign
+DO $$ BEGIN RAISE EXCEPTION 'the database @ADMIN_DATABASE@ exists and is not @ADMIN_USER@''s: database-setup.sql does not take it over. Give it to @ADMIN_USER@ yourself if it is the stack''s, or choose another ADMIN_DB_NAME (docs/databases.md#create-the-databases-and-users)'; END $$;
+\quit
+\endif
 SELECT 'CREATE ROLE @ADMIN_USER@ LOGIN' WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '@ADMIN_USER@')
 \gexec
 SELECT 'CREATE ROLE @ADMIN_SYNC_USER@ LOGIN' WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '@ADMIN_SYNC_USER@')
@@ -44,7 +55,6 @@ SELECT 'GRANT @ADMIN_USER@ TO CURRENT_USER' WHERE NOT pg_catalog.pg_has_role(cur
 -- there is not its role's
 SELECT 'CREATE DATABASE @ADMIN_DATABASE@ OWNER @ADMIN_USER@ TEMPLATE template0 ALLOW_CONNECTIONS false' WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '@ADMIN_DATABASE@')
 \gexec
-ALTER DATABASE @ADMIN_DATABASE@ OWNER TO @ADMIN_USER@;
 REVOKE ALL ON DATABASE @ADMIN_DATABASE@ FROM PUBLIC;
 ALTER DATABASE @ADMIN_DATABASE@ ALLOW_CONNECTIONS true;
 \connect @ADMIN_DATABASE@

@@ -269,6 +269,39 @@ mysql_check() {
 pg_sql() { # user password database query
   PGPASSWORD="$2" PGCONNECT_TIMEOUT=10 psql -X -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "$1" -d "$3" -v ON_ERROR_STOP=1 -tA -c "$4" < /dev/null 2>&1
 }
+# pg_foreign <user> <password> <database> <the stack's roles...>: the grants on the database to
+# roles but those (PUBLIC: checked apart), and its objects that its owner does not own (the
+# code of another role, which the stack's sessions would run), at most 5 of each
+pg_foreign() {
+  local user=$1 password=$2 db=$3 allowed out
+  shift 3
+  allowed=$(printf "'%s'," "$@")
+  out=$(q "${user}" "${password}" "${db}" "SELECT string_agg(DISTINCT pg_get_userbyid(a.grantee), ' ') FROM pg_database d, aclexplode(d.datacl) a
+    WHERE d.datname = current_database() AND a.grantee <> 0 AND pg_get_userbyid(a.grantee) NOT IN (${allowed%,})")
+  for role in ${out}; do
+    problem "the role ${role} has grants on the database ${db}, which is the stack's: REVOKE ALL ON DATABASE ${db} FROM ${role};"
+  done
+  out=$(q "${user}" "${password}" "${db}" "SELECT string_agg(o, ', ') FROM (SELECT o FROM (
+      SELECT format('%s %s (%s)', CASE c.relkind WHEN 'v' THEN 'view' WHEN 'S' THEN 'sequence' ELSE 'table' END, c.oid::regclass, pg_get_userbyid(c.relowner)) AS o
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relowner <> (SELECT datdba FROM pg_database WHERE datname = current_database()) AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_%'
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
+      UNION ALL
+      SELECT format('function %s (%s)', p.oid::regprocedure, pg_get_userbyid(p.proowner))
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proowner <> (SELECT datdba FROM pg_database WHERE datname = current_database())
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_%'
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+      UNION ALL
+      SELECT format('schema %s (%s)', n.nspname, pg_get_userbyid(n.nspowner))
+        FROM pg_namespace n
+        WHERE n.nspowner NOT IN ((SELECT datdba FROM pg_database WHERE datname = current_database()), 10,
+            COALESCE((SELECT oid FROM pg_roles WHERE rolname = 'pg_database_owner'), 0))
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'public') AND n.nspname NOT LIKE 'pg\_%'
+    ) x ORDER BY o LIMIT 5) y")
+  [ -z "${out}" ] || problem "in the database ${db}, what its owner ${user} does not own (another role's code, which the stack would run): ${out}. ALTER ... OWNER TO ${user}, or drop them"
+}
 pg_check() {
   local owner=${SYNC_POSTGRES_USER} db=${SYNC_POSTGRES_NAME} out role
   if ! out=$(pg_sql "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT 1"); then
@@ -277,6 +310,7 @@ pg_check() {
   fi
   # pg_catalog alone in the search path: nothing of the public schema stands in for a name
   q() { pg_sql "$1" "$2" "$3" "SET search_path = pg_catalog, pg_temp; $4" | tail -n 1; }
+  pg_foreign "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "${owner}" "${ADMIN_DB_SYNC_USER:-ffs_admin_sync}"
   [ "$(q "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()")" = "${owner}" ] \
     || problem "the database ${db} is not ${owner}'s: ALTER DATABASE ${db} OWNER TO ${owner};"
   [ "$(q "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT has_database_privilege('public', current_database(), 'CONNECT')")" = f ] \
@@ -295,7 +329,10 @@ pg_check() {
     || problem "every role may connect to the database ${ADMIN_DB_NAME}: REVOKE ALL ON DATABASE ${ADMIN_DB_NAME} FROM PUBLIC;"
   if ! out=$(pg_sql "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" "SELECT 1"); then
     problem "'${ADMIN_DB_USER}' cannot sign in to the database ${ADMIN_DB_NAME} ($(head -n 1 <<< "${out}")): ALTER ROLE ${ADMIN_DB_USER} PASSWORD '<ADMIN_DB_PASSWORD>';"
-  elif [ "$(q "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" "SELECT has_schema_privilege('public', 'public', 'CREATE')")" != f ]; then
+    return
+  fi
+  pg_foreign "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" "${ADMIN_DB_USER}"
+  if [ "$(q "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" "SELECT has_schema_privilege('public', 'public', 'CREATE')")" != f ]; then
     # (PostgreSQL 11 to 14: a role that is no superuser cannot revoke it, the admin UI then
     # refuses what another role puts there: a warning)
     echo "WARNING: every role may create tables in the public schema of ${ADMIN_DB_NAME}: as a superuser, \\connect ${ADMIN_DB_NAME} and REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
@@ -328,12 +365,25 @@ if [ -z "${BOOT_USER}" ]; then
   exit 0
 fi
 
-# ---- the bootstrap: the SQL as BOOT_USER, then the check
+# ---- the bootstrap: the SQL as BOOT_USER, then the check. The account can create and change
+# users (docs/databases.md#the-bootstrap-account): it is only ever given the stack's own names,
+# never a reserved one, never a user of that name it did not create (one that does not sign in
+# with the stack's password), and it must not be an administrator of the server itself
 [[ "${BOOT_USER}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || fail "${USER_SETTING} '${BOOT_USER}': A-Z, a-z, 0-9 and _ only, at most 32"
 echo "${WHAT}: applying ${FILE} as ${BOOT_USER} (${USER_SETTING}) on ${MAIN_HOST}:${MAIN_PORT}"
 if [ "${ENGINE}" != postgres ] && [ "${SCOPE}" = sync ] && [ "${STORAGE_HOST} ${STORAGE_PORT}" != "${MAIN_HOST} ${MAIN_PORT}" ]; then
   fail "the storage database is on another server (SYNC_STORAGE_DB_HOST, SYNC_STORAGE_DB_PORT): the bootstrap needs both Sync databases on one server. Unset ${USER_SETTING} and run ${FILE} by hand, as docs/databases.md#create-the-databases-and-users says"
 fi
+# the names of the server's own accounts and roles (the images' too: MariaDB's mysql and
+# healthcheck), and the bootstrap account's: never one of the stack's users
+RESERVED="root mysql healthcheck mariadb_sys mysql_sys postgres public ${BOOT_USER}"
+while read -r placeholder setting; do
+  [[ "${setting}" == *_USER ]] || continue
+  value=${!setting:-}
+  case " ${RESERVED} " in
+    *" ${value} "*) [ -n "${value}" ] && fail "${setting} is '${value}', a name of the server's own accounts or the bootstrap account's: the bootstrap creates and changes the stack's users only, choose another name (docs/databases.md#the-bootstrap-account)" ;;
+  esac
+done < <(sql_settings "${KIND}")
 wait_server "${MAIN_HOST}" "${MAIN_PORT}"
 # the clients' messages without a password: each one of the settings as <SETTING> (MariaDB's
 # client repeats the failing statement, psql its line)
@@ -353,28 +403,75 @@ failed() {
   echo "  The account needs the grants of docs/databases.md#the-bootstrap-account (${DOC})"
   exit 1
 }
+foreign() { # <user> <its setting>
+  failed "'$1' exists on the server and does not sign in with <$2>: it is not one of this stack's users (or one with the passwords of an earlier .env), and the bootstrap does not change it. Give it that password yourself if it is the stack's, or choose another name"
+}
 if [ "${ENGINE}" = postgres ]; then
+  boot_psql() { PGPASSWORD="${BOOT_PASSWORD}" PGCONNECT_TIMEOUT=10 psql -X -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "${BOOT_USER}" -d postgres -v ON_ERROR_STOP=1 "$@" 2>&1; }
+  out=$(boot_psql -tA -c "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user") \
+    || { printf '%s\n' "${out}" | redact; failed "cannot sign in"; }
+  [ "${out}" = f ] || failed "${BOOT_USER} is a superuser: the bootstrap account must be a role with CREATEROLE and CREATEDB only (docs/databases.md#the-bootstrap-account)"
+  # the stack's roles that exist: theirs if they sign in with the stack's password (a database
+  # they may not connect to says so after the password)
+  roles=("${SYNC_POSTGRES_USER} SYNC_POSTGRES_PASSWORD")
+  [ -z "${ADMIN_DB_PASSWORD:-}" ] || roles+=("${ADMIN_DB_USER} ADMIN_DB_PASSWORD" "${ADMIN_DB_SYNC_USER} ADMIN_DB_PASSWORD")
+  for pair in "${roles[@]}"; do
+    read -r role setting <<< "${pair}"
+    [ "$(boot_psql -tA -c "SELECT COUNT(*) FROM pg_catalog.pg_roles WHERE rolname = '${role}'")" = 1 ] || continue
+    if ! out=$(PGPASSWORD="${!setting}" PGCONNECT_TIMEOUT=10 psql -X -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "${role}" -d postgres -tA -c 'SELECT 1' < /dev/null 2>&1) \
+      && ! grep -qE 'permission denied for database|database "[^"]*" does not exist' <<< "${out}"; then
+      foreign "${role}" "${setting}"
+    fi
+  done
   # (a database every role reaches to start from; the SQL connects to the admin UI's itself)
-  if ! out=$(PGPASSWORD="${BOOT_PASSWORD}" PGCONNECT_TIMEOUT=10 psql -X -q -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "${BOOT_USER}" \
-      -d postgres -v ON_ERROR_STOP=1 -f "${RENDERED}" 2>&1); then
+  if ! out=$(boot_psql -q -f "${RENDERED}"); then
     printf '%s\n' "${out}" | grep -v 'NOTICE:' | redact
     # psql:<file>:<line>: ERROR: the statement of that line
     line=$(printf '%s\n' "${out}" | sed -n 's/^psql:[^:]*:\([0-9][0-9]*\): ERROR:.*/\1/p' | head -n 1)
     failed "$([ -n "${line}" ] && sed -n "${line}p" "${SHOWN}" || echo "see the error above")"
   fi
 else
-  # one statement at a time: MySQL refuses CREATE USER IF NOT EXISTS of an existing user that
-  # is the DEFINER of a routine (ERROR 4006) to an account without SET_ANY_DEFINER, which could
-  # run code as any user: that user exists, its ALTER USER sets the password (or fails, a user
-  # missing for good)
+  # on the whole server only CREATE USER (and USAGE, no privilege): not an administrator
+  # (SYSTEM_USER, SUPER, ALL PRIVILEGES...), docs/databases.md#the-bootstrap-account
+  out=$(printf 'SHOW GRANTS;\n' | my_sql "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" -N -B 2>&1) \
+    || { printf '%s\n' "${out}" | grep -E '^ERROR' | redact; failed "cannot sign in"; }
+  wide=""
+  while IFS= read -r line; do
+    [[ "${line}" == GRANT\ *\ ON\ \*.\*\ TO\ * ]] || continue
+    privs=${line#GRANT } privs=${privs%% ON \*.\* TO*}
+    [[ "${line}" == *"WITH GRANT OPTION"* ]] && wide="${wide} GRANT OPTION,"
+    while IFS= read -r priv; do
+      priv=${priv# }
+      case "${priv}" in USAGE|"CREATE USER") ;; *) wide="${wide} ${priv}," ;; esac
+    done <<< "${privs//,/$'\n'}"
+  done <<< "${out}"
+  [ -z "${wide}" ] || failed "${BOOT_USER} holds${wide%,} on the whole server (*.*): the bootstrap account must have only CREATE USER there, and ALL PRIVILEGES on the stack's databases (docs/databases.md#the-bootstrap-account)"
+  # one statement at a time. CREATE USER of a user that exists: one of the stack's if it signs
+  # in with the stack's password (its ALTER USER follows; CREATE USER IF NOT EXISTS of a DEFINER
+  # of routines would fail without SET_ANY_DEFINER, ERROR 4006), else not the stack's: refused,
+  # nothing changed. Of one that does not: created (CREATE USER, without IF NOT EXISTS)
   mapfile -t run < <(statements "${RENDERED}")
   mapfile -t shown < <(statements "${SHOWN}")
   for i in "${!run[@]}"; do
-    if ! out=$(printf '%s\n' "${run[i]}" | my_sql "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" 2>&1); then
-      if [[ "${run[i]}" == "CREATE USER IF NOT EXISTS "* ]] && [[ "${out}" == *"ERROR 4006 "* ]]; then
-        echo "  (${shown[i]%% IDENTIFIED*}: the user exists, the DEFINER of a routine; its ALTER USER follows)"
+    statement=${run[i]}
+    if [[ "${statement}" =~ ^CREATE\ USER\ IF\ NOT\ EXISTS\ \'([^\']+)\'@\'[^\']*\'\ IDENTIFIED\ (BY|WITH\ [a-z_]+\ BY)\ \'([^\']*)\'\; ]] \
+      || [[ "${statement}" =~ ^CREATE\ USER\ IF\ NOT\ EXISTS\ \'([^\']+)\'@\'[^\']*\'\ IDENTIFIED\ VIA\ [a-z_]+\ USING\ PASSWORD\(\'([^\']*)\'\)\; ]]; then
+      user=${BASH_REMATCH[1]} password=${BASH_REMATCH[${#BASH_REMATCH[@]}-1]}
+      if my_sql "${user}" "${password}" "${MAIN_HOST}" "${MAIN_PORT}" -N -B -e 'SELECT 1' < /dev/null > /dev/null 2>&1; then
         continue
       fi
+      statement="CREATE USER ${statement#CREATE USER IF NOT EXISTS }"
+      if ! out=$(printf '%s\n' "${statement}" | my_sql "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" 2>&1); then
+        if [[ "${out}" == *"ERROR 1396 "* || "${out}" == *"ERROR 4006 "* ]]; then
+          setting=$(sed -n "s/.*'<\([A-Z_]*\)>'.*/\1/p" <<< "${shown[i]}" | head -n 1)
+          foreign "${user}" "${setting}"
+        fi
+        printf '%s\n' "${out}" | grep -E '^ERROR' | redact
+        failed "${shown[i]}"
+      fi
+      continue
+    fi
+    if ! out=$(printf '%s\n' "${statement}" | my_sql "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" 2>&1); then
       printf '%s\n' "${out}" | grep -E '^ERROR' | redact
       failed "${shown[i]}"
     fi

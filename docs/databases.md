@@ -155,6 +155,8 @@ The SQL is in [db/mysql/](/db/mysql) (MariaDB and MySQL) and [db/postgres/](/db/
 
 1. Delete the file: it holds the passwords.
 
+A database of the stack's name that another role owns is not taken over: the PostgreSQL SQL stops there, before any change, and says so. Give it to the stack's role yourself if it is the stack's, or choose another name. It needs `psql` 10 or later (`\if`).
+
 Rules for names and passwords:
 
 - Passwords: only `A-Z a-z 0-9 . _ ~ -`, because they are part of the database URLs. The generated ones are letters and digits.
@@ -165,7 +167,7 @@ Running `prepare_environment.sh` again makes new passwords and new secrets for e
 
 ### When a release needs new users or grants
 
-At every start, before the migrations, a one-shot step checks your server against the SQL of this release: `db-bootstrap` for `database-setup.sql`, `fxa-db-bootstrap` for `database-setup-fxa.sql`. Each user of the SQL must sign in, with its grants, and its databases must exist. A release that needs a new user or grant, or a grant revoked since, stops the start there, before anything else runs. Its log names each statement that is missing, with `<SETTING>` for the passwords, for example:
+At every start, before the migrations, a one-shot step checks your server against the SQL of this release: `db-bootstrap` for `database-setup.sql`, `fxa-db-bootstrap` for `database-setup-fxa.sql`. Each user of the SQL must sign in, with its grants, and its databases must exist. On PostgreSQL the stack's databases must also be its roles' alone: no grant to another role, nothing in them that another role owns (code the stack would run). A release that needs a new user or grant, or a grant revoked since, stops the start there, before anything else runs. Its log names each statement that is missing, with `<SETTING>` for the passwords, for example:
 
 ```text
 ✗ ERROR: the Sync databases on your server lack what this release needs:
@@ -191,11 +193,17 @@ It runs the SQL as `prepare_environment.sh` writes it: users with the host part 
 
 **The trade-off.** The stack then holds the password of an account that can create users. Its rights on databases are limited to the stack's own, but its rights on users are not:
 
-- MariaDB: `CREATE USER` can also change the password of any account of the server, `root`'s too. Whoever gets this password can make themselves the server's administrator.
-- MySQL 8.0.16 and later: the same, except for the accounts with `SYSTEM_USER`, such as `root`.
+- MariaDB: `CREATE USER` can also change, rename or drop any account of the server, `root` too. MariaDB has nothing that protects an account from it. Whoever gets this password can make themselves the server's administrator.
+- MySQL 8.0.16 and later: the same, except for the accounts with `SYSTEM_USER`. `root` has it; give it to every administrator account of the server, so that the bootstrap account cannot change them.
 - PostgreSQL 16 and later: `CREATEROLE` reaches only the roles it created, or was given `ADMIN OPTION` on. Before 16 it reaches every role but the superusers, also the predefined ones such as `pg_read_server_files`: close to a superuser.
 
-So use it with a database server, or an instance, that the stack has to itself. Otherwise keep the default, and run the SQL after an upgrade yourself.
+So use it with a database server, or an instance, that the stack has to itself. Otherwise keep the default: the stack then holds no such password, and you run the SQL after an upgrade yourself.
+
+What the stack does with that account, whatever it could do:
+
+- It creates and changes the users of the SQL only, under the names of `.env`. It refuses a name of the server's own accounts (`root`, `mysql`, `postgres`...) and its own name as one of them.
+- A user of such a name that exists already must sign in with the password of `.env`: otherwise it is someone else's, and the start stops without changing it.
+- It refuses an account that is an administrator: on MariaDB and MySQL one with more than `CREATE USER` on the whole server (`SYSTEM_USER`, `SUPER`, `ALL PRIVILEGES`...), on PostgreSQL a superuser.
 
 #### The bootstrap account
 
@@ -204,7 +212,8 @@ Create it once, as an administrator of your server, with the names of your datab
 MariaDB and MySQL, for Sync:
 
 ```sql
-CREATE USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+CREATE USER IF NOT EXISTS 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+ALTER USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 GRANT CREATE USER ON *.* TO 'ffs_bootstrap'@'%';
 GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
@@ -220,7 +229,8 @@ For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `
 PostgreSQL, a role that is no superuser, run as a superuser:
 
 ```sql
-CREATE ROLE ffs_bootstrap LOGIN CREATEROLE CREATEDB PASSWORD '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+CREATE ROLE ffs_bootstrap LOGIN;
+ALTER ROLE ffs_bootstrap LOGIN CREATEROLE CREATEDB NOSUPERUSER PASSWORD '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 -- only for the roles that exist already (database-setup.sql run before by another role):
 GRANT syncserver TO ffs_bootstrap WITH ADMIN OPTION;
 GRANT ffs_admin_ui TO ffs_bootstrap WITH ADMIN OPTION;

@@ -180,7 +180,7 @@ if [ "${EXTERNAL_DB}" = "yes" ]; then
         SYNC_POSTGRES_NAME=${SYNC_POSTGRES_NAME:-syncserver}
         read -r -e -p "Database user [syncserver]: " SYNC_POSTGRES_USER
         SYNC_POSTGRES_USER=${SYNC_POSTGRES_USER:-syncserver}
-        valid_name "${SYNC_POSTGRES_NAME}"; valid_name "${SYNC_POSTGRES_USER}"
+        valid_name "${SYNC_POSTGRES_NAME}"; valid_user "${SYNC_POSTGRES_USER}"
     else
         read -r -e -p "Tokenserver database [tokenserver]: " SYNC_TOKENSERVER_DB_NAME
         SYNC_TOKENSERVER_DB_NAME=${SYNC_TOKENSERVER_DB_NAME:-tokenserver}
@@ -190,9 +190,8 @@ if [ "${EXTERNAL_DB}" = "yes" ]; then
         SYNC_STORAGE_DB_NAME=${SYNC_STORAGE_DB_NAME:-syncstorage}
         read -r -e -p "Storage database user [syncstorage]: " SYNC_STORAGE_DB_USER
         SYNC_STORAGE_DB_USER=${SYNC_STORAGE_DB_USER:-syncstorage}
-        for name in "${SYNC_TOKENSERVER_DB_NAME}" "${SYNC_TOKENSERVER_DB_USER}" "${SYNC_STORAGE_DB_NAME}" "${SYNC_STORAGE_DB_USER}"; do
-            valid_name "${name}"
-        done
+        valid_name "${SYNC_TOKENSERVER_DB_NAME}"; valid_name "${SYNC_STORAGE_DB_NAME}"
+        valid_user "${SYNC_TOKENSERVER_DB_USER}"; valid_user "${SYNC_STORAGE_DB_USER}"
         [ "${SYNC_TOKENSERVER_DB_NAME}" != "${SYNC_STORAGE_DB_NAME}" ] || { echo "ERROR: the tokenserver and the storage need two databases"; exit 1; }
     fi
 fi
@@ -210,7 +209,7 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         FXA_MYSQL_USER=${FXA_MYSQL_USER:-fxa}
         read -r -e -p "User installing the sign-up policy [ffs_policy]: " FXA_MYSQL_POLICY_USER
         FXA_MYSQL_POLICY_USER=${FXA_MYSQL_POLICY_USER:-ffs_policy}
-        valid_name "${FXA_MYSQL_USER}"; valid_name "${FXA_MYSQL_POLICY_USER}"
+        valid_user "${FXA_MYSQL_USER}"; valid_user "${FXA_MYSQL_POLICY_USER}"
     fi
     # MySQL by default, whatever Sync uses: it is what Mozilla supports and runs
     if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
@@ -339,6 +338,10 @@ ask_bootstrap() { # <prefix: SYNC or FXA> <what>
     read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [ffs_bootstrap]: " user
     user=${user:-ffs_bootstrap}
     [[ "${user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "ERROR: not a valid user name (A-Z, a-z, 0-9, _): '${user}'"; exit 1; }
+    # an account of its own, not one of the stack's users nor the server's administrator
+    case " root postgres ${SYNC_TOKENSERVER_DB_USER:-} ${SYNC_STORAGE_DB_USER:-} ${SYNC_POSTGRES_USER:-} ${FXA_MYSQL_USER:-} ${FXA_MYSQL_POLICY_USER:-} ffs_admin ffs_admin_ui ffs_admin_sync " in
+        *" ${user} "*) echo "ERROR: '${user}' is the server's administrator or one of the stack's users: the bootstrap needs an account of its own (docs/databases.md#the-bootstrap-account)"; exit 1 ;;
+    esac
     read -r -e -s -p "Its password (empty: a new one): " password
     echo ""
     [ -n "${password}" ] || password=$(generate_random_string 32)

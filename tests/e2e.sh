@@ -509,6 +509,12 @@ echo "== ${PROJECT}: pulling ${REPOSITORY} ${TAG}"
 [ -n "${SKIP_PULL:-}" ] || dc pull -q || exit 1
 
 if [ -n "${EXTDB}" ]; then
+  # what db-bootstrap refuses to touch and what its check reports, on servers of their own
+  # (tests/db_setup.sh): MySQL and MariaDB with the mysql backend, PostgreSQL
+  echo "== db/db-setup.sh: what the bootstrap refuses, what the check reports"
+  SLOT=${SLOT} MYSQL_IMAGE=${SYNC_MYSQL_IMAGE} "${TESTS}/db_setup.sh" $([ "${BACKEND}" = mysql ] && echo mysql mariadb || echo postgres) > "${WORK}/db_setup.log" 2>&1
+  check "$?" 0 "tests/db_setup.sh $([ "${BACKEND}" = mysql ] && echo mysql mariadb || echo postgres)" || cat "${WORK}/db_setup.log"
+  grep -E '^(PASS|FAIL):' "${WORK}/db_setup.log" | sed 's/^/  /'
   echo "== external database server ${EXTDB} ($([ "${BACKEND}" = mysql ] && echo "${SYNC_MYSQL_IMAGE}" || echo postgres:latest))"
   start_extdb
   check "$?" 0 "external database server with $([ -n "${DB_BOOTSTRAP:-}" ] && echo "only the bootstrap account of db/${BACKEND}/bootstrap.sql" || echo "the databases and users of db/${BACKEND}/sync.sql")"

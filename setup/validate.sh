@@ -54,6 +54,15 @@ valid_limit() {
 }
 # names end up unquoted in SQL and in the database URLs
 valid_name() { [[ "${1}" =~ ^[a-z_][a-z0-9_]{0,31}$ ]] || { echo "ERROR: not a valid database or user name (a-z, 0-9, _): '${1}'"; exit 1; }; }
+# a user of the stack on your own server: a name, none of the server's own accounts or roles
+# (db/db-setup.sh refuses them too: its bootstrap creates and changes the stack's users only)
+valid_user() {
+    valid_name "${1}"
+    case "${1}" in
+        root|mysql|healthcheck|mariadb_sys|mysql_sys|postgres|public)
+            echo "ERROR: '${1}' is a name of the database server's own accounts: choose another user for the stack"; exit 1 ;;
+    esac
+}
 # the containers reach the server over the network: localhost is the container itself
 valid_host() {
     case "${1}" in
