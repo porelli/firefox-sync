@@ -1,6 +1,16 @@
--- The Sync server on your MariaDB 10.10+ or MySQL 8.0 or later server (9 by default in the stack; docs/databases.md#your-own-server).
--- Run as an administrator of the server. prepare_environment.sh fills in the placeholders
--- from .env and writes the result to database-setup.sql.
+-- Setup migration 001, scope sync: the Sync server on your MariaDB 10.10+ or MySQL 8.0 or later
+-- server (9 by default in the stack; docs/databases.md#your-own-server).
+-- Why: the databases and users of the Sync server and of the admin UI, as database-setup.sql
+-- created them before the setup migrations: an install from then is recorded as this file
+-- (baseline) when its server has all of it.
+-- Released: with the setup migrations, the first file of the scope.
+-- By hand: as an administrator of the server, the placeholders filled in from .env.
+-- prepare_environment.sh writes every file of the scope into database-setup.sql, with the
+-- INSERTs that record them; `db-setup.sh pending sync` prints only those your server lacks
+-- (docs/databases.md#when-a-release-needs-new-users-or-grants). Without ADMIN_DB_PASSWORD (an
+-- install from before it) only the part before "-- The admin UI:" runs.
+-- Never edited once released (tests/setup_migrations.sh checks it against db/setup-manifest):
+-- a change is a new file, with the next number.
 -- Two databases: the migrations of both keep their state in a table of the same name.
 CREATE DATABASE IF NOT EXISTS `@SYNC_TOKENSERVER_DATABASE@`;
 CREATE DATABASE IF NOT EXISTS `@SYNC_STORAGE_DATABASE@`;

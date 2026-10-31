@@ -51,15 +51,17 @@ services:
       - fxa-keys:/fxa-keys
     restart: "no"
 
-  # your own server for the accounts (FXA_DB_CONTAINERS=0): the users and grants of
-  # database-setup-fxa.sql at every start, before the migrations; applied as FXA_DB_BOOTSTRAP_USER
-  # when it is set, otherwise checked, as sync.yml's db-bootstrap. With fxa-db: nothing
+  # your own server for the accounts (FXA_DB_CONTAINERS=0): the setup migrations of
+  # db/mysql/setup/fxa-<FXA_DB> (the users and grants of database-setup-fxa.sql) at every start,
+  # before the migrations; applied as FXA_DB_BOOTSTRAP_USER when it is set, otherwise checked, as
+  # sync.yml's db-bootstrap. With fxa-db: nothing (fxa-policy records them)
   fxa-db-bootstrap:
-    # (its image, the client of the accounts database, and the SQL: the database's file)
+    # (its image, the client of the accounts database, and its engine: the database's file)
     entrypoint: [bash, /ffs-db/db-setup.sh]
     command: [fxa]
     restart: "no"
     environment:
+      FFS_SETUP_PENDING: docker compose run --rm --no-deps fxa-db-bootstrap pending fxa
       FXA_DB_CONTAINERS: ${FXA_DB_CONTAINERS:-1}
       FXA_DB_BOOTSTRAP_USER: ${FXA_DB_BOOTSTRAP_USER:-}
       FXA_DB_BOOTSTRAP_PASSWORD: ${FXA_DB_BOOTSTRAP_PASSWORD:-}
@@ -71,10 +73,11 @@ services:
       FXA_MYSQL_POLICY_PASSWORD: ${FXA_MYSQL_POLICY_PASSWORD:-}
       FXA_ADMIN_DB_PASSWORD: ${FXA_ADMIN_DB_PASSWORD:-}
       # MySQL with mysql_native_password (an accounts image without mozilla/fxa#21554): the
-      # "-- native:" lines of fxa-mysql.sql, as prepare_environment.sh writes them
+      # "-- native:" lines of db/mysql/setup/fxa-mysql, as prepare_environment.sh writes them
       FXA_MYSQL_ARGS: ${FXA_MYSQL_ARGS:-}
     volumes:
-      - ../db/db-setup.sh:/ffs-db/db-setup.sh:ro
+      # db-setup.sh and the setup migrations (db/mysql/setup/)
+      - ../db:/ffs-db:ro
 
   fxa-migrations:
     <<: *fxa

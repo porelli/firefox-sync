@@ -38,13 +38,11 @@ services:
       - ../db/mysql/keep-major.sh:/ffs-db/keep-major.sh:ro
     restart: unless-stopped
 
-  # your own server: database-setup-fxa.sql applied or checked (fxa.yml), with the client of fxa-db
+  # your own server: the setup migrations of the accounts applied or checked (fxa.yml), with the client of fxa-db
   fxa-db-bootstrap:
     image: ${FXA_MARIADB_IMAGE:-mariadb:lts}
     environment:
       FFS_DB_ENGINE: mariadb
-    volumes:
-      - ../db/mysql/fxa-mariadb.sql:/ffs-db/fxa.sql:ro
 
   fxa-migrations:
     depends_on:

@@ -87,8 +87,8 @@ spec:
               wait_db {{ include "firefox-sync.dbHost" $d | quote }} {{ include "firefox-sync.dbPort" $d | quote }}
               {{- end }}
         {{- if not .Values.database.bundled }}
-        # compose's db-bootstrap: your own server's users, grants and databases (the SQL of
-        # db/mysql/sync.sql or db/postgres/sync.sql, filled in from the values and the Secret)
+        # compose's db-bootstrap: your own server's users, grants and databases (the setup
+        # migrations of db/mysql/setup/sync or db/postgres/setup/sync, filled in from the values and the Secret)
         # applied as database.external.bootstrap.user, or checked as the stack's users: what
         # is missing stops the pod here, named in its log (db/db-setup.sh,
         # docs/databases.md#when-a-release-needs-new-users-or-grants)
@@ -103,6 +103,9 @@ spec:
             {{- $ts := dict "root" . "db" "tokenserver" }}
             - name: SYNC_DB_CONTAINERS
               value: "0"
+            # where its message says the SQL of the setup migrations your server lacks is again
+            - name: FFS_SETUP_PENDING
+              value: kubectl -n {{ .Release.Namespace }} logs deployment/{{ include "firefox-sync.fullname" . }}-syncstorage -c db-bootstrap
             {{- $boot := .Values.database.external.bootstrap.user }}
             - name: SYNC_DB_BOOTSTRAP_USER
               value: {{ $boot | quote }}

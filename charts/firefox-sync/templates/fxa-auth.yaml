@@ -152,8 +152,8 @@ spec:
               done
               echo "{{ $dbHost }}:{{ $dbPort }} answers"
         {{- if not $f.database.bundled }}
-        # compose's fxa-db-bootstrap: your own server's users and grants of the accounts (the SQL
-        # of db/mysql/fxa-mysql.sql or fxa-mariadb.sql) applied as
+        # compose's fxa-db-bootstrap: your own server's users and grants of the accounts (the setup
+        # migrations of db/mysql/setup/fxa-mysql or fxa-mariadb) applied as
         # fxa.database.external.bootstrap.user, or checked as the stack's users (db/db-setup.sh)
         - name: db-bootstrap
           image: {{ include "firefox-sync.fxaDbImage" . }}
@@ -166,6 +166,9 @@ spec:
           env:
             - name: FFS_DB_ENGINE
               value: {{ $f.database.backend }}
+            # where its message says the SQL of the setup migrations your server lacks is again
+            - name: FFS_SETUP_PENDING
+              value: kubectl -n {{ .Release.Namespace }} logs deployment/{{ include "firefox-sync.fullname" . }}-fxa-auth -c db-bootstrap
             - name: FXA_DB_CONTAINERS
               value: "0"
             {{- $boot := $f.database.external.bootstrap.user }}

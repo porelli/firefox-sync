@@ -13,8 +13,9 @@
 # FXA_MYSQL_IMAGE=mysql:8 and FXA_MYSQL_ARGS with mysql_native_password, Sync on MySQL
 # SYNC_MYSQL_IMAGE=mysql:8 (the default is now mysql:lts, 9; docs/upgrading.md#mysql-8-to-9). A value already set is kept; the
 # old file is kept as .env.before-upgrade-<UTC time>. With your own database server database-setup.sql
-# (and database-setup-fxa.sql) is written again, to run there first, or applied by the stack itself
-# at the next start (SYNC_DB_BOOTSTRAP_USER, the choice of the setup). First the settings of RENAMED_SETTINGS get their new
+# (and database-setup-fxa.sql) is written again (the one of before kept as
+# database-setup.sql.before-upgrade-<UTC time>), to run there first, or the stack applies the
+# setup migrations itself at the next start (SYNC_DB_BOOTSTRAP_USER, the choice of the setup). First the settings of RENAMED_SETTINGS get their new
 # names, their values as they are.
 # The Quadlets (their units installed from this directory, or --render-units): the same, then
 # the settings of .env-example that .env lacks added with their defaults (a new secret only
@@ -300,21 +301,24 @@ upgrade_env() {
     # your own database server: the SQL of this release, which the stack applies itself at the
     # next start with SYNC_DB_BOOTSTRAP_USER (FXA_DB_BOOTSTRAP_USER), or checks (the choice of
     # the setup, kept: nothing asked)
+    # (the files of before kept as <file>.before-upgrade-<UTC time>, as .env)
     if [ "$(env_value SYNC_DB_CONTAINERS)" = 0 ]; then
-        if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ]; then render_sync_sql postgres; else render_sync_sql mariadb; fi
+        keep_previous_sql "${SCRIPT_DIR}/database-setup.sql" || exit 1
+        if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ]; then render_sync_sql postgres; else render_sync_sql mariadb; fi || exit 1
         if [ -n "$(env_value SYNC_DB_BOOTSTRAP_USER)" ]; then
-            echo "Your own database server: the stack applies database-setup.sql itself at the next start, as $(env_value SYNC_DB_BOOTSTRAP_USER) (SYNC_DB_BOOTSTRAP_USER, docs/databases.md#let-the-stack-apply-them)."
+            echo "Your own database server: the stack applies the setup migrations it lacks itself at the next start, as $(env_value SYNC_DB_BOOTSTRAP_USER) (SYNC_DB_BOOTSTRAP_USER, docs/databases.md#let-the-stack-apply-them)."
         else
-            echo "Your own database server: run database-setup.sql there first, as its administrator (docs/databases.md#create-the-databases-and-users)."
+            echo "Your own database server: the next start stops at db-bootstrap if it lacks setup migrations of this release, naming them: run database-setup.sql there first, as its administrator (all of them, those it has change nothing; docs/databases.md#when-a-release-needs-new-users-or-grants)."
         fi
     fi
     if fxa_installed && [ "$(env_value FXA_DB_CONTAINERS)" = 0 ]; then
+        keep_previous_sql "${SCRIPT_DIR}/database-setup-fxa.sql" || exit 1
         render_fxa_sql "$([ "$(env_value FXA_DB)" = mariadb ] && echo mariadb || echo mysql)" \
-            "$([ "$(env_value FXA_DB)" != mariadb ] && [[ "$(env_value FXA_MYSQL_ARGS)" == *mysql_native_password* ]] && echo native)"
+            "$([ "$(env_value FXA_DB)" != mariadb ] && [[ "$(env_value FXA_MYSQL_ARGS)" == *mysql_native_password* ]] && echo native)" || exit 1
         if [ -n "$(env_value FXA_DB_BOOTSTRAP_USER)" ]; then
-            echo "The accounts on your own database server: the stack applies database-setup-fxa.sql itself at the next start, as $(env_value FXA_DB_BOOTSTRAP_USER) (FXA_DB_BOOTSTRAP_USER)."
+            echo "The accounts on your own database server: the stack applies the setup migrations it lacks itself at the next start, as $(env_value FXA_DB_BOOTSTRAP_USER) (FXA_DB_BOOTSTRAP_USER)."
         else
-            echo "The accounts on your own database server: run database-setup-fxa.sql there first, as its administrator (docs/databases.md#create-the-databases-and-users)."
+            echo "The accounts on your own database server: run database-setup-fxa.sql there first, as its administrator, when the next start stops at fxa-db-bootstrap naming setup migrations it lacks (docs/databases.md#when-a-release-needs-new-users-or-grants)."
         fi
     fi
     fxa_mariadb_image_check

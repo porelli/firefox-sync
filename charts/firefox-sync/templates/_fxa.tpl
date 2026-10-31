@@ -359,13 +359,13 @@ fxa.database.allowMajorUpgrade */}}
 {{- end }}
 
 {{/*
-An existingSecret must have the accounts' keys, or the pods would end in
-CreateContainerConfigError: read with lookup on install and upgrade, the render then fails
-naming the missing ones (the release stays at its revision). Nothing to check where lookup
-returns nothing (helm template, a GitOps render, the Secret not created yet)
+An existingSecret must have the accounts' keys (and the bootstrap accounts' passwords), or the
+pods would end in CreateContainerConfigError: read with lookup on install and upgrade, the
+render then fails naming the missing ones (the release stays at its revision). Nothing to check
+where lookup returns nothing (helm template, a GitOps render, the Secret not created yet)
 */}}
 {{- define "firefox-sync.checkExistingSecret" -}}
-{{- if and .Values.existingSecret .Values.fxa.enabled }}
+{{- if and .Values.existingSecret (or .Values.fxa.enabled (and (not .Values.database.bundled) .Values.database.external.bootstrap.user)) }}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace .Values.existingSecret }}
 {{- if $existing }}
 {{- include "firefox-sync.checkSecretKeys" (dict "root" . "name" .Values.existingSecret "data" ($existing.data | default dict)) }}
@@ -377,18 +377,24 @@ returns nothing (helm template, a GitOps render, the Secret not created yet)
 The keys the accounts need in a Secret's data, missing or empty ones refused: the generated
 ones, and with your own accounts server its policy user's password (FXA_MYSQL_POLICY_PASSWORD,
 when fxa.database.external.policyUser is set) and the bootstrap account's
-(FXA_DB_BOOTSTRAP_PASSWORD, with fxa.database.external.bootstrap.user). Accepts a dict with "root", "name" (the
-Secret) and "data" (its data)
+(FXA_DB_BOOTSTRAP_PASSWORD, with fxa.database.external.bootstrap.user); with your own Sync server
+and database.external.bootstrap.user, SYNC_DB_BOOTSTRAP_PASSWORD. Accepts a dict with "root",
+"name" (the Secret) and "data" (its data)
 */}}
 {{- define "firefox-sync.checkSecretKeys" -}}
 {{- $v := .root.Values }}
+{{- $required := list }}
+{{- if and (not $v.database.bundled) $v.database.external.bootstrap.user }}
+{{- $required = append $required "SYNC_DB_BOOTSTRAP_PASSWORD" }}
+{{- end }}
 {{- if $v.fxa.enabled }}
-{{- $required := splitList " " (include "firefox-sync.fxaGeneratedKeys" .root) }}
+{{- $required = concat $required (splitList " " (include "firefox-sync.fxaGeneratedKeys" .root)) }}
 {{- if and (not $v.fxa.database.bundled) $v.fxa.database.external.policyUser }}
 {{- $required = append $required "FXA_MYSQL_POLICY_PASSWORD" }}
 {{- end }}
 {{- if and (not $v.fxa.database.bundled) $v.fxa.database.external.bootstrap.user }}
 {{- $required = append $required "FXA_DB_BOOTSTRAP_PASSWORD" }}
+{{- end }}
 {{- end }}
 {{- $missing := list }}
 {{- range $required }}
@@ -397,8 +403,7 @@ Secret) and "data" (its data)
 {{- end }}
 {{- end }}
 {{- if $missing }}
-{{- fail (printf "firefox-sync: existingSecret %s lacks %s, which the self-hosted accounts need (docs/install/helm.md#existingsecret): add them, then helm upgrade again" .name (sortAlpha $missing | join ", ")) }}
-{{- end }}
+{{- fail (printf "firefox-sync: existingSecret %s lacks %s, which the self-hosted accounts or the bootstrap accounts of your own servers need (docs/install/helm.md#existingsecret): add them, then helm upgrade again" .name (sortAlpha $missing | join ", ")) }}
 {{- end }}
 {{- end }}
 

@@ -1,5 +1,5 @@
 # Your own server for the accounts (FXA_DB_CONTAINERS=0; with fxa-db this unit is not
-# installed): the users and grants of database-setup-fxa.sql at every start, before the
+# installed): the users and grants of database-setup-fxa.sql (the setup migrations) at every start, before the
 # migrations, as compose's fxa-db-bootstrap. Applied as FXA_DB_BOOTSTRAP_USER when it is set,
 # otherwise checked (db/db-setup.sh, docs/databases.md#let-the-stack-apply-them). MySQL's client
 [Unit]
@@ -10,8 +10,8 @@ After=firefox-sync-network.service
 Image=%FXA_MYSQL_IMAGE%
 ContainerName=firefox-sync-fxa-db-bootstrap
 Network=firefox-sync-network.network
-Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
-Volume=%SCRIPT_DIR%/db/mysql/fxa-mysql.sql:/ffs-db/fxa.sql:ro,z
+# db-setup.sh and the setup migrations (db/<engine>/setup/)
+Volume=%SCRIPT_DIR%/db:/ffs-db:ro,z
 
 Environment=FFS_DB_ENGINE=mysql
 Environment=FXA_DB_CONTAINERS=%FXA_DB_CONTAINERS%
@@ -24,8 +24,11 @@ Environment=FXA_MYSQL_PASSWORD=%FXA_MYSQL_PASSWORD%
 Environment=FXA_MYSQL_POLICY_USER=%FXA_MYSQL_POLICY_USER%
 Environment=FXA_MYSQL_POLICY_PASSWORD=%FXA_MYSQL_POLICY_PASSWORD%
 Environment=FXA_ADMIN_DB_PASSWORD=%FXA_ADMIN_DB_PASSWORD%
-# MySQL with mysql_native_password: the "-- native:" lines of fxa-mysql.sql
+# MySQL with mysql_native_password: the "-- native:" lines of db/mysql/setup/fxa-mysql
 Environment="FXA_MYSQL_ARGS=%FXA_MYSQL_ARGS%"
+
+# where its message says the SQL of the setup migrations your server lacks is again
+Environment="FFS_SETUP_PENDING=journalctl --user -u firefox-sync-fxa-db-bootstrap.service"
 
 PodmanArgs=--entrypoint=bash
 Exec=/ffs-db/db-setup.sh fxa
@@ -33,8 +36,9 @@ Exec=/ffs-db/db-setup.sh fxa
 AutoUpdate=registry
 
 [Service]
+# no RemainAfterExit: inactive once it ran, it runs again whenever a unit that requires it
+# starts (the migrations restarted, the stack started again), not only at boot
 Type=oneshot
-RemainAfterExit=yes
 TimeoutStartSec=600
 
 [Install]

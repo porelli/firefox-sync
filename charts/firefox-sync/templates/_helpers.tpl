@@ -491,6 +491,19 @@ its host and existingSecret (the chart cannot generate passwords your server kno
 UI's Ingress a host of its own; the self-hosted accounts', firefox-sync.checkFxaValues (_fxa.tpl)
 */}}
 {{- define "firefox-sync.checkValues" -}}
+{{- /* the bootstrap accounts: their passwords come from existingSecret only (the chart's own
+Secret has none), for your own servers only */}}
+{{- range $what, $db := dict "database" .Values.database "fxa.database" .Values.fxa.database }}
+{{- if $db.external.bootstrap.user }}
+{{- if $db.bundled }}
+{{- fail (printf "firefox-sync: %s.external.bootstrap.user is for your own server (%s.bundled=false): the bundled one has its users already" $what $what) }}
+{{- end }}
+{{- if not $.Values.existingSecret }}
+{{- fail (printf "firefox-sync: %s.external.bootstrap.user needs existingSecret, with %s_DB_BOOTSTRAP_PASSWORD (its password): the chart cannot generate a password your server knows" $what (ternary "SYNC" "FXA" (eq $what "database"))) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- include "firefox-sync.checkExistingSecret" . }}
 {{- if not .Values.database.bundled }}
 {{- if not .Values.database.external.host }}
 {{- fail "firefox-sync: database.bundled=false needs database.external.host, your database server (docs/databases.md#your-own-server)" }}
@@ -898,31 +911,46 @@ StatefulSet), "claim" (its template's name), "setting" and "persistence"
 {{- end }}
 
 {{/*
-The data of the db-setup ConfigMap (db-setup.yaml): db-setup.sh, with your own Sync server
-sync.sql (db/mysql/sync.sql, db/postgres/sync.sql), with your own accounts server fxa.sql
-(db/mysql/fxa-<backend>.sql); empty with the bundled servers. Also the checksum of the pods
-that mount it
+The setup migrations of a scope ("root", "scope": sync or fxa) that the db-bootstrap init
+containers run (files/db/, copies of db/<engine>/setup/, kept identical): "<path under db/>"
+per line, empty with the bundled servers
+*/}}
+{{- define "firefox-sync.dbSetupFiles" -}}
+{{- $v := .root.Values }}
+{{- $dir := "" }}
+{{- if and (eq .scope "sync") (not $v.database.bundled) }}
+{{- $dir = printf "%s/setup/sync" (ternary "postgres" "mysql" (eq $v.database.backend "postgres")) }}
+{{- else if and (eq .scope "fxa") $v.fxa.enabled (not $v.fxa.database.bundled) }}
+{{- $dir = printf "mysql/setup/fxa-%s" $v.fxa.database.backend }}
+{{- end }}
+{{- if $dir }}
+{{- range $path, $_ := .root.Files.Glob (printf "files/db/%s/*.sql" $dir) }}
+{{ trimPrefix "files/db/" $path }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The data of the db-setup ConfigMap (db-setup.yaml): db-setup.sh, with your own Sync server the
+setup migrations of db/mysql/setup/sync or db/postgres/setup/sync, with your own accounts server
+those of db/mysql/setup/fxa-<backend>, each under its path with "/" as "_"; empty with the
+bundled servers. Also the checksum of the pods that mount it
 */}}
 {{- define "firefox-sync.dbSetupData" -}}
-{{- $sync := not .Values.database.bundled }}
-{{- $fxa := and .Values.fxa.enabled (not .Values.fxa.database.bundled) }}
-{{- if or $sync $fxa }}
+{{- $files := concat (splitList "\n" (include "firefox-sync.dbSetupFiles" (dict "root" . "scope" "sync") | trim)) (splitList "\n" (include "firefox-sync.dbSetupFiles" (dict "root" . "scope" "fxa") | trim)) | compact }}
+{{- if $files }}
 db-setup.sh: |
   {{- .Files.Get "files/db-setup.sh" | trimSuffix "\n" | nindent 2 }}
-{{- if $sync }}
-sync.sql: |
-  {{- .Files.Get (printf "files/sync-%s.sql" (ternary "postgres" "mysql" (eq .Values.database.backend "postgres"))) | trimSuffix "\n" | nindent 2 }}
-{{- end }}
-{{- if $fxa }}
-fxa.sql: |
-  {{- .Files.Get (printf "files/fxa-%s.sql" .Values.fxa.database.backend) | trimSuffix "\n" | nindent 2 }}
+{{- range $files }}
+{{ replace "/" "_" . }}: |
+  {{- $.Files.Get (printf "files/db/%s" .) | trimSuffix "\n" | nindent 2 }}
 {{- end }}
 {{- end }}
 {{- end }}
 
 {{/*
 The volume of the db-setup ConfigMap for a db-bootstrap init container: db-setup.sh and the
-SQL of the scope ("root", "scope": sync or fxa) at /ffs-db, as compose mounts them
+setup migrations of the scope ("root", "scope": sync or fxa) at /ffs-db, as compose mounts db/
 */}}
 {{- define "firefox-sync.dbSetupVolume" -}}
 - name: db-setup
@@ -931,6 +959,8 @@ SQL of the scope ("root", "scope": sync or fxa) at /ffs-db, as compose mounts th
     items:
       - key: db-setup.sh
         path: db-setup.sh
-      - key: {{ .scope }}.sql
-        path: {{ .scope }}.sql
+      {{- range splitList "\n" (include "firefox-sync.dbSetupFiles" . | trim) | compact }}
+      - key: {{ replace "/" "_" . }}
+        path: {{ . }}
+      {{- end }}
 {{- end }}

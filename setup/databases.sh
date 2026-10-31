@@ -3,63 +3,63 @@
 # earlier install: their volumes, the majors of their data, of postgres:latest and of a running
 # server. Sourced by prepare_environment.sh: functions only.
 
-# the SQL for your own database server, with the names and passwords of .env (docs/databases.md#create-the-databases-and-users)
-render_sql() {
-    local template=${1} out=${2} pair script=""
-    shift 2
-    for pair in "$@"; do
-        script="${script}s|@${pair%%=*}@|$(sed_escape "${pair#*=}")|g
-"
-    done
-    rm -f "${out}"
-    (umask 077; sed_script "${script}" "${template}" > "${out}")
-}
-# the placeholders of a template (mysql, postgres: sync.sql; fxa: fxa-*.sql) filled from .env,
-# PLACEHOLDER=value per line: the settings of db/db-setup.sh, which fills them in the same way
-# at every start of the stack (db-bootstrap)
-sql_pairs() {
-    local placeholder setting
-    while read -r placeholder setting; do
-        printf '%s=%s\n' "${placeholder}" "$(env_value "${setting}")"
-    done < <(bash "${SCRIPT_DIR}/db/db-setup.sh" settings "${1}")
-}
-# render_with <template> <out> <kind> [PLACEHOLDER=value...]: render_sql with the values of sql_pairs
-render_with() {
-    local template=${1} out=${2} pair pairs=()
-    while IFS= read -r pair; do pairs+=("${pair}"); done < <(sql_pairs "${3}")
+# the SQL for your own database server, with the names and passwords of .env
+# (docs/databases.md#create-the-databases-and-users): every setup migration of a scope
+# (db/<engine>/setup/<scope>/), as db/db-setup.sh fills them in at every start of the stack
+# (db-bootstrap), with the INSERTs that record them on the server.
+# db_setup_print <scope> <engine> <out> [NAME=value...]: db/db-setup.sh print <scope>, the
+# settings of .env in its environment (never on a command line), out this user's only
+db_setup_print() {
+    local scope=${1} engine=${2} out=${3} kind=fxa name pair tmp
     shift 3
-    render_sql "${template}" "${out}" "${pairs[@]}" "$@"
+    case "${scope}" in sync*) kind=mysql; [ "${engine}" = postgres ] && kind=postgres ;; esac
+    rm -f "${out}"
+    tmp=$(mktemp "${out}.XXXXXX") || return 1
+    chmod 600 "${tmp}"
+    if (
+        while read -r _ name; do export "${name}=$(env_value "${name}")"; done < <(bash "${SCRIPT_DIR}/db/db-setup.sh" settings "${kind}")
+        for name in SYNC_DB_BOOTSTRAP_USER SYNC_DB_BOOTSTRAP_PASSWORD FXA_DB_BOOTSTRAP_USER FXA_DB_BOOTSTRAP_PASSWORD; do
+            export "${name}=$(env_value "${name}")"
+        done
+        # (nothing of this shell's environment but what is set here)
+        export FXA_MYSQL_ARGS="" FFS_BOTH_ENV_NAMES="" FFS_DB_ENGINE="${engine}" FFS_DB_DIR="${SCRIPT_DIR}/db"
+        for pair in "$@"; do export "${pair?}"; done
+        bash "${SCRIPT_DIR}/db/db-setup.sh" print "${scope}" --passwords
+    ) > "${tmp}"; then
+        mv "${tmp}" "${out}"
+    else
+        echo "ERROR: $(basename "${out}") not written: $(grep -m 1 'ERROR' "${tmp}")" >&2
+        rm -f "${tmp}"
+        return 1
+    fi
 }
 # database-setup.sql of the Sync databases and the admin UI's (postgres, or mariadb and mysql)
 render_sync_sql() {
-    local kind=mysql
-    [ "${1}" = "postgres" ] && kind=postgres
-    render_with "${SCRIPT_DIR}/db/${kind}/sync.sql" "${SCRIPT_DIR}/database-setup.sql" "${kind}"
+    db_setup_print sync "${1}" "${SCRIPT_DIR}/database-setup.sql"
 }
 # database-setup-fxa.sql: render_fxa_sql <mysql|mariadb> [native]; native: the accounts' user
-# on mysql_native_password (MySQL, an accounts image without mozilla/fxa#21554), the commented
-# lines of fxa-mysql.sql instead of those after them, as db/db-setup.sh takes them with
-# mysql_native_password in FXA_MYSQL_ARGS
+# on mysql_native_password (MySQL, an accounts image without mozilla/fxa#21554), the "-- native:"
+# lines of db/mysql/setup/fxa-mysql instead of those after them, as db/db-setup.sh takes them
+# with mysql_native_password in FXA_MYSQL_ARGS
 render_fxa_sql() {
-    local template=${SCRIPT_DIR}/db/mysql/fxa-${1}.sql
-    if [ "${2:-}" = native ]; then
-        template=${SCRIPT_DIR}/database-setup-fxa.native
-        sed -e "/^-- native: /{s/^-- native: //;n;d;}" "${SCRIPT_DIR}/db/mysql/fxa-mysql.sql" > "${template}"
-    fi
-    render_with "${template}" "${SCRIPT_DIR}/database-setup-fxa.sql" fxa
-    [ "${2:-}" != native ] || rm -f "${template}"
+    db_setup_print fxa "${1}" "${SCRIPT_DIR}/database-setup-fxa.sql" "FXA_MYSQL_ARGS=$([ "${2:-}" = native ] && echo mysql_native_password)"
 }
 # database-bootstrap.sql (database-bootstrap-fxa.sql: fxa): the account that applies the SQL
 # above at every start (SYNC_DB_BOOTSTRAP_USER, FXA_DB_BOOTSTRAP_USER of .env), docs/databases.md#the-bootstrap-account
 render_bootstrap_sql() {
-    local kind=${1} template out=${SCRIPT_DIR}/database-bootstrap.sql prefix=SYNC
-    case "${kind}" in
-        postgres) template=${SCRIPT_DIR}/db/postgres/bootstrap.sql ;;
-        fxa) template=${SCRIPT_DIR}/db/mysql/fxa-bootstrap.sql out=${SCRIPT_DIR}/database-bootstrap-fxa.sql prefix=FXA ;;
-        *) template=${SCRIPT_DIR}/db/mysql/bootstrap.sql kind=mysql ;;
+    case "${1}" in
+        fxa) db_setup_print fxa-bootstrap mysql "${SCRIPT_DIR}/database-bootstrap-fxa.sql" ;;
+        *) db_setup_print sync-bootstrap "${1}" "${SCRIPT_DIR}/database-bootstrap.sql" ;;
     esac
-    render_with "${template}" "${out}" "${kind}" BOOTSTRAP_USER="$(env_value "${prefix}_DB_BOOTSTRAP_USER")" \
-        BOOTSTRAP_PASSWORD="$(env_value "${prefix}_DB_BOOTSTRAP_PASSWORD")"
+}
+# keep_previous_sql <file>: the copy of an earlier database-setup*.sql as
+# <file>.before-upgrade-<UTC time> (its passwords: this user's only), as --upgrade keeps .env
+keep_previous_sql() {
+    local backup
+    [ -f "${1}" ] || return 0
+    backup=$(backup_name "${1}.before-upgrade")
+    private_copy "${1}" "${backup}" || { echo "ERROR: could not keep ${1} as ${backup}"; return 1; }
+    echo "The $(basename "${1}") of before: $(basename "${backup}")"
 }
 
 # a database volume of an earlier install (the .env gone, or for another database):

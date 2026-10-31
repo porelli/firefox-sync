@@ -171,6 +171,35 @@ else
   exit 1
 fi
 
+# ---- the setup migrations (db/setup-manifest, docs/databases.md#the-record-of-the-setup-migrations).
+# With your own server db-bootstrap ran them, or checked them, and recorded every one before the
+# migrations (the start stops otherwise): nothing is missing here. With the stack's database
+# containers, which create the same users and grants themselves, they are recorded here
+# (how 'containers'), so that the admin UI shows the version everywhere. A recorded file with
+# another checksum: a warning (db-setup.sh stops on it with your own server)
+record_setup() {
+  local manifest=/scripts/setup-manifest path sum name values="" have
+  [ -r "${manifest}" ] || return 0
+  while read -r path sum; do
+    case "${path}" in mysql/setup/sync/[0-9][0-9][0-9]-*.sql) ;; *) continue ;; esac
+    name=${path##*/}
+    values="${values}${values:+, }('sync', $((10#${name:0:3})), '${name}', '${sum}', 'containers')"
+  done < <(grep -v '^#' "${manifest}")
+  [ -n "${values}" ] || return 0
+  db "${MARIADB_DATABASE}" <<SQL || return 1
+CREATE TABLE IF NOT EXISTS ffs_setup_migrations (scope VARCHAR(32) NOT NULL, number INT NOT NULL, name VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL, how VARCHAR(16) NOT NULL, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (scope, number));
+CREATE TABLE IF NOT EXISTS ffs_setup_state (scope VARCHAR(32) PRIMARY KEY, result VARCHAR(16) NOT NULL, expected INT NOT NULL, detail TEXT NOT NULL, checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+INSERT IGNORE INTO ffs_setup_migrations (scope, number, name, checksum, how) VALUES ${values};
+SQL
+  have=$(db "${MARIADB_DATABASE}" -sN -e "SELECT CONCAT(m.name, ' ', m.checksum, ' ', m.how) FROM ffs_setup_migrations m WHERE m.scope = 'sync' ORDER BY m.number")
+  while read -r name sum how; do
+    [ -n "${name}" ] || continue
+    grep -q "^mysql/setup/sync/${name} ${sum}$" "${manifest}" || echo "WARNING: setup migration ${name} was recorded (${how}) with another checksum than this release's"
+  done <<< "${have}"
+  echo "✓ Setup migrations: version $(db "${MARIADB_DATABASE}" -sN -e "SELECT LPAD(MAX(number), 3, '0') FROM ffs_setup_migrations WHERE scope = 'sync'") ($(db "${MARIADB_DATABASE}" -sN -e "SELECT GROUP_CONCAT(DISTINCT how ORDER BY how) FROM ffs_setup_migrations WHERE scope = 'sync'"))"
+}
+record_setup || { echo "✗ ERROR: Failed to record the setup migrations"; exit 1; }
+
 # Display current status
 current_users=$(db "${MARIADB_DATABASE}" -sN -e 'SELECT COUNT(DISTINCT email) FROM users;')
 

@@ -8,8 +8,8 @@ After=firefox-sync-network.service
 Image=%FXA_MARIADB_IMAGE%
 ContainerName=firefox-sync-fxa-db-bootstrap
 Network=firefox-sync-network.network
-Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
-Volume=%SCRIPT_DIR%/db/mysql/fxa-mariadb.sql:/ffs-db/fxa.sql:ro,z
+# db-setup.sh and the setup migrations (db/<engine>/setup/)
+Volume=%SCRIPT_DIR%/db:/ffs-db:ro,z
 
 Environment=FFS_DB_ENGINE=mariadb
 Environment=FXA_DB_CONTAINERS=%FXA_DB_CONTAINERS%
@@ -23,14 +23,18 @@ Environment=FXA_MYSQL_POLICY_USER=%FXA_MYSQL_POLICY_USER%
 Environment=FXA_MYSQL_POLICY_PASSWORD=%FXA_MYSQL_POLICY_PASSWORD%
 Environment=FXA_ADMIN_DB_PASSWORD=%FXA_ADMIN_DB_PASSWORD%
 
+# where its message says the SQL of the setup migrations your server lacks is again
+Environment="FFS_SETUP_PENDING=journalctl --user -u firefox-sync-fxa-db-bootstrap.service"
+
 PodmanArgs=--entrypoint=bash
 Exec=/ffs-db/db-setup.sh fxa
 
 AutoUpdate=registry
 
 [Service]
+# no RemainAfterExit: inactive once it ran, it runs again whenever a unit that requires it
+# starts (the migrations restarted, the stack started again), not only at boot
 Type=oneshot
-RemainAfterExit=yes
 TimeoutStartSec=600
 
 [Install]

@@ -46,7 +46,7 @@ services:
   syncstorage:
     environment: *sync-mysql-env
 
-  # your own server: database-setup.sql applied or checked before the migrations (sync.yml);
+  # your own server: the setup migrations applied or checked before the migrations (sync.yml);
   # with this file's database containers it does nothing (your own MySQL server: sync-mariadb.yml)
   db-bootstrap:
     image: ${SYNC_MYSQL_IMAGE:-mysql:lts}
@@ -63,8 +63,6 @@ services:
       SYNC_STORAGE_DB_PASSWORD: ${SYNC_STORAGE_DB_PASSWORD:-${MARIADB_SYNCSTORAGE_PASSWORD:-}}
       # false with your own MySQL server: its certificate is self-signed
       SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
-    volumes:
-      - ../db/mysql/sync.sql:/ffs-db/sync.sql:ro
 
   syncstorage_db:
     <<: *sync-mysql

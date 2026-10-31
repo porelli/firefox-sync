@@ -40,20 +40,23 @@ services:
   # one-shot ones (restart: "no": migrations, inits) have none, they are judged by their exit
   # status (service_completed_successfully)
 
-  # your own database server (SYNC_DB_CONTAINERS=0): the users, grants and databases of
-  # database-setup.sql at every start, before the migrations. Applied as SYNC_DB_BOOTSTRAP_USER
-  # when it is set (an account that can create users, docs/databases.md#let-the-stack-apply-them),
-  # otherwise checked: what is missing stops the start here, named in its log
+  # your own database server (SYNC_DB_CONTAINERS=0): the setup migrations of db/<engine>/setup/sync
+  # (the users, grants and databases of database-setup.sql) at every start, before the
+  # migrations. Those your server lacks applied as SYNC_DB_BOOTSTRAP_USER when it is set (an
+  # account that can create users, docs/databases.md#let-the-stack-apply-them), otherwise they
+  # stop the start here, with their SQL in its log; then their end state checked
   # (docs/databases.md#when-a-release-needs-new-users-or-grants). With the database containers:
-  # nothing (db/db-setup.sh)
+  # nothing (db/db-setup.sh; the init container records them)
   db-bootstrap:
-    # (its image, the client of the databases, the SQL and where the databases are: the database's file)
+    # (its image, the client of the databases, and where the databases are: the database's file)
     entrypoint: [bash, /ffs-db/db-setup.sh]
     command: [sync]
     restart: "no"
     environment:
       # set under both names: it refuses to start (x-both-env-names)
       FFS_BOTH_ENV_NAMES: *both-env-names
+      # how its message says to print the SQL of the setup migrations your server lacks again
+      FFS_SETUP_PENDING: docker compose run --rm --no-deps db-bootstrap pending sync
       SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
       SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
       SYNC_DB_BOOTSTRAP_PASSWORD: ${SYNC_DB_BOOTSTRAP_PASSWORD:-}
@@ -62,7 +65,8 @@ services:
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
       ADMIN_DB_NAME: ${ADMIN_DB_NAME:-ffs_admin}
     volumes:
-      - ../db/db-setup.sh:/ffs-db/db-setup.sh:ro
+      # db-setup.sh and the setup migrations (db/<engine>/setup/)
+      - ../db:/ffs-db:ro
 
   syncstorage_migrate:
     <<: *syncstorage

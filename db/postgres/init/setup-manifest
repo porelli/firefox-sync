@@ -1,0 +1,13 @@
+# The setup migrations released (db/db-setup.sh): <file, from db/> <its sha256>. A file is never
+# edited once released, nor removed: tests/setup_migrations.sh checks every one against its line
+# here, and that every file has one. A new file: its line appended (in the order of the scope).
+# Copies, kept identical (the same test): db/mysql/init/setup-manifest, db/postgres/init/setup-manifest
+# (the init containers record them with the stack's database containers), admin/setup-manifest
+# (the version the admin UI expects).
+mysql/setup/sync/001-sync-and-admin-ui.sql 36e7d5054872053487d47918911948c3b11255e826a6209b11bbe86d45b1a533
+mysql/setup/sync-bootstrap/001-bootstrap-account.sql 23cae5b8a1ee78058bc57d59043b6baf579669dde326d9572319a9a384e38d69
+mysql/setup/fxa-mysql/001-accounts-and-policy.sql df3688c38345bbcd74cc6fd230b3c4d4c5d002a292584cfbd5a690af22d7fa53
+mysql/setup/fxa-mariadb/001-accounts-and-policy.sql a5cd4018094b12dd3aafcb99652bc8fe2276dcacd225c972894c505d23016cde
+mysql/setup/fxa-bootstrap/001-bootstrap-account.sql b95882159592040d929f22a0cb86ffb6d7ea145f3a22414f8a1670566d1a9ad5
+postgres/setup/sync/001-sync-and-admin-ui.sql 711ba12269598a998633cda17bfb77466045b365112ecd9a4f033c6f85918710
+postgres/setup/sync-bootstrap/001-bootstrap-account.sql 92ccab8354f5fc37fc7f8547179dc132d52ca337b99481c6e4824b9f0fb6a524

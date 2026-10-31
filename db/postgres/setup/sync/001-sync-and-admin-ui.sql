@@ -1,10 +1,20 @@
--- The Sync server on your PostgreSQL 11+ server (docs/databases.md#your-own-server).
--- Run with psql 10 or later as a superuser (or a role with CREATEROLE and CREATEDB).
--- prepare_environment.sh fills in the placeholders from .env and writes the result to
--- database-setup.sql. Run again, it changes nothing but the passwords: the roles and databases
--- are created when they are missing (\gexec runs the statement the SELECT before it returns,
--- none when it returns no row), so it runs with ON_ERROR_STOP too, as the stack's bootstrap
--- does (docs/databases.md#let-the-stack-apply-them). A database of that name that another role
+-- Setup migration 001, scope sync: the Sync server on your PostgreSQL 11+ server
+-- (docs/databases.md#your-own-server).
+-- Why: the database and roles of the Sync server and of the admin UI, as database-setup.sql
+-- created them before the setup migrations: an install from then is recorded as this file
+-- (baseline) when its server has all of it.
+-- Released: with the setup migrations, the first file of the scope.
+-- By hand: with psql 10 or later as a superuser (or a role with CREATEROLE and CREATEDB), the
+-- placeholders filled in from .env. prepare_environment.sh writes every file of the scope into
+-- database-setup.sql, with the INSERTs that record them; `db-setup.sh pending sync` prints only
+-- those your server lacks (docs/databases.md#when-a-release-needs-new-users-or-grants). Without
+-- ADMIN_DB_PASSWORD only the part before "-- The admin UI:" runs.
+-- Never edited once released (tests/setup_migrations.sh checks it against db/setup-manifest):
+-- a change is a new file, with the next number.
+-- Run again, it changes nothing but the passwords: the roles and databases are created when
+-- they are missing (\gexec runs the statement the SELECT before it returns, none when it
+-- returns no row), so it runs with ON_ERROR_STOP too, as the stack's bootstrap does
+-- (docs/databases.md#let-the-stack-apply-them). A database of that name that another role
 -- owns is never taken over: it stops here, before any change.
 SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '@SYNC_POSTGRES_DATABASE@'
   AND pg_catalog.pg_get_userbyid(datdba) <> '@SYNC_POSTGRES_USER@') AS ffs_sync_foreign \gset
