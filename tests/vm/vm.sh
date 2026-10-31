@@ -21,15 +21,20 @@
 #                           in use
 #   vm.sh start | stop      boot (headless) / shut down
 #   vm.sh test <what>...    run tests in a slot: e2e-mysql | e2e-postgres | e2e-fxa | podman | all
-#                           | fxa-upgrade (not in all; FXA_FROM=<older accounts image:tag>);
-#                           several at once in one slot (all = the first four, in parallel),
-#                           summary with durations, logs in LOGS (default: a new private
+#                           | fxa-upgrade (not in all; FXA_FROM=<older accounts image:tag>)
+#                           | helm-lint | helm-<mariadb|mysql|postgres> | helm-fxa-<mysql|mariadb>
+#                           (the chart: tests/helm.sh lint, tests/helm.sh e2e <backend>,
+#                           tests/helm-fxa.sh e2e <db>, not in all; their variables in the job,
+#                           e.g. 'EXTERNAL_DB=1 helm-mysql', 'PART=main helm-fxa-mysql');
+#                           several at once in one slot (all = the first four, in parallel; the
+#                           kind ones one after another, next to the others), summary with
+#                           durations, logs in LOGS (default: a new private
 #                           ${TMPDIR:-/tmp}/ffs-vm-tests-<time>-XXXXXX)
 #   vm.sh test affected [base]  the suites the changes since base need (default: the default
 #                           branch of the images' remote, <remote>/HEAD, else <remote>/main, else
 #                           main; the merge base with HEAD, and the uncommitted changes): the plan,
 #                           then run, spread over the free slots (variants of one suite in
-#                           different slots)
+#                           different slots; the chart's kind runs in one slot, one by one)
 #   vm.sh ssh [cmd]         shell or command in the VM, in a slot: REPO synced into the slot's
 #                           checkout first (NOSYNC=1: not), the command runs where `cd firefox-sync`
 #                           reaches it, with SLOT set (the tests take their ports and names from it),
@@ -160,7 +165,7 @@ PASS_ENV=(REPOSITORY TAG KEEP FXA_IMAGE FXA_VERSION FXA_ARCH FXA_PAIRING_IMAGE A
   FXA_MARIADB_IMAGE FXA_MARIADB_FROM POSTGRES_IMAGE EXTERNAL_DB SYNC_DB FXA_FROM FXA_FROM_ARCH
   FXA_SAME_TAG FXA_ACCOUNT_EVENTS FXA_TEST_IMAGE SKIP_BROWSER SKIP_FXA UPGRADE_FROM PYTEST_ARGS
   FXA_MYSQL_IMAGE FXA_MYSQL_ARGS FXA_MYSQL_TO SYNC_MYSQL_IMAGE FXA_NEW_LOCAL FXA_MYSQL_FROM SYNC_MYSQL_FROM
-  DB_BOOTSTRAP)
+  DB_BOOTSTRAP SYNC_BACKEND PART)
 SUITES_ALL=(e2e-mysql e2e-postgres podman e2e-fxa)
 
 vssh() { known_host && ssh "${SSH_OPTS[@]}" ubuntu@127.0.0.1 "$@"; }
@@ -925,6 +930,8 @@ job_identity() {
   suite=$(job_suite "$1") vars=$(job_vars "$1")
   case "${suite}" in
     e2e-mysql) [[ " ${vars} " == *" SYNC_DB=mysql "* ]] && echo e2e-mysql84 || echo e2e-mysql ;;
+    # (one kind cluster at a time in the VM: these run one after another, see run_jobs)
+    helm-mariadb|helm-mysql|helm-postgres|helm-fxa-*) echo kind ;;
     *) echo "${suite}" ;;
   esac
 }
@@ -948,10 +955,19 @@ run_one() { # job
     e2e-fxa)      slot_vssh - "${BINFMT}; ${cd} && tests/e2e-fxa.sh" ;;
     fxa-upgrade)  slot_vssh - "${BINFMT}; ${cd} && tests/fxa-upgrade.sh" ;;
     podman)       slot_vssh podman "${BINFMT}; ${cd} && export XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus && tests/podman.sh" ;;
+    # (the chart's: chart 0.1.0 of the parity check, as for vm.sh ssh; the kind lock)
+    helm-lint)    slot_vssh - "${cd} && $(parity_export)tests/helm.sh lint" ;;
+    helm-mariadb|helm-mysql|helm-postgres) slot_vssh kind "${cd} && $(parity_export)tests/helm.sh e2e ${suite#helm-}" ;;
+    helm-fxa-mysql|helm-fxa-mariadb) slot_vssh kind "${cd} && $(parity_export)tests/helm-fxa.sh e2e ${suite#helm-fxa-}" ;;
     *) echo "unknown test ${suite}"; return 2 ;;
   esac
 }
-known_suite() { case "$1" in e2e-mysql|e2e-postgres|e2e-fxa|fxa-upgrade|podman) return 0 ;; esac; return 1; }
+known_suite() {
+  case "$1" in
+    e2e-mysql|e2e-postgres|e2e-fxa|fxa-upgrade|podman|helm-lint|helm-mariadb|helm-mysql|helm-postgres|helm-fxa-mysql|helm-fxa-mariadb) return 0 ;;
+  esac
+  return 1
+}
 
 # run_jobs <logs> <job>...: in one slot, at once (one job: in the foreground)
 run_jobs() {
@@ -959,7 +975,7 @@ run_jobs() {
   for j in "$@"; do
     known_suite "$(job_suite "${j}")" || { echo "unknown test $(job_suite "${j}")"; return 2; }
     id=$(job_identity "${j}")
-    [[ " ${ids} " == *" ${id} "* ]] && { echo "${j}: twice the same project in one slot, run it in another command"; return 2; }
+    [ "${id}" != kind ] && [[ " ${ids} " == *" ${id} "* ]] && { echo "${j}: twice the same project in one slot, run it in another command"; return 2; }
     ids="${ids} ${id}"
     [ "$(job_suite "${j}")" = podman ] && podman=1
   done
@@ -972,12 +988,22 @@ run_jobs() {
     run_one "$1"; rc=$?
   else
     mkdir -p "${logs}"
-    local pids=()
+    local pids=() kind_jobs=()
+    run_logged() { # job
+      local s r
+      s=$(date +%s); run_one "$1" > "${logs}/$(job_name "$1").log" 2>&1; r=$?
+      echo "${r} $(( $(date +%s) - s )) ${SLOT_HELD}" > "${logs}/$(job_name "$1").rc"
+    }
     for j in "$@"; do
-      ( s=$(date +%s); run_one "${j}" > "${logs}/$(job_name "${j}").log" 2>&1; r=$?
-        echo "${r} $(( $(date +%s) - s )) ${SLOT_HELD}" > "${logs}/$(job_name "${j}").rc" ) &
+      # (the kind ones: one after another, next to the others)
+      [ "$(job_identity "${j}")" = kind ] && { kind_jobs+=("${j}"); continue; }
+      run_logged "${j}" &
       pids+=($!)
     done
+    if [ ${#kind_jobs[@]} -gt 0 ]; then
+      ( for j in "${kind_jobs[@]}"; do run_logged "${j}"; done ) &
+      pids+=($!)
+    fi
     wait "${pids[@]}"
     for j in "$@"; do [ "$(cut -d' ' -f1 "${logs}/$(job_name "${j}").rc" 2> /dev/null)" = 0 ] || rc=1; done
   fi
@@ -1005,7 +1031,7 @@ new_logs() {
 }
 
 run_test() {
-  [ $# -ge 1 ] || { echo "vm.sh test <e2e-mysql|e2e-postgres|e2e-fxa|podman|fxa-upgrade|all|affected> ..."; return 2; }
+  [ $# -ge 1 ] || { echo "vm.sh test <e2e-mysql|e2e-postgres|e2e-fxa|podman|fxa-upgrade|helm-lint|helm-<backend>|helm-fxa-<db>|all|affected> ..."; return 2; }
   case "$1" in
     affected) shift; run_affected "$@"; return ;;
     all) shift; set -- "${SUITES_ALL[@]}" "$@" ;;
@@ -1026,17 +1052,28 @@ affected_jobs() { # files...
   local f jobs="" all=0
   add() { local j; for j in "$@"; do [[ "|${jobs}|" == *"|${j}|"* ]] || jobs="${jobs}${jobs:+|}${j}"; done; }
   for f in "$@"; do
+    # the chart's parity with compose (tests/helm.sh lint) reads these too
+    case "${f}" in
+      compose/*|docker-compose*.yml|.env-example|config/backup/*|config/fxa/*|db/*) add helm-lint ;;
+    esac
     case "${f}" in
       .github/*) ;;
       # the pages tests read commands from (doc contracts): e2e.sh and podman.sh restore
       # from docs/backups.md, podman.sh upgrades from docs/upgrading.md
-      docs/backups.md) add e2e-mysql e2e-postgres podman ;;
+      docs/backups.md)
+        add e2e-mysql e2e-postgres podman
+        # (and tests/helm.sh, tests/helm-fxa.sh those of #restore-on-kubernetes)
+        if git -C "${REPO}" diff "${BASE_REF}" -- "${f}" 2> /dev/null | grep -q '^[-+].*kubectl'; then add helm-mysql helm-postgres helm-fxa-mysql; fi ;;
       docs/upgrading.md|docs/migrating.md) add podman ;;
       *.md|docs/*|LICENSE|.gitignore) ;;
       admin/*)
         add e2e-mysql e2e-postgres e2e-fxa
         # the admin UI's Quadlet side (its deployment mode, the units it reads)
-        if [[ "${f}" == *[Qq]uadlet* ]] || git -C "${REPO}" diff "${BASE_REF}" -- "${f}" 2> /dev/null | grep -qi quadlet; then add podman; fi ;;
+        if [[ "${f}" == *[Qq]uadlet* ]] || git -C "${REPO}" diff "${BASE_REF}" -- "${f}" 2> /dev/null | grep -qi quadlet; then add podman; fi
+        # and its Kubernetes side (ADMIN_DEPLOYMENT=kubernetes, the helm commands)
+        if [[ "${f}" == *[Kk]ube* || "${f}" == *k8s* || "${f}" == *[Hh]elm* ]] || git -C "${REPO}" diff "${BASE_REF}" -- "${f}" 2> /dev/null | grep -qiE 'kube|k8s|helm'; then
+          add helm-mysql
+        fi ;;
       db/postgres/*) add e2e-postgres "EXTERNAL_DB=1 e2e-postgres" "SYNC_DB=postgres podman" ;;
       db/mysql/*) add e2e-mysql "SYNC_DB=mysql e2e-mysql" podman ;;
       config/quadlet/sync-postgres/*) add "SYNC_DB=postgres podman" ;;
@@ -1051,9 +1088,18 @@ affected_jobs() { # files...
       tests/docker-compose.external-db-test.yml|tests/compose/external-db.yml) add "EXTERNAL_DB=1 e2e-mysql" "EXTERNAL_DB=1 e2e-postgres" ;;
       tests/docker-compose.external-db-fxa-test.yml|tests/compose/external-db-fxa.yml) add "EXTERNAL_DB=1 e2e-fxa" ;;
       tests/fxa-upgrade.sh|tests/test_fxa_upgrade.py) add fxa-upgrade ;;
-      tests/e2e-fxa.sh|tests/docker-compose.fxa-test.yml|tests/compose/fxa.yml|tests/Caddyfile.fxa|tests/test_fxa_*.py|tests/browser/*) add e2e-fxa ;;
+      tests/test_fxa_*.py|tests/browser/*) add e2e-fxa helm-fxa-mysql ;;
+      tests/e2e-fxa.sh|tests/docker-compose.fxa-test.yml|tests/compose/fxa.yml|tests/Caddyfile.fxa) add e2e-fxa ;;
       tests/docker-compose.admin-build.yml|tests/compose/admin-build.yml) add e2e-mysql e2e-postgres e2e-fxa ;;
       tests/podman.sh) add podman ;;
+      # the chart: its lint, and on kind (one cluster at a time: in one slot, one after another)
+      charts/firefox-sync/ci/*) add helm-lint ;;
+      charts/firefox-sync/templates/fxa-*|charts/firefox-sync/templates/_fxa.tpl) add helm-lint helm-fxa-mysql "SKIP_BROWSER=1 helm-fxa-mariadb" ;;
+      charts/*) add helm-lint helm-mysql helm-postgres helm-fxa-mysql ;;
+      tests/helm-fxa.sh|tests/helm/fxa-*|tests/helm/traefik.yaml) add helm-lint helm-fxa-mysql ;;
+      tests/helm.sh|tests/helm/mock-fxa.yaml) add helm-lint helm-mysql helm-postgres ;;
+      tests/helm/lib.sh) add helm-lint helm-mysql helm-fxa-mysql ;;
+      tests/helm/*|tests/helm_parity.py) add helm-lint ;;
       tests/slot.sh) all=1 ;;
       prepare_environment.sh) all=1 ;;
       *) all=1 ;;
@@ -1081,13 +1127,22 @@ run_affected() {
     for i in "${!groups[@]}"; do
       local clash=""
       IFS='|' read -r -a members <<< "${groups[i]}"
-      for g in "${members[@]}"; do [ "$(job_identity "${g}")" = "$(job_identity "${j}")" ] && clash=1; done
+      # (the kind ones together: run_jobs runs them one after another)
+      for g in "${members[@]}"; do [ "$(job_identity "${g}")" = "$(job_identity "${j}")" ] && [ "$(job_identity "${j}")" != kind ] && clash=1; done
       [ -z "${clash}" ] && { groups[i]="${groups[i]}|${j}"; placed=1; break; }
     done
     [ -n "${placed}" ] || groups+=("${j}")
   done
   echo "plan:"
-  for i in "${!groups[@]}"; do echo "  slot $((i + 1)) of ${#groups[@]} (at once): ${groups[i]//|/, }"; done
+  local others kinds
+  for i in "${!groups[@]}"; do
+    others="" kinds=""
+    IFS='|' read -r -a members <<< "${groups[i]}"
+    for g in "${members[@]}"; do
+      if [ "$(job_identity "${g}")" = kind ]; then kinds="${kinds:+${kinds} then }${g}"; else others="${others:+${others}, }${g}"; fi
+    done
+    echo "  slot $((i + 1)) of ${#groups[@]} (at once): ${others}${others:+${kinds:+, }}${kinds:+(${kinds})}"
+  done
   [ -n "${PLAN_ONLY:-}" ] && return 0
   local logs t0 pids=(); logs=$(new_logs) t0=$(date +%s)
   mkdir -p "${logs}"
@@ -1116,6 +1171,16 @@ rerun() {
   return "${rc}"
 }
 
+# parity_export: "export PARITY_BASE_CHART=<its tree in the VM> && " for a command of the helm
+# tests, the chart of PARITY_BASE of REPO's tests/helm-fxa.sh (the slots have no .git); nothing
+# when PARITY_BASE_CHART is set (passed as it is) or that tree is not there
+parity_export() {
+  [ -z "${PARITY_BASE_CHART:-}" ] || return 0
+  local pb pd
+  pb=$(sed -n 's/^PARITY_BASE=\${PARITY_BASE:-\([0-9A-Za-z._-]*\)}.*/\1/p' "${REPO}/tests/helm-fxa.sh" 2> /dev/null)
+  if [ -n "${pb}" ] && pd=$(vm_rev "${pb}"); then echo "export PARITY_BASE_CHART=${pd}/charts/firefox-sync && "; fi
+}
+
 ssh_cmd() {
   local needs=-
   if [ $# = 0 ]; then
@@ -1137,10 +1202,8 @@ ssh_cmd() {
   resolve_upgrade_from
   [ -z "${UPGRADE_FROM:-}" ] || cmd="export UPGRADE_FROM=${UPGRADE_FROM} && ${cmd}"
   # the helm tests' chart 0.1.0 (PARITY_BASE of tests/helm-fxa.sh): the slot has no .git
-  if [ -z "${PARITY_BASE_CHART:-}" ] && [[ "${cmd}" =~ helm(-fxa)?\.sh ]] && [[ "${cmd}" != *PARITY_BASE_CHART=* ]]; then
-    local pb pd
-    pb=$(sed -n 's/^PARITY_BASE=\${PARITY_BASE:-\([0-9A-Za-z._-]*\)}.*/\1/p' "${REPO}/tests/helm-fxa.sh" 2> /dev/null)
-    if [ -n "${pb}" ] && pd=$(vm_rev "${pb}"); then cmd="export PARITY_BASE_CHART=${pd}/charts/firefox-sync && ${cmd}"; fi
+  if [[ "${cmd}" =~ helm(-fxa)?\.sh ]] && [[ "${cmd}" != *PARITY_BASE_CHART=* ]]; then
+    cmd="$(parity_export)${cmd}"
   fi
   # and the images of `vm.sh test` (helm.sh's own default, the public repository, lags behind)
   if [[ "${cmd}" =~ helm(-fxa)?\.sh ]] && [[ "${cmd}" != *REPOSITORY=* ]]; then

@@ -72,6 +72,7 @@ tests/vm/vm.sh start             # boot; the first boot also provisions
 tests/vm/vm.sh provision         # later: apt upgrades and the latest tools
 tests/vm/vm.sh test e2e-mysql    # or e2e-postgres, e2e-fxa, podman, fxa-upgrade, all, several at once
 tests/vm/vm.sh test affected     # the suites the changes since the remote's default branch need
+tests/vm/vm.sh test helm-lint helm-fxa-mysql   # the chart: helm-lint, helm-<backend>, helm-fxa-<db>
 tests/vm/vm.sh ssh 'cd firefox-sync && tests/helm.sh lint'
 tests/vm/vm.sh slots             # who holds which slot, the VM's free disk
 tests/vm/vm.sh stop
