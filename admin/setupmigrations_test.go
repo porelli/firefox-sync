@@ -65,11 +65,24 @@ func TestSetupStatus(t *testing.T) {
 		{"drift of the admin UI's check", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, ok, []string{"ffs_admin_sync lacks EXECUTE on tokenserver: GRANT ..."}), "drift",
 			"something they give is missing: ffs_admin_sync lacks EXECUTE", "", true},
 		{"drift of the last start", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, &SetupState{Result: "drift", Detail: "'tokenserver' lacks TRIGGER on `tokenserver`", At: at}, nil), "drift",
-			"'tokenserver' lacks TRIGGER on `tokenserver` (the start of ", "", true},
+			"'tokenserver' lacks TRIGGER on `tokenserver` (as of the last start, ", "", true},
 		{"the last start failed", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, &SetupState{Result: "error", Detail: "setup migration 002 failed", At: at}, nil), "failed",
 			"the last start stopped at db-bootstrap (error, ", "", false},
 		{"not recorded (an image from before)", setupStatus("sync", "Sync", shipped, nil, false, nil, nil), "unknown", "", "not recorded on the server, this release expects 002", false},
 		{"the table without this scope", setupStatus("sync", "Sync", shipped, nil, true, nil, nil), "unknown", "", "not recorded", false},
+		// a first start that failed: the state written, nothing recorded: attention, and the gauge
+		{"a first start with something missing", setupStatus("sync", "Sync", shipped, nil, true, &SetupState{Result: "missing", Detail: "'tokenserver' cannot sign in", At: at}, nil), "drift",
+			"'tokenserver' cannot sign in (as of the last start, ", "not recorded", true},
+		{"a first start that failed otherwise", setupStatus("sync", "Sync", shipped, nil, true, &SetupState{Result: "error", Detail: "setup migration 001 failed", At: at}, nil), "failed",
+			"the last start stopped at db-bootstrap (error, ", "not recorded", false},
+		// the admin UI's users alone: the last start's word unless the admin UI checks them itself
+		{"the admin UI's users, the last start's word", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, &SetupState{Result: "admin", Detail: "'ffs_admin_sync' cannot sign in", At: at}, nil), "drift",
+			"'ffs_admin_sync' cannot sign in (as of the last start, ", "", true},
+		{"the admin UI's users, checked again since and fine", func() SetupStatus {
+			s := setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, &SetupState{Result: "admin", Detail: "x", At: at}, nil)
+			s.LiveCheck = true
+			return s
+		}(), "ok", "", "version 002", false},
 	}
 	for _, c := range cases {
 		if got := c.s.Kind(); got != c.kind {
@@ -211,6 +224,21 @@ func TestSetupMigrationsOnTheOverview(t *testing.T) {
 // fxa-policy with the stack's fxa-db: the tables, the files of the release recorded as
 // containers (MariaDB's or MySQL's by VERSION()), INSERT IGNORE: none recorded twice
 func TestRecordFxaSetup(t *testing.T) {
+	// your own server (FXA_DB_CONTAINERS=0): the tables (the admin UI's grants), nothing recorded
+	t.Setenv("FXA_DB_CONTAINERS", "0")
+	own := &fakeFxa{answer: func(query string, _ []driver.Value) *fakeRows {
+		if query == "SELECT VERSION()" {
+			return &fakeRows{cols: []string{"v"}, rows: [][]driver.Value{{"9.4.0"}}}
+		}
+		return nil
+	}}
+	if err := recordFxaSetup(t.Context(), sql.OpenDB(own)); err != nil {
+		t.Fatal(err)
+	}
+	if stmts := own.statements(); len(stmts) != 2 || strings.Contains(strings.Join(stmts, " "), "INSERT") {
+		t.Errorf("your own server: %q", stmts)
+	}
+	t.Setenv("FXA_DB_CONTAINERS", "1")
 	for version, dir := range map[string]string{"11.8.2-MariaDB": "mysql/setup/fxa-mariadb", "9.4.0": "mysql/setup/fxa-mysql"} {
 		fake := &fakeFxa{answer: func(query string, _ []driver.Value) *fakeRows {
 			if query == "SELECT VERSION()" {

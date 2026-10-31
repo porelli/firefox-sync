@@ -709,11 +709,10 @@ func describePolicy(p *SignupPolicy) string {
 }
 
 // recordFxaSetup: the record of the setup migrations of the accounts (db/db-setup.sh,
-// docs/databases.md#the-record-of-the-setup-migrations) in ffs, for the admin UI. With your own
-// server fxa-db-bootstrap ran or checked them, and recorded every one before the migrations
-// (the start stops otherwise): nothing is missing here. With the stack's fxa-db, whose root the
-// accounts and this run as, they are recorded here (how 'containers'): the version shows
-// everywhere
+// docs/databases.md#the-record-of-the-setup-migrations) in ffs, for the admin UI: its tables (the
+// admin UI's grants need them), and with the stack's fxa-db (FXA_DB_CONTAINERS not 0), whose root
+// the accounts and this run as, the files of this image (how 'containers'). With your own server
+// fxa-db-bootstrap records what it ran or found, never this
 func recordFxaSetup(ctx context.Context, db *sql.DB) error {
 	var version string
 	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
@@ -733,6 +732,11 @@ func recordFxaSetup(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	// with your own server db-bootstrap records them, from the files it ran: an image newer than
+	// those files must not record what never ran there
+	if env("FXA_DB_CONTAINERS", "1") == "0" {
+		return nil
 	}
 	sums := map[string]string{}
 	for _, line := range strings.Split(setupManifestText, "\n") {

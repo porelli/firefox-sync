@@ -85,6 +85,9 @@ type SetupStatus struct {
 	State *SetupState
 	// no record on the server (the table not there: an init image or db-bootstrap from before them)
 	NotRecorded bool
+	// the admin UI checked its own users itself (Drift): a last start's result of them alone
+	// ('admin') is then outdated
+	LiveCheck bool
 	Err         string // the record could not be read
 }
 
@@ -93,15 +96,26 @@ func nnn(n int) string { return fmt.Sprintf("%03d", n) }
 // Kind: the state of the scope, for the alerts (once per change): ok, unknown, pending,
 // newer, drift, failed
 func (s SetupStatus) Kind() string {
+	result := ""
+	if s.State != nil {
+		result = s.State.Result
+	}
 	switch {
-	case s.Err != "" || s.NotRecorded:
+	case s.Err != "", s.NotRecorded && result == "":
 		return "unknown"
-	case len(s.Pending) > 0:
+	case !s.NotRecorded && len(s.Pending) > 0:
 		return "pending"
-	case len(s.Drift) > 0 || (s.State != nil && s.State.Result == "drift"):
+	case len(s.Drift) > 0, result == "drift", result == "missing":
 		return "drift"
-	case s.State != nil && s.State.Result != "ok":
+	// (the admin UI's own users alone: its own check decides when it ran, the last start's
+	// result otherwise)
+	case result == "admin" && !s.LiveCheck:
+		return "drift"
+	case result != "" && result != "ok" && result != "admin":
+		// (also a first start that failed, before anything was recorded)
 		return "failed"
+	case s.NotRecorded:
+		return "unknown"
 	case len(s.Newer) > 0:
 		return "newer"
 	}
@@ -109,9 +123,9 @@ func (s SetupStatus) Kind() string {
 }
 
 // DriftFlag: 1 for ffs_db_setup_drift, a user or grant missing (the admin UI's check, or the
-// last start's)
+// last start's): as Needs attention says
 func (s SetupStatus) DriftFlag() bool {
-	return len(s.Drift) > 0 || (s.State != nil && (s.State.Result == "drift" || s.State.Result == "missing"))
+	return s.Kind() == "drift"
 }
 
 // Line: "version 002 (applied bootstrap on ...), this release expects 002"
@@ -139,7 +153,7 @@ func (s SetupStatus) Problem() string {
 	case "drift":
 		detail := strings.Join(s.Drift, " ")
 		if detail == "" && s.State != nil {
-			detail = s.State.Detail + " (the start of " + formatTime(s.State.At, adminZone) + ")"
+			detail = s.State.Detail + " (as of the last start, " + formatTime(s.State.At, adminZone) + "; a later start that finds it all clears this)"
 		}
 		return fmt.Sprintf("%s: something they give is missing: %s", what, detail)
 	case "failed":
@@ -254,14 +268,16 @@ func (a *App) setupStatuses(ctx context.Context) []SetupStatus {
 			dir = "postgres/setup/sync"
 		}
 		var drift []string
+		live := false
 		// your own server: the admin UI's users have their grants (dbsetup.go)
 		if env("SYNC_DB_CONTAINERS", "1") == "0" && a.sync.own != nil {
 			if problems, err := a.dbSetupProblems(ctx); err == nil {
-				drift = problems
+				drift, live = problems, true
 			}
 		}
 		record, state, found, err := readSetup(ctx, a.sync.db, a.sync.postgres, "", "sync")
 		s := setupStatus("sync", "Sync", shippedSetup(setupManifestText, dir), record, found, state, drift)
+		s.LiveCheck = live
 		if err != nil {
 			s.Err = err.Error()
 		}
