@@ -545,12 +545,12 @@ rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstr
 printf '%s\n' "${external_answers[@]}" "" "" "" "" "" "" y "" "" y fxa_boot "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap.log" 2>&1
 check "$?" 0 "prepare_environment.sh with your own servers, the stack applying their SQL"
 check "$(env_value SYNC_DB_BOOTSTRAP_USER) $(env_value SYNC_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$') $(env_value FXA_DB_BOOTSTRAP_USER) $(env_value FXA_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$')" \
-  "ffs_bootstrap 1 fxa_boot 1" "the bootstrap accounts and their generated passwords in .env"
-check "$(stat -c %a "${SETUP}/database-bootstrap.sql") $(grep -c '@[A-Z_]*@' "${SETUP}/database-bootstrap.sql") $(grep -c "^GRANT ALL PRIVILEGES ON \`\(tokenserver\|sync_storage\|ffs_admin\)\`\.\* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;$" "${SETUP}/database-bootstrap.sql") $(grep -c "IDENTIFIED BY '$(env_value FXA_DB_BOOTSTRAP_PASSWORD)'" "${SETUP}/database-bootstrap-fxa.sql")" \
+  "ffs_sync_bootstrap 1 fxa_boot 1" "the bootstrap accounts (Sync's of the default name) and their generated passwords in .env"
+check "$(stat -c %a "${SETUP}/database-bootstrap.sql") $(grep -c '@[A-Z_]*@' "${SETUP}/database-bootstrap.sql") $(grep -c "^GRANT ALL PRIVILEGES ON \`[a-z\\_]*\`\.\* TO 'ffs_sync_bootstrap'@'%' WITH GRANT OPTION;$" "${SETUP}/database-bootstrap.sql") $(grep -c "IDENTIFIED BY '$(env_value FXA_DB_BOOTSTRAP_PASSWORD)'" "${SETUP}/database-bootstrap-fxa.sql")" \
   "600 0 3 2" "database-bootstrap.sql (the Sync databases of .env) and database-bootstrap-fxa.sql, for this user only"
 check "$(grep -c 'mysql -h db.example.org -P 3306 -u root -p < database-bootstrap.sql' "${WORK}/setup-bootstrap.log") $(grep -c 'mysql -h db.example.org -P 3307 -u root -p < database-bootstrap-fxa.sql' "${WORK}/setup-bootstrap.log") $(grep -c 'then the stack applies database-setup' "${WORK}/setup-bootstrap.log")" \
   "1 1 2" "prepare_environment.sh says to create the accounts once, then the stack applies the SQL"
-check "$(setup_compose config | sed -n '/^  db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +SYNC_DB_BOOTSTRAP_USER: ffs_bootstrap$') $(setup_compose config | sed -n '/^  fxa-db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +FXA_DB_BOOTSTRAP_USER: fxa_boot$')" \
+check "$(setup_compose config | sed -n '/^  db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +SYNC_DB_BOOTSTRAP_USER: ffs_sync_bootstrap$') $(setup_compose config | sed -n '/^  fxa-db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +FXA_DB_BOOTSTRAP_USER: fxa_boot$')" \
   "1 1" "db-bootstrap and fxa-db-bootstrap get their accounts"
 rm -f "${SETUP}"/database-bootstrap*.sql
 # Sync on your own PostgreSQL server (host, port, database, user), the accounts built in

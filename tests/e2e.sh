@@ -730,6 +730,16 @@ check "$(sql "SELECT number, how FROM ffs_setup_migrations WHERE scope = 'sync' 
 check "$(metrics_show "ffs_db_setup_version{scope=\"sync\"} ${setup_expected}") $(metrics_show "ffs_db_setup_expected_version{scope=\"sync\"} ${setup_expected}") $(metrics_show 'ffs_db_setup_drift{scope="sync"} 0')" \
   "yes yes yes" "the admin UI: setup version ${setup_expected}, this release expects ${setup_expected}, no drift (ffs_db_setup_*)"
 if [ -n "${EXTDB}" ]; then
+  # with your own server the init container records nothing (an init image newer than the
+  # files db-bootstrap ran must not record what never ran there): its record gone, the init
+  # run again: still none; db-bootstrap at the next start writes it again
+  sql "DELETE FROM ffs_setup_migrations WHERE scope = 'sync';" > /dev/null
+  init_again_setup() { dc up -d --no-deps --force-recreate tokenserver_db_init > /dev/null 2>&1; wait_init; }
+  check "$(init_again_setup) $(sql "SELECT COUNT(*) FROM ffs_setup_migrations WHERE scope = 'sync';")" "0 0" \
+    "your own server: the init container run again records no setup migration (how containers)"
+  dc up -d --no-deps --force-recreate db-bootstrap > /dev/null 2>&1
+  check "$(timeout 300 docker wait "$(dc ps -a -q db-bootstrap)") $(sql "SELECT COUNT(*) FROM ffs_setup_migrations WHERE scope = 'sync' AND how IN ('baseline', 'bootstrap');")" \
+    "0 ${setup_expected}" "db-bootstrap run again records them ($([ -n "${DB_BOOTSTRAP:-}" ] && echo "bootstrap: the end state there, the baseline" || echo baseline))"
   # drift: what the admin UI's users have, changed by hand, seen by the admin UI's own check:
   # its metric, its event (an alert); then put back
   if [ "${BACKEND}" = mysql ]; then
@@ -782,8 +792,23 @@ if [ -n "${EXTDB}" ]; then
     check "$(dc logs db-bootstrap 2>&1 | grep -c "drift from the setup migrations, run again as ${SYNC_DB_BOOTSTRAP_USER}")" 1 \
       "db-bootstrap found the drift and ran the setup migrations again as ${SYNC_DB_BOOTSTRAP_USER} (the account of db/${BACKEND}/setup/sync-bootstrap only)"
   else
+    # the admin UI's user alone: a warning, Sync starts as before the setup migrations
+    check "${release_rc} $(state db-bootstrap ExitCode) $(wait_init) $(hb)" "0 0 0 200" "the next start: the admin UI's reader missing does not stop Sync (a warning)"
+    check "$(dc logs db-bootstrap 2>&1 | grep -c "WARNING: the Sync databases on .*: the admin UI's users or database lack what database-setup.sql gives them") $(dc logs db-bootstrap 2>&1 | grep -cF -- "${missing}") $(sql "SELECT result FROM ffs_setup_state WHERE scope = 'sync';")" \
+      "1 1 admin" "db-bootstrap warns, naming the missing statement (${missing}); the record says it is the admin UI's (ffs_setup_state admin)"
+    # what the Sync server's users lack stops the start
+    if [ "${BACKEND}" = mysql ]; then
+      extdb_admin -e "REVOKE REFERENCES ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* FROM '${SYNC_TOKENSERVER_DB_USER}'@'%';" < /dev/null
+      missing="'${SYNC_TOKENSERVER_DB_USER}' lacks REFERENCES on \`${SYNC_TOKENSERVER_DB_NAME}\`"
+    else
+      extdb_admin -c "GRANT CONNECT ON DATABASE ${SYNC_POSTGRES_NAME} TO PUBLIC" < /dev/null > /dev/null
+      missing="every role may connect to the database ${SYNC_POSTGRES_NAME}: REVOKE ALL ON DATABASE ${SYNC_POSTGRES_NAME} FROM PUBLIC;"
+    fi
+    dc stop > /dev/null 2>&1
+    dc up -d > "${WORK}/release.log" 2>&1
+    release_rc=$?
     check "$([ "${release_rc}" != 0 ] && echo failed) $(state db-bootstrap ExitCode) $(state syncstorage Running || echo false) $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/__heartbeat__")" \
-      "failed 1 false 000" "the next start stops in db-bootstrap, the Sync server down"
+      "failed 1 false 000" "then a grant of the Sync server's user revoked: the next start stops in db-bootstrap, the Sync server down"
     check "$(dc logs db-bootstrap 2>&1 | grep -cF -- "${missing}") $(dc logs db-bootstrap 2>&1 | grep -c 'Run database-setup.sql again .*docs/databases.md#when-a-release-needs-new-users-or-grants')" "1 1" \
       "db-bootstrap names the missing statement (${missing}), database-setup.sql to run again and the doc"
     # what docs/databases.md#when-a-release-needs-new-users-or-grants says: the SQL again, a new start

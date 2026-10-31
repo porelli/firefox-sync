@@ -72,6 +72,17 @@ ALLOWED_DIFFERENCES = {
     "print the SQL of the setup migrations your server lacks again: docker compose run (compose), kubectl logs of its init "
     "container (the chart)",
     "fxa-external:fxa-db-bootstrap/FFS_SETUP_PENDING": "as db-bootstrap's",
+    "external-mariadb,external-mysql,external-postgres:db-bootstrap/FFS_PEER_DB_HOST": "the server of the accounts' bootstrap "
+    "account: the chart passes it only with the accounts on your own server too; compose passes FXA_MYSQL_HOST of .env "
+    "(fxa-db by default: never this server, the other account is then checked as any other)",
+    "external-mariadb,external-mysql,external-postgres:db-bootstrap/FFS_PEER_DB_PORT": "as FFS_PEER_DB_HOST",
+    "fxa-external:fxa-db-bootstrap/FFS_PEER_DB_HOST": "the server of Sync's bootstrap account: the chart passes it only "
+    "with Sync on your own server too; compose passes SYNC_TOKENSERVER_DB_HOST of .env (tokenserver_db here)",
+    "fxa-external:fxa-db-bootstrap/FFS_PEER_DB_PORT": "as FFS_PEER_DB_HOST",
+    f"{FXA_BUNDLED}:policy/FXA_DB_CONTAINERS": "as db-init's SYNC_DB_CONTAINERS: the chart only with "
+    "fxa.database.bundled false, unset fxa-init takes 1",
+    f"{BUNDLED}:db-init/SYNC_DB_CONTAINERS": "compose passes it always; the chart only with database.bundled false (no "
+    "setup migration recorded there), so that the default render stays that of 0.1.0: unset, the init container takes 1",
     "fxa-external:fxa-db-bootstrap/FXA_MYSQL_ARGS": "compose-only: FXA_MYSQL_ARGS of .env says mysql_native_password for an "
     "accounts image without mozilla/fxa#21554 (the \"-- native:\" lines of db/mysql/setup/fxa-mysql); the chart's own server takes the "
     "server's default authentication, as docs/databases.md#with-helm says",

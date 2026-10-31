@@ -27,11 +27,23 @@ sum256() { if command -v sha256sum > /dev/null 2>&1; then sha256sum "$1" | cut -
 files() { (cd "${DB}" && ls -1 ./*/setup/*/*.sql 2> /dev/null | sed -e 's|^\./||' | sort); }
 
 # the released manifest
+# BASE: what was released before this commit. On a branch: main (where it forked from it, when
+# git has that much history); on main itself (HEAD is main): the commit before, HEAD^, else
+# main would compare with itself. BASE given: as it is
 BASE=${BASE:-}
 if [ -z "${BASE}" ]; then
   for ref in origin/main main; do
     git -C "${CODE}" rev-parse -q --verify "${ref}^{commit}" > /dev/null 2>&1 && { BASE=${ref}; break; }
   done
+  if [ -n "${BASE}" ] && [ "$(git -C "${CODE}" rev-parse HEAD 2> /dev/null)" = "$(git -C "${CODE}" rev-parse "${BASE}")" ]; then
+    if git -C "${CODE}" rev-parse -q --verify "HEAD^{commit}" > /dev/null 2>&1 && git -C "${CODE}" rev-parse -q --verify "HEAD^" > /dev/null 2>&1; then
+      BASE=HEAD^
+    else
+      echo "FAIL: on ${BASE} itself, without its parent commit (git fetch --depth=2): nothing to compare the released files with"; exit 1
+    fi
+  elif [ -n "${BASE}" ] && fork=$(git -C "${CODE}" merge-base HEAD "${BASE}" 2> /dev/null); then
+    BASE=${fork}
+  fi
 fi
 RELEASED=""
 if [ -n "${BASE}" ]; then
@@ -87,6 +99,14 @@ for dir in "${DB}"/*/setup/*/; do
 done
 [ "$(ls -1 "${DB}/mysql/setup/fxa-mysql")" = "$(ls -1 "${DB}/mysql/setup/fxa-mariadb")" ] \
   || bad "the accounts' setup migrations of MySQL and MariaDB differ in their names: $(diff <(ls -1 "${DB}/mysql/setup/fxa-mysql") <(ls -1 "${DB}/mysql/setup/fxa-mariadb") | tr '\n' ' ')"
+# PostgreSQL: pg_check (db/db-setup.sh) checks the end state of the files up to PG_CHECKED by
+# hand: a later file needs it extended first (the baseline records none above it)
+pg_checked=$(sed -n 's/^PG_CHECKED=\([0-9][0-9]*\)$/\1/p' "${DB}/db-setup.sh")
+[ -n "${pg_checked}" ] || bad "db/db-setup.sh has no PG_CHECKED=<number>"
+for f in "${DB}"/postgres/setup/sync/*.sql; do
+  n=${f##*/} n=$((10#${n:0:3}))
+  [ "${n}" -le "${pg_checked:-0}" ] || bad "postgres/setup/sync/${f##*/}: pg_check of db/db-setup.sh checks the end state up to ${pg_checked} only: extend it to this file, then PG_CHECKED=${n}"
+done
 # the copies
 for copy in ${COPIES}; do
   cmp -s "${MANIFEST}" "${CODE}/${copy}" || bad "${copy} is not db/setup-manifest (cp db/setup-manifest ${copy}, or --update)"

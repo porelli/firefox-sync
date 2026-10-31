@@ -218,11 +218,13 @@ A user or grant missing from what the files give (revoked by hand, a user droppe
   - 'ffs_admin_sync' cannot sign in on db.example.com:3306 (ERROR 1045 (28000): Access denied ...): CREATE USER IF NOT EXISTS 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>'; ALTER USER 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>';
 ```
 
+What only the admin UI's own users and database lack is a warning, not a stop: the Sync server and the accounts start, the admin UI shows it (`ffs_setup_state` result `admin`) and checks its users itself again every round.
+
 Read it with `docker compose logs db-bootstrap` (`fxa-db-bootstrap`), `journalctl --user -u firefox-sync-db-bootstrap` (`firefox-sync-fxa-db-bootstrap`) with the Quadlets, or `kubectl logs deploy/<release>-firefox-sync-syncstorage -c db-bootstrap` (the accounts: `deploy/<release>-firefox-sync-fxa-auth`). The admin UI's setup checks show its own users' grants too.
 
 To fix it, either:
 
-- Run the pending files alone. With docker compose, `docker compose run --rm --no-deps db-bootstrap pending sync --passwords > pending.sql` (`fxa-db-bootstrap pending fxa` for the accounts) prints their SQL with the passwords of `.env`, and the `INSERT`s that record them (`manual`); without `--passwords` they are `<SETTING>`. With the Quadlets and Helm the log above has them, the passwords to fill in from `.env` or your Secret. Run it as in [Create the databases and users](#create-the-databases-and-users), delete it, start the stack again.
+- Run the pending files alone. With docker compose, `(umask 077; docker compose run --rm --no-deps -T db-bootstrap pending sync --passwords > pending.sql)` (this user's only: it holds the passwords) (`fxa-db-bootstrap pending fxa` for the accounts) prints their SQL with the passwords of `.env`, and the `INSERT`s that record them (`manual`); without `--passwords` they are `<SETTING>`. With the Quadlets and Helm the log above has them, the passwords to fill in from `.env` or your Secret. Run it as in [Create the databases and users](#create-the-databases-and-users), delete it, start the stack again.
 - Or run all of them again: `./prepare_environment.sh --upgrade` writes `database-setup.sql` (and `database-setup-fxa.sql`) of this release again, with the names and passwords of `.env`, and keeps the one of before as `database-setup.sql.before-upgrade-<UTC time>`. Its statements can run again: they create what is missing and set the passwords, and the `INSERT`s record the files once. Helm: fill in the files of [db/mysql/setup/sync/](/db/mysql/setup/sync) or [db/postgres/setup/sync/](/db/postgres/setup/sync) of the new chart again, as in [With Helm](#with-helm).
 - Or [let the stack apply them](#let-the-stack-apply-them).
 
@@ -262,25 +264,25 @@ Create it once, as an administrator of your server, with the names of your datab
 MariaDB and MySQL, for Sync:
 
 ```sql
-CREATE USER IF NOT EXISTS 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
-ALTER USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
-GRANT CREATE USER ON *.* TO 'ffs_bootstrap'@'%';
-GRANT SELECT (User, Host) ON mysql.user TO 'ffs_bootstrap'@'%';
+CREATE USER IF NOT EXISTS 'ffs_sync_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+ALTER USER 'ffs_sync_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+GRANT CREATE USER ON *.* TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT (User, Host) ON mysql.user TO 'ffs_sync_bootstrap'@'%';
 -- MySQL only: who is an administrator (the privilege columns of mysql.user, the privilege tables)
-GRANT SELECT (Select_priv, Insert_priv, ..., Drop_role_priv) ON mysql.user TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.global_grants TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.role_edges TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.db TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.tables_priv TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.columns_priv TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.procs_priv TO 'ffs_bootstrap'@'%';
-GRANT SELECT ON mysql.proxies_priv TO 'ffs_bootstrap'@'%';
-GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
-GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
+GRANT SELECT (Select_priv, Insert_priv, ..., Drop_role_priv) ON mysql.user TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.global_grants TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.role_edges TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.db TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.tables_priv TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.columns_priv TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.procs_priv TO 'ffs_sync_bootstrap'@'%';
+GRANT SELECT ON mysql.proxies_priv TO 'ffs_sync_bootstrap'@'%';
+GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_sync_bootstrap'@'%' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_sync_bootstrap'@'%' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON `ffs\_admin`.* TO 'ffs_sync_bootstrap'@'%' WITH GRANT OPTION;
 ```
 
-For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa_oauth`, `fxa_profile`, `pushbox` and `ffs` instead of the three above.
+For the accounts, the same with an account of its own (`prepare_environment.sh` proposes `ffs_fxa_bootstrap`, Sync's `ffs_sync_bootstrap`; one account for both would get two passwords), `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa\_oauth`, `fxa\_profile`, `pushbox` and `ffs` instead of the three above. The `_` of a database name in a `GRANT` is a wildcard: escaped (`ffs\_admin`), the account gets exactly the stack's databases, no look-alike.
 
 - `CREATE USER` creates the stack's users, and sets their passwords again (`ALTER USER`).
 - `SELECT (User, Host) ON mysql.user`: which accounts of the stack's names exist, on which hosts. Nothing else of `mysql.user`, not the passwords' hashes. On MySQL also its privilege columns and the privilege tables (`global_grants`, `role_edges`, `db`, `tables_priv`, `columns_priv`, `procs_priv`, `proxies_priv`, which hold no secret): who is an administrator, and holds `SYSTEM_USER`. `prepare_environment.sh` writes those lines (the file's `-- MySQL:` lines) for MySQL only; the file has every column.
@@ -290,12 +292,12 @@ For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `
 PostgreSQL, a role that is no superuser, run as a superuser:
 
 ```sql
-CREATE ROLE ffs_bootstrap LOGIN;
-ALTER ROLE ffs_bootstrap LOGIN CREATEROLE CREATEDB NOSUPERUSER NOREPLICATION NOBYPASSRLS PASSWORD '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+CREATE ROLE ffs_sync_bootstrap LOGIN;
+ALTER ROLE ffs_sync_bootstrap LOGIN CREATEROLE CREATEDB NOSUPERUSER NOREPLICATION NOBYPASSRLS PASSWORD '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 -- only for the roles that exist already (database-setup.sql run before by another role):
-GRANT syncserver TO ffs_bootstrap WITH ADMIN OPTION;
-GRANT ffs_admin_ui TO ffs_bootstrap WITH ADMIN OPTION;
-GRANT ffs_admin_sync TO ffs_bootstrap WITH ADMIN OPTION;
+GRANT syncserver TO ffs_sync_bootstrap WITH ADMIN OPTION;
+GRANT ffs_admin_ui TO ffs_sync_bootstrap WITH ADMIN OPTION;
+GRANT ffs_admin_sync TO ffs_sync_bootstrap WITH ADMIN OPTION;
 ```
 
 - `CREATEROLE` creates the roles and sets their passwords, of the roles it created or administers only (PostgreSQL 16 and later, which the bootstrap needs), hence `ADMIN OPTION` on those that exist. The bootstrap takes only the roles it administers for the stack's, so give it `ADMIN OPTION` only on roles that are the stack's.

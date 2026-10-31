@@ -206,7 +206,17 @@ for ENGINE in "$@"; do
     db_setup sync -- "${BOOT[@]}"
     check "$? $(said 'ffs_bootstrap holds .*WITH GRANT OPTION on the whole server')" "1 1" "${ENGINE}: a bootstrap account with GRANT OPTION on the whole server refused"
     admin -e "REVOKE GRANT OPTION ON *.* FROM 'ffs_bootstrap'@'%'" < /dev/null
+    # a column of mysql.user it may read beside one it may change: the whole line refused
+    admin -e "GRANT UPDATE (Host) ON mysql.user TO 'ffs_bootstrap'@'%'" < /dev/null
+    db_setup sync -- "${BOOT[@]}"
+    check "$? $(said 'ffs_bootstrap holds .*on `mysql`.`user`')" "1 1" "${ENGINE}: a bootstrap account with UPDATE (Host) on mysql.user beside its SELECT columns refused"
+    admin -e "REVOKE UPDATE (Host) ON mysql.user FROM 'ffs_bootstrap'@'%'" < /dev/null
     if [ "${ENGINE}" = mysql ]; then
+      # a mandatory role (every account's, a SET ROLE away) with SUPER: refused
+      printf '%s\n' "CREATE ROLE ffs_mandatory;" "GRANT SUPER ON *.* TO ffs_mandatory;" "SET PERSIST mandatory_roles = 'ffs_mandatory';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}"
+      check "$? $(said 'ffs_bootstrap holds .*SUPER')" "1 1" "mysql: a mandatory role with SUPER (every account's): the bootstrap refused"
+      printf '%s\n' "SET PERSIST mandatory_roles = '';" "DROP ROLE ffs_mandatory;" | admin > /dev/null
       # MySQL: CREATE USER reaches every account without SYSTEM_USER: every administrator of the
       # server (any privilege on the whole server or on the mysql schema, also through a role)
       # must hold it (root does), or the bootstrap is refused, naming them; an application's
@@ -228,9 +238,27 @@ for ENGINE in "$@"; do
       printf '%s\n' "CREATE USER 'ffs_peer'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_peer'@'%';" | admin > /dev/null
       db_setup sync -- "${BOOT[@]}"
       check "$? $(saidF "lack SYSTEM_USER: 'ffs_peer'@'%'")" "1 1" "mysql: another account with CREATE USER, not named as the other bootstrap account: refused"
-      db_setup sync -- "${BOOT[@]}" FXA_DB_BOOTSTRAP_USER=ffs_peer
-      check "$? $(said 'lack SYSTEM_USER')" "0 0" "mysql: the accounts' bootstrap account on the same server (FXA_DB_BOOTSTRAP_USER): left to its own start"
+      PEER=(FXA_DB_BOOTSTRAP_USER=ffs_peer "FFS_PEER_DB_HOST=${NAME}" FFS_PEER_DB_PORT=3306)
+      db_setup sync -- "${BOOT[@]}" "${PEER[@]}"
+      check "$? $(said 'lack SYSTEM_USER')" "0 0" "mysql: the accounts' bootstrap account on the same server (FXA_DB_BOOTSTRAP_USER, its host): left to its own start"
+      db_setup sync -- "${BOOT[@]}" FXA_DB_BOOTSTRAP_USER=ffs_peer FFS_PEER_DB_HOST=elsewhere.example FFS_PEER_DB_PORT=3306
+      check "$? $(saidF "lack SYSTEM_USER: 'ffs_peer'@'%'")" "1 1" "mysql: the same name, the accounts on another server: checked as any account, refused"
+      admin -e "GRANT SUPER ON *.* TO 'ffs_peer'@'%'" < /dev/null
+      db_setup sync -- "${BOOT[@]}" "${PEER[@]}"
+      check "$? $(saidF "lack SYSTEM_USER: 'ffs_peer'@'%'")" "1 1" "mysql: the other bootstrap account with SUPER: checked as any account, refused"
       admin -e "DROP USER 'ffs_peer'@'%'" < /dev/null
+      # an RDS-style master named as the other bootstrap account: everything, no SYSTEM_USER
+      printf '%s\n' "CREATE USER 'admin'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;" \
+        "REVOKE SYSTEM_USER ON *.* FROM 'admin'@'%';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}" FXA_DB_BOOTSTRAP_USER=admin "FFS_PEER_DB_HOST=${NAME}" FFS_PEER_DB_PORT=3306
+      check "$? $(saidF "lack SYSTEM_USER: 'admin'@'%'")" "1 1" "mysql: an RDS-style 'admin'@'%' (ALL, no SYSTEM_USER) named as the other bootstrap account: refused"
+      admin -e "DROP USER 'admin'@'%'" < /dev/null
+      # a stack name given as the other bootstrap account: never left out
+      # (the stack's syncstorage, which the run above created)
+      printf '%s\n' "CREATE USER IF NOT EXISTS 'syncstorage'@'%' IDENTIFIED BY '${STORAGE_PW}';" "GRANT CREATE USER ON *.* TO 'syncstorage'@'%';" | admin > /dev/null
+      db_setup sync -- "${BOOT[@]}" FXA_DB_BOOTSTRAP_USER=syncstorage "FFS_PEER_DB_HOST=${NAME}" FFS_PEER_DB_PORT=3306
+      check "$? $(saidF "accounts of the stack's names on ${NAME}:3306 hold administrator privileges")" "1 1" "mysql: a stack name as the other bootstrap account: refused as a stack name with CREATE USER"
+      admin -e "REVOKE CREATE USER ON *.* FROM 'syncstorage'@'%'" < /dev/null
       # an account of a stack name with administrator privileges, on another host: refused, whatever it holds
       printf '%s\n' "CREATE USER 'syncstorage'@'localhost' IDENTIFIED BY '${THEIRS}';" "GRANT SUPER ON *.* TO 'syncstorage'@'localhost';" \
         "GRANT SYSTEM_USER ON *.* TO 'syncstorage'@'localhost';" | admin > /dev/null
@@ -280,20 +308,27 @@ for ENGINE in "$@"; do
     check "$? $(said 'drift from the setup migrations, run again as ffs_bootstrap') $(admin -c "SELECT has_database_privilege('public', 'syncserver', 'CONNECT')" < /dev/null) $(state)" "0 1 f ok" \
       "postgres: with the bootstrap: the drift run again, PUBLIC without CONNECT again"
   else
-    # the stack's users with their grants through a default role and on a pattern: what they have
+    # a grant of the admin UI's reader revoked by hand: a warning, the start goes on (the admin
+    # UI's own users alone), the record says it is the admin UI's
     admin -e "REVOKE EXECUTE ON tokenserver.* FROM 'ffs_admin_sync'@'%'" < /dev/null
     db_setup sync
-    check "$? $(saidF "'ffs_admin_sync' lacks EXECUTE on \`tokenserver\`: GRANT SELECT, EXECUTE ON \`tokenserver\`.* TO 'ffs_admin_sync'@'%';") $(state)" "1 1 drift" \
-      "${ENGINE}: a grant revoked by hand: the check stops naming its GRANT, the record says drift"
-    printf '%s\n' "CREATE ROLE ffs_reader;" "GRANT EXECUTE ON \`tokenserve_\`.* TO ffs_reader;" "GRANT ffs_reader TO 'ffs_admin_sync'@'%';" \
-      "$([ "${ENGINE}" = mysql ] && echo "SET DEFAULT ROLE ffs_reader TO 'ffs_admin_sync'@'%';" || echo "SET DEFAULT ROLE ffs_reader FOR 'ffs_admin_sync'@'%';")" | admin > /dev/null
+    check "$? $(saidF "'ffs_admin_sync' lacks EXECUTE on \`tokenserver\`: GRANT SELECT, EXECUTE ON \`tokenserver\`.* TO 'ffs_admin_sync'@'%';") $(said "WARNING: the Sync databases on .*: the admin UI's users or database lack") $(state)" "0 1 1 admin" \
+      "${ENGINE}: the admin UI's reader lacks a grant: a warning naming its GRANT, the start goes on, the record says admin"
+    # one of the Sync server's user: the check stops naming its GRANT, the record says drift
+    admin -e "REVOKE REFERENCES ON tokenserver.* FROM 'tokenserver'@'%'" < /dev/null
     db_setup sync
-    check "$? $(state)" "0 ok" "${ENGINE}: that grant through a default role, on a pattern (\`tokenserve_\`): the check finds it"
-    printf '%s\n' "$([ "${ENGINE}" = mysql ] && echo "SET DEFAULT ROLE NONE TO 'ffs_admin_sync'@'%';" || echo "SET DEFAULT ROLE NONE FOR 'ffs_admin_sync'@'%';")" \
-      "DROP ROLE ffs_reader;" | admin > /dev/null
+    check "$? $(saidF "'tokenserver' lacks REFERENCES on \`tokenserver\`: GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES,") $(state)" "1 1 drift" \
+      "${ENGINE}: the tokenserver user lacks a grant revoked by hand: the check stops naming its GRANT, the record says drift"
+    # that one through a default role and on a pattern: what the user has
+    printf '%s\n' "CREATE ROLE ffs_role;" "GRANT REFERENCES ON \`tokenserve_\`.* TO ffs_role;" "GRANT ffs_role TO 'tokenserver'@'%';" \
+      "$([ "${ENGINE}" = mysql ] && echo "SET DEFAULT ROLE ffs_role TO 'tokenserver'@'%';" || echo "SET DEFAULT ROLE ffs_role FOR 'tokenserver'@'%';")" | admin > /dev/null
+    db_setup sync
+    check "$? $(said "'tokenserver' lacks") $(state)" "0 0 admin" "${ENGINE}: that grant through a default role, on a pattern (\`tokenserve_\`): the check finds it"
+    printf '%s\n' "$([ "${ENGINE}" = mysql ] && echo "SET DEFAULT ROLE NONE TO 'tokenserver'@'%';" || echo "SET DEFAULT ROLE NONE FOR 'tokenserver'@'%';")" \
+      "DROP ROLE ffs_role;" | admin > /dev/null
     db_setup sync -- "${BOOT[@]}"
-    check "$? $(said 'drift from the setup migrations, run again as ffs_bootstrap') $(admin -e "SHOW GRANTS FOR 'ffs_admin_sync'@'%'" < /dev/null | grep -c 'GRANT SELECT, EXECUTE ON `tokenserver`')" "0 1 1" \
-      "${ENGINE}: with the bootstrap: the drift run again, the grant back"
+    check "$? $(said 'drift from the setup migrations, run again as ffs_bootstrap') $(admin -e "SHOW GRANTS FOR 'ffs_admin_sync'@'%'" < /dev/null | grep -c 'GRANT SELECT, EXECUTE ON `tokenserver`') $(admin -e "SHOW GRANTS FOR 'tokenserver'@'%'" < /dev/null | grep -c 'REFERENCES') $(state)" "0 1 1 1 ok" \
+      "${ENGINE}: with the bootstrap: the drift run again, both grants back"
   fi
 
   echo "== ${ENGINE}: the record of the setup migrations"

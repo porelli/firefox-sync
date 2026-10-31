@@ -137,7 +137,8 @@ The admin UI reads the record in `ffs_setup_migrations` every round of checks, a
 A line in [Needs attention](#needs-attention), an event (kind `attention`) and an alert, once when it starts and once when it is in order again, when:
 
 - a file this release needs is not recorded on the server (`db-bootstrap` applies it at the next start with the bootstrap account, otherwise run it, see [When a release needs new users or grants](../databases.md#when-a-release-needs-new-users-or-grants));
-- a user or grant of the files is missing (drift), seen by the admin UI or by the last start;
+- a user or grant of the files is missing (drift), seen by the admin UI or by the last start (then said "as of the last start", until a later start finds it all; what only the admin UI's own users lack, it checks again itself every round);
+- the first start of this release stopped at `db-bootstrap` (nothing recorded yet, its result kept);
 - the last start stopped at `db-bootstrap` for another reason;
 - the server has a newer version than this release expects (an older release on a newer setup).
 

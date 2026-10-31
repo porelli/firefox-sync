@@ -1094,7 +1094,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
   if [ "${SYNC_DB}" = postgres ]; then ext_names=("" ""); else ext_names=("" "" "" ""); fi
   # DB_BOOTSTRAP=1: then the stack applies database-setup.sql itself (the last question: yes,
-  # the account ffs_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
+  # the account ffs_sync_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
   ext_bootstrap=()
   [ -n "${DB_BOOTSTRAP:-}" ] && ext_bootstrap=(y "" "")
   printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n y "${EXTDB}" "" "${ext_names[@]}" "" y "${ext_bootstrap[@]}" \
@@ -1105,8 +1105,8 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   check "$(grep -hE '^(After|Requires)=.*-db\.service' "${QUADLET_DIR}"/firefox-sync-* | wc -l) $(grep -c '^Requires=firefox-sync-syncstorage-migrate.service$' "${QUADLET_DIR}/firefox-sync-tokenserver-db-init.container")" "0 1" \
     "no dependencies on database units, the init still needs the migrations"
   # db-bootstrap before the migrations (and the Sync role), its account's password in its environment file
-  check "$(grep -c '^Requires=.*firefox-sync-db-bootstrap\.service' "${QUADLET_DIR}"/firefox-sync-syncstorage-migrate.container) $(grep -c "^Environment=SYNC_DB_BOOTSTRAP_USER=$([ -n "${DB_BOOTSTRAP:-}" ] && echo ffs_bootstrap)$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.container) $(grep -c "^SYNC_DB_BOOTSTRAP_PASSWORD=$([ -n "${DB_BOOTSTRAP:-}" ] && echo '[A-Za-z0-9]\{32\}')$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.env)" \
-    "1 1 1" "firefox-sync-db-bootstrap, required by the migrations: $([ -n "${DB_BOOTSTRAP:-}" ] && echo "ffs_bootstrap applies the SQL, its password in the unit's environment file" || echo "no account, it checks the SQL")"
+  check "$(grep -c '^Requires=.*firefox-sync-db-bootstrap\.service' "${QUADLET_DIR}"/firefox-sync-syncstorage-migrate.container) $(grep -c "^Environment=SYNC_DB_BOOTSTRAP_USER=$([ -n "${DB_BOOTSTRAP:-}" ] && echo ffs_sync_bootstrap)$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.container) $(grep -c "^SYNC_DB_BOOTSTRAP_PASSWORD=$([ -n "${DB_BOOTSTRAP:-}" ] && echo '[A-Za-z0-9]\{32\}')$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.env)" \
+    "1 1 1" "firefox-sync-db-bootstrap, required by the migrations: $([ -n "${DB_BOOTSTRAP:-}" ] && echo "ffs_sync_bootstrap applies the SQL, its password in the unit's environment file" || echo "no account, it checks the SQL")"
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(unit_count "^Environment=\"?(SYNC_SYNCSTORAGE__DATABASE_URL=postgres://syncserver:[A-Za-z0-9]+@${EXTDB}:5432/syncserver|POSTGRES_SERVER=${EXTDB}|TOKENSERVER_DB_HOST=${EXTDB})\"?$" \
       "${QUADLET_DIR}"/firefox-sync-{syncstorage,tokenserver-db-init,admin}.container)" "1 1 1" "quadlets connect to your server"
@@ -1159,8 +1159,8 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   check "$?" 0 "systemctl --user start firefox-sync-syncstorage.service (your own server)"
   check "$(hb)" 200 "/__heartbeat__ (quadlets, your own server)"
   # (each line twice in the journal: the unit's and the container's)
-  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ setup migrations 001.* applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: setup version 001 .*every user, grant and database of database-setup.sql is there')")" -ge 1 ] && echo 1)" 1 \
-    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied the setup migrations as ffs_bootstrap" || echo "found every user and grant of database-setup.sql")"
+  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ setup migrations 001.* applied as ffs_sync_bootstrap' || echo '✓ the Sync databases on .*: setup version 001 .*every user, grant and database of database-setup.sql is there')")" -ge 1 ] && echo 1)" 1 \
+    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied the setup migrations as ffs_sync_bootstrap" || echo "found every user and grant of database-setup.sql")"
   # the record: database-setup.sql of prepare_environment.sh has the INSERTs (manual), or the bootstrap ran them
   if [ "${SYNC_DB}" = postgres ]; then ext_record=$(extdb_admin -d syncserver -c "SELECT number || ' ' || how FROM ffs_setup_migrations WHERE scope = 'sync'" < /dev/null)
   else ext_record=$(extdb_admin -e "SELECT CONCAT(number, ' ', how) FROM $(env_of SYNC_TOKENSERVER_DB_NAME).ffs_setup_migrations WHERE scope = 'sync'" < /dev/null); fi
@@ -1188,7 +1188,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # again, run there first), a setting changed and rendered again, every unit started again
   cp -p .env "${WORK}/external.env"
   ./prepare_environment.sh --upgrade < /dev/null > upgrade-external.log 2>&1
-  if [ -n "${DB_BOOTSTRAP:-}" ]; then upgrade_said='^Your own database server: the stack applies the setup migrations it lacks itself at the next start, as ffs_bootstrap'
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then upgrade_said='^Your own database server: the stack applies the setup migrations it lacks itself at the next start, as ffs_sync_bootstrap'
   else upgrade_said='^Your own database server: .*run database-setup.sql there first'; fi
   check "$? $(grep -c "${upgrade_said}" upgrade-external.log) $(grep -c 'nothing changed$' upgrade-external.log) $(cmp -s .env "${WORK}/external.env" && echo same) $(ls database-setup.sql.before-upgrade-* | wc -l) $(stat -c %a database-setup.sql.before-upgrade-*)" "0 1 1 same 1 600" \
     "--upgrade on your own server: database-setup.sql written again, the one of before kept (0600)$([ -n "${DB_BOOTSTRAP:-}" ] && echo ", the bootstrap kept"), nothing else to change (quadlets)"
