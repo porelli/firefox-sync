@@ -438,12 +438,12 @@ grants_of() {
       fi
     elif [ -n "${every}" ]; then
       # MariaDB: SHOW GRANTS has the default role's (and those it has); every role: SET ROLE
+      # shellcheck disable=SC2016 # (the backticks of the role names, not commands)
       for roles in "${direct[@]}"; do
         while IFS= read -r r; do
           [ -n "${r}" ] || continue
           out=$(my_q "${user}" "${password}" "${host}" "${port}" "SET ROLE ${r}; SHOW GRANTS FOR CURRENT_ROLE") || { printf '%s\n' "${out}" >&2; return 1; }
           mapfile -t -O "${#lines[@]}" lines <<< "${out}"
-        # shellcheck disable=SC2016 # (backticks of the role names, not commands)
         done < <(grep -o '`[^`]*`' <<< "${roles//, /$'\n'}" | grep -v '^``$')
       done
     fi
@@ -975,10 +975,10 @@ elif [ -n "${BOOT_USER}" ]; then
     local user=$1 host=$2 setting=$3 hosts me
     [ -z "${OURS[${user}]:-}" ] || return 0
     hosts=$(hosts_of "${user}") || exit 1
+    # shellcheck disable=SC2001 # (a line per account)
     case "${hosts}" in
       "") return 1 ;;
       "[${host}]") ;;
-      # shellcheck disable=SC2001 # (a line per account)
       *) failed "${NAME}" "the server has $(sed -e "s/^\[\(.*\)\]$/'${user}'@'\1'/" <<< "${hosts}" | paste -sd ',' - | sed -e 's/,/, /g') (an account or a role): the setup migrations give '${user}'@'${host}' only, the bootstrap does not create or change it beside another (it would widen where ${user} signs in from). Drop or rename the other one if it is not the stack's, or choose another name" ;;
     esac
     if me=$(my_q "${user}" "${PASSWORD_OF[${user}]}" "${MAIN_HOST}" "${MAIN_PORT}" 'SELECT CURRENT_USER()') && [ "${me}" = "${user}@${host}" ]; then
