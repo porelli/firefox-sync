@@ -1,10 +1,10 @@
 # Database users
 
-Reference: the database users the stack uses on each backend, what each one can do, and why. The SQL files are the source: [db/mysql/sync.sql](/db/mysql/sync.sql), [db/postgres/sync.sql](/db/postgres/sync.sql), [db/mysql/fxa-mysql.sql](/db/mysql/fxa-mysql.sql) and [db/mysql/fxa-mariadb.sql](/db/mysql/fxa-mariadb.sql). How to run them on your own server: [Create the databases and users](../databases.md#create-the-databases-and-users).
+Reference: the database users the stack uses on each backend, what each one can do, and why. The SQL files are the source, the [setup migrations](../databases.md#setup-migrations) of [db/mysql/setup/sync/](/db/mysql/setup/sync), [db/postgres/setup/sync/](/db/postgres/setup/sync), [db/mysql/setup/fxa-mysql/](/db/mysql/setup/fxa-mysql) and [db/mysql/setup/fxa-mariadb/](/db/mysql/setup/fxa-mariadb). How to run them on your own server: [Create the databases and users](../databases.md#create-the-databases-and-users).
 
 ## MariaDB and MySQL
 
-[db/mysql/sync.sql](/db/mysql/sync.sql) creates two databases, a user for each, and the admin UI's database and two users.
+[db/mysql/setup/sync/](/db/mysql/setup/sync) creates two databases, a user for each, and the admin UI's database and two users.
 
 | User (setting, default) | Grants | What it does with them |
 |---|---|---|
@@ -24,7 +24,7 @@ Notes:
 
 **Never run the Sync server, or your own `psql`, `pg_dump` or `pg_restore` on the Sync database, as a superuser.** Connect as the owner of the Sync tables: `SYNC_POSTGRES_APP_USER` in the stack's container, `SYNC_POSTGRES_USER` on your own server.
 
-[db/postgres/sync.sql](/db/postgres/sync.sql) creates:
+[db/postgres/setup/sync/](/db/postgres/setup/sync) creates:
 
 | Role | What it is |
 |---|---|
@@ -64,7 +64,7 @@ Without `SYNC_POSTGRES_APP_USER` (an install from before it), the Sync server st
 
 ## The accounts
 
-[db/mysql/fxa-mysql.sql](/db/mysql/fxa-mysql.sql) and [db/mysql/fxa-mariadb.sql](/db/mysql/fxa-mariadb.sql) differ only in how the accounts' user signs in. `FXA_DB` picks the file. The database names are fixed (`fxa`, `fxa_oauth`, `fxa_profile`, `pushbox`, `ffs`): a server or instance of its own for the accounts is best.
+[db/mysql/setup/fxa-mysql/](/db/mysql/setup/fxa-mysql) and [db/mysql/setup/fxa-mariadb/](/db/mysql/setup/fxa-mariadb) differ only in how the accounts' user signs in. `FXA_DB` picks the file. The database names are fixed (`fxa`, `fxa_oauth`, `fxa_profile`, `pushbox`, `ffs`): a server or instance of its own for the accounts is best.
 
 | User (setting, default on your server) | Grants | What it does with them |
 |---|---|---|

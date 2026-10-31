@@ -2,7 +2,7 @@
 
 The pages stay GitHub markdown. This hook bridges what Python-Markdown reads differently:
 
-- Links that leave docs/ (/db/mysql/sync.sql, /charts/firefox-sync, the root README.md) and
+- Links that leave docs/ (/db/setup-manifest, /charts/firefox-sync, the root README.md) and
   links to files of docs/ that are not on the site (/docs/images/admin) become
   https://github.com/<repo>/blob/main/<path>, or tree/main/ for a directory, with the repo
   taken from repo_url. Links between pages stay relative.

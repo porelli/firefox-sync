@@ -1,7 +1,8 @@
 name: docs
 # The links of the documentation (tests/check_markdown_links.py): every relative link, #anchor
 # and blob/main URL of the markdown files, and with --code the doc references of the code
-# (the admin UI's help links, the scripts' messages, the chart's NOTES). On every push, with no
+# (the admin UI's help links, the scripts' messages, the chart's NOTES); and the setup
+# migrations against db/setup-manifest (tests/setup_migrations.sh). On every push, with no
 # paths filter: it takes seconds and needs no image. See docs/development/testing.md#links.
 #
 # The docs site (mkdocs.yml): built with --strict on every push, so a broken link, a missing
@@ -22,6 +23,12 @@ jobs:
         run: python3 -I tests/test_check_markdown_links.py
       - name: Links
         run: python3 -I tests/check_markdown_links.py --code --settings
+      # db/setup-manifest: every setup migration with its checksum, those of main unchanged
+      # (docs/databases.md#setup-migrations)
+      - name: Setup migrations
+        run: |
+          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main || echo "no main to compare with"
+          BASE=origin/main bash tests/setup_migrations.sh
   site:
     runs-on: ubuntu-latest
     env:

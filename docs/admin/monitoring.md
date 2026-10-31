@@ -6,7 +6,7 @@ What the [admin UI](README.md) watches on your server, and where it shows it: th
 
 The Health part of the overview shows, for each component, whether it answers its health check: the Sync server, the databases and, with self-hosted accounts, the accounts services. It also shows:
 
-- the versions running, and whether a newer release is out, see [Versions and schema levels](#versions-and-schema-levels);
+- the versions running, and whether a newer release is out, see [Versions and schema levels](#versions-and-schema-levels), with the schema levels and the [setup migrations](#setup-migrations) of the databases;
 - the limits: the accounts against max users and max accounts, see [Limits](accounts.md#limits);
 - the Email (SMTP) row and the Notifications row, see [Alerts](alerts.md);
 - the public URLs with their certificates, see [Public checks](#public-checks);
@@ -37,6 +37,7 @@ The top of the overview lists what to look at now, one line each, with a link to
 | accounts that never confirmed their email; accounts with an unconfirmed sign-in | the list of those accounts (one account: its page) |
 | devices not used for `ADMIN_STALE_DAYS` (90) | the list of those accounts (one account: its devices) |
 | the accounts database not pruned for 2 days, see [Maintenance and retention](storage.md#maintenance-and-retention) | Activity |
+| the setup migrations of a database server: one this release needs not recorded there, a user or grant they give missing (drift), the last start stopped at `db-bootstrap`, or a newer version than this release's, see [Setup migrations](#setup-migrations) | Technical details |
 
 The links to a part of the list show only those accounts: `/?show=blocked`, `unconfirmed`, `unconfirmed-sign-in`, `inactive`, `inactive-devices`.
 
@@ -126,6 +127,21 @@ Next to the versions, the overview shows the schema of each database:
 - the `schema-patch-level` of each accounts database (`fxa`, `fxa_oauth`, `fxa_profile`, `pushbox`). FxA records no time for it, so the Applied column says "not recorded by FxA".
 
 A change is recorded as an event (kind `update`) and alerted, once: an upgrade that migrated, or a database restored from an older backup. The levels seen last are kept in the admin UI's database (`ffs_schema_levels`), so an upgrade of the whole stack, the admin UI with it, is noticed too.
+
+### Setup migrations
+
+Below the schema levels, under Technical details, "Setup of the database servers" has a row per scope: Sync, and the accounts when they are self-hosted. It shows the [setup migrations](../databases.md#setup-migrations) that the database server recorded against those of this release: "version 001 (applied baseline on ...), this release expects 001", and whether they are in order. How they were applied: `bootstrap` (`db-bootstrap` with its bootstrap account), `manual` (by hand), `baseline` (an install from before them) or `containers` (the stack's own database containers).
+
+The admin UI reads the record in `ffs_setup_migrations` every round of checks, and the result of the last start of `db-bootstrap` in `ffs_setup_state`. With your own server it also checks its own users' grants, from `SHOW GRANTS` (their roles too): a grant revoked by hand shows as drift without waiting for a restart. The users it cannot see (the Sync server's) are checked by `db-bootstrap` at every start.
+
+A line in [Needs attention](#needs-attention), an event (kind `attention`) and an alert, once when it starts and once when it is in order again, when:
+
+- a file this release needs is not recorded on the server (`db-bootstrap` applies it at the next start with the bootstrap account, otherwise run it, see [When a release needs new users or grants](../databases.md#when-a-release-needs-new-users-or-grants));
+- a user or grant of the files is missing (drift), seen by the admin UI or by the last start;
+- the last start stopped at `db-bootstrap` for another reason;
+- the server has a newer version than this release expects (an older release on a newer setup).
+
+An install whose server has no record yet (its first start of this release not done) shows "not recorded", without an alert.
 
 ## Sync metrics
 
@@ -285,6 +301,8 @@ scrape_configs:
 | `ffs_notify_test_failures_total{destination}` | the test notifications that failed |
 | `ffs_security_events_total{event}` | the events of the [security history](accounts.md#security-history) since the admin UI started, by Mozilla's name (`account.login`, `account.login.failure`, `account.password_changed`...), with `FXA_ACCOUNT_EVENTS=true` |
 | `ffs_backup_age_seconds{scope}`, `ffs_backup_last_ok{scope}` | seconds since the last good backup (`sync`, `accounts`), and 1 when the last run worked, see [Backups](../backups.md) |
+| `ffs_db_setup_version{scope}`, `ffs_db_setup_expected_version{scope}` | the highest [setup migration](#setup-migrations) the database server recorded (`sync`, `fxa`; 0: none), and the highest this release ships |
+| `ffs_db_setup_drift{scope}` | 1 when a user, grant or database of the setup migrations is missing (the admin UI's check, or the last start's) |
 
 The tokens refused have no counter: verified minus issued goes down when a token comes after its verification, which a counter must not do (`rate()` would see a reset). Subtract the two counters instead:
 

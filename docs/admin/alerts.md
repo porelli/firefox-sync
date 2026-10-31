@@ -7,7 +7,7 @@ The [admin UI](README.md) can tell you when something happens on your server, by
 - **Health**: a component goes down or comes back, a new release is out, a database schema changes, a certificate of a public URL is about to expire. See [Monitoring](monitoring.md).
 - **The admin UI itself**: someone signs in, or fails to, or changes something there (kind `admin`).
 - **Backups**: one fails, or the last good one gets older than 36 hours, and when they work again. See [Backups](../backups.md).
-- **Thresholds**, once when they start and once when they end: max users or max accounts near or at the limit ([Near and full](../limits.md#near-and-full)); Sync data changing without metrics from the Sync server; a spike of Sync errors; a database growing fast; alerts failing. See [Needs attention](monitoring.md#needs-attention).
+- **Thresholds**, once when they start and once when they end: max users or max accounts near or at the limit ([Near and full](../limits.md#near-and-full)); Sync data changing without metrics from the Sync server; a spike of Sync errors; a database growing fast; alerts failing; the [setup migrations](monitoring.md#setup-migrations) of a database server not in order. See [Needs attention](monitoring.md#needs-attention).
 - **Sign-ups**: a refused sign-up, and with self-hosted accounts a new account, a new device, a burst of sign-ups (see [Maintenance and retention](storage.md#maintenance-and-retention)).
 - **Security**, with self-hosted accounts: an account blocked by the rate limits and, with the security history on, a changed password, primary email, or way to sign in or recover the account (kind `security`). See [Security history](accounts.md#security-history).
 

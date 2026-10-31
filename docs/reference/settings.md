@@ -70,7 +70,7 @@ How to set it up: [Your own database server](../databases.md#your-own-server). T
 |---|---|---|---|---|
 | `SYNC_DB_CONTAINERS` | `database.bundled` | `1` (Helm `true`) | `0` (Helm `false`): no Sync database containers, use your own server | `DB_CONTAINERS` |
 | `SYNC_DB_TLS_VERIFY` | `database.external.tlsVerify` | `true` (Helm `false`) | whether the init container's client (and the chart's backups) checks the server's certificate. `false` for your own MySQL, whose certificate is self-signed. The Sync server itself connects without TLS | `MARIADB_TLS_VERIFY` |
-| `SYNC_DB_BOOTSTRAP_USER` | `database.external.bootstrap.user` | empty | an account that can create users, as which the stack applies `database-setup.sql` itself at every start; empty: it only checks the users and grants. See [Let the stack apply them](../databases.md#let-the-stack-apply-them) | |
+| `SYNC_DB_BOOTSTRAP_USER` | `database.external.bootstrap.user` | empty | an account that can create users, as which the stack applies the [setup migrations](../databases.md#setup-migrations) your server lacks itself at every start; empty: it only checks them. See [Let the stack apply them](../databases.md#let-the-stack-apply-them) | |
 | `SYNC_DB_BOOTSTRAP_PASSWORD` | Secret: `SYNC_DB_BOOTSTRAP_PASSWORD` | empty | its password | |
 | `SYNC_TOKENSERVER_DB_HOST` | `database.external.host` | `tokenserver_db` | the tokenserver's server: a host name or IPv4 address the containers reach (Helm: required) | `MARIADB_TOKENSERVER_SERVER` |
 | `SYNC_TOKENSERVER_DB_PORT` | `database.external.port` | `3306` (Helm empty: `3306`, or `5432` for `postgres`) | its port | `MARIADB_TOKENSERVER_SERVER_PORT` |

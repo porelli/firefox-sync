@@ -181,11 +181,15 @@ Without it:
 
 The release that added `db/` moved other files. The image names and the names of the installed Quadlet units did not change.
 
-- `config/database/` is gone. `sync-mariadb.sql` is now [db/mysql/sync.sql](/db/mysql/sync.sql), `sync-postgres.sql` is [db/postgres/sync.sql](/db/postgres/sync.sql), and `fxa-mysql.sql`, `fxa-mariadb.sql` and `admin-user.sh` are in [db/mysql/](/db/mysql). With your own database server, `prepare_environment.sh` reads them from there. If you fill in the SQL by hand, take it from the new paths ([Create the databases and users](databases.md#create-the-databases-and-users)).
+- `config/database/` is gone. `sync-mariadb.sql` became `db/mysql/sync.sql`, `sync-postgres.sql` `db/postgres/sync.sql`, and `fxa-mysql.sql`, `fxa-mariadb.sql` and `admin-user.sh` went to [db/mysql/](/db/mysql). They are now the [setup migrations](databases.md#setup-migrations) of [db/mysql/setup/](/db/mysql/setup) and [db/postgres/setup/](/db/postgres/setup). With your own database server, `prepare_environment.sh` reads them from there. If you fill in the SQL by hand, take it from the new paths ([Create the databases and users](databases.md#create-the-databases-and-users)).
 - `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/` are now `db/mysql/init/` and `db/postgres/init/`. This only matters if you build the init images yourself (`docker build db/mysql/init`).
 - `config/quadlet/mysql/` is now `config/quadlet/sync-mysql/` (`SYNC_DB=mysql`), where `prepare_environment.sh` looks for it. The units keep their names, but the database units now mount `db/mysql/admin-user.sh`. Render them again before the next start (`--upgrade` does, [Quadlets](#quadlets)): the old units point at `config/database/admin-user.sh`, which `git pull` removes.
 - nginx: [config/nginx/syncstorage-rs-example.conf](/config/nginx/syncstorage-rs-example.conf) now has `client_max_body_size 10m;`. Your `config/nginx/syncstorage-rs.conf` (written once by `prepare_environment.sh`) and your own proxy keep their setting. Add it to the `server` block of your Sync host, see [Request size](reverse-proxy.md#request-size).
 - Not a git clone: after copying the new files, delete the old `config/database/`, `config/quadlet/mysql/`, `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/`.
+
+### Your own database server: the setup migrations
+
+The SQL of your own server is now the numbered [setup migrations](databases.md#setup-migrations), recorded on the server as they run. Nothing to do for an install from before them: at its first start of this release `db-bootstrap` (`fxa-db-bootstrap`) finds the users, grants and databases of `database-setup.sql` there, and records every file as `baseline`; if something is missing, the start stops naming it, as before. `--upgrade` writes `database-setup.sql` (`database-setup-fxa.sql`) again and keeps the one of before as `database-setup.sql.before-upgrade-<UTC time>`, readable by you only. With the stack's own database containers the init container records them (`containers`). The admin UI shows the version of each server ([Setup migrations](admin/monitoring.md#setup-migrations)).
 
 ### The database majors of an install from before
 
@@ -305,7 +309,7 @@ ERROR: SYNC_X and X are both set (in .env or in the environment docker compose r
 - The init container logs a warning that lists them (`docker compose logs tokenserver_db_init`), and the admin UI's setup check "Old setting names (.env, environment)" fails. Compose passes them to it as `FFS_OLD_ENV_NAMES`.
 - The variables inside the containers keep their names: commands such as `docker compose exec tokenserver_db sh -c 'mariadb -u"$MARIADB_USER" ...'`, or those of `sync_role_init` with `$POSTGRES_SYNC_USER`, work as before.
 - Your own scripts that read `.env`, or set its settings in the environment of compose (`MAX_USERS=5 docker compose up -d`), need the new names.
-- The placeholders of [db/mysql/sync.sql](/db/mysql/sync.sql) and [db/postgres/sync.sql](/db/postgres/sync.sql), if you fill them in by hand: `@TOKENSERVER_*@` is now `@SYNC_TOKENSERVER_*@`, `@SYNCSTORAGE_*@` is `@SYNC_STORAGE_*@`, and `@POSTGRES_*@` is `@SYNC_POSTGRES_*@` (for example `@SYNC_TOKENSERVER_PASSWORD@`, `@SYNC_POSTGRES_DATABASE@`). The nginx example has `<SYNC_EXPORT_PORT>`.
+- The placeholders of `db/mysql/sync.sql` and `db/postgres/sync.sql` (now [db/mysql/setup/sync/](/db/mysql/setup/sync) and [db/postgres/setup/sync/](/db/postgres/setup/sync)), if you fill them in by hand: `@TOKENSERVER_*@` is now `@SYNC_TOKENSERVER_*@`, `@SYNCSTORAGE_*@` is `@SYNC_STORAGE_*@`, and `@POSTGRES_*@` is `@SYNC_POSTGRES_*@` (for example `@SYNC_TOKENSERVER_PASSWORD@`, `@SYNC_POSTGRES_DATABASE@`). The nginx example has `<SYNC_EXPORT_PORT>`.
 - Rolling back to a release from before: it reads only the old names, so put the `.env.before-upgrade-<time>` of that upgrade back.
 
 ## Database majors
