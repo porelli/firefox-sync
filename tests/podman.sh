@@ -638,7 +638,7 @@ if [ "${SYNC_DB}" = postgres ]; then
   ts_sql() { pg_sql "$(env_of SYNC_POSTGRES_APP_USER)" "$(env_of SYNC_POSTGRES_APP_PASSWORD)" "$(env_of SYNC_POSTGRES_NAME)" "$1"; }
   admin_db_sql() { pg_sql "$(env_of ADMIN_DB_USER)" "$(env_of ADMIN_DB_PASSWORD)" "$(env_of ADMIN_DB_NAME)" "$1"; }
   reader_sql() { pg_sql "$(env_of ADMIN_DB_SYNC_USER)" "$(env_of ADMIN_DB_PASSWORD)" "$1" "$2"; }
-  check "$([ "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events")" -gt 0 ] && echo yes) $(ts_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'ffs\\_%'")" \
+  check "$([ "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events")" -gt 0 ] && echo yes) $(ts_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'ffs\\_%' AND table_name NOT LIKE 'ffs\\_setup\\_%'")" \
     "yes 0" "the admin UI records its events in its own database, none in the Sync database (quadlets, postgres)"
   check "$(pg_sql "$(env_of SYNC_POSTGRES_APP_USER)" "$(env_of SYNC_POSTGRES_APP_PASSWORD)" "$(env_of ADMIN_DB_NAME)" "SELECT 1" 2>&1 | grep -c 'permission denied')" 1 \
     "the Sync server's role cannot connect to the admin UI's database (quadlets, postgres)"
@@ -649,7 +649,7 @@ if [ "${SYNC_DB}" = postgres ]; then
   SYNC_DUMPS="ffs_admin.sql.gz $(env_of SYNC_POSTGRES_NAME).sql.gz"
 else
   mariadb_sql
-  check "$([ "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events")" -gt 0 ] && echo yes) $(ts_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'ffs\\_%'")" \
+  check "$([ "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events")" -gt 0 ] && echo yes) $(ts_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'ffs\\_%' AND table_name NOT LIKE 'ffs\\_setup\\_%'")" \
     "yes 0" "the admin UI records its events in its own database, none in the tokenserver's (quadlets)"
   [ -z "${UPGRADE_FROM:-}" ] || check "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events WHERE detail = 'ffs-podman: before the Quadlet upgrade by admin (password)' OR detail LIKE 'Moved the admin UI%'")" 2 \
     "the audit trail of ${UPGRADE_FROM} moved into the admin UI's database (quadlets upgraded)"
@@ -658,6 +658,10 @@ else
     "1 1 1" "the admin UI's reader reads the Sync databases, not the event log (quadlets)"
   SYNC_DUMPS="ffs_admin.sql.gz syncstorage.sql.gz tokenserver.sql.gz"
 fi
+# the setup migrations (docs/databases.md#setup-migrations): recorded by the init container with
+# the stack's database containers, the version in the admin UI
+check "$(ts_sql "SELECT number, how FROM ffs_setup_migrations WHERE scope = 'sync' ORDER BY number" | tr '\t|' '  ' | paste -sd ',' -) $(metrics_show 'ffs_db_setup_version{scope="sync"} 1' 'ffs_db_setup_expected_version{scope="sync"} 1')" \
+  "1 containers all" "the setup migrations recorded by the init container (how containers), version 1 in the admin UI (quadlets)"
 check "$(grep -c '^OnCalendar=\*-\*-\* 03:00:00 UTC$' "${SYSTEMD_USER_DIR}/firefox-sync-backup.timer" 2> /dev/null) $(systemctl --user is-enabled firefox-sync-backup.timer 2> /dev/null)" "1 disabled" \
   "backup timer installed, not enabled (quadlets)"
 check "$(systemctl --user show -p Triggers --value firefox-sync-backup.timer)" firefox-sync-backup.service "the backup timer starts the backup service"
@@ -1155,8 +1159,8 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   check "$?" 0 "systemctl --user start firefox-sync-syncstorage.service (your own server)"
   check "$(hb)" 200 "/__heartbeat__ (quadlets, your own server)"
   # (each line twice in the journal: the unit's and the container's)
-  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ database-setup.sql applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: every user, grant and database of database-setup.sql is there')")" -ge 1 ] && echo 1)" 1 \
-    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied database-setup.sql as ffs_bootstrap" || echo "found every user and grant of database-setup.sql")"
+  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ setup migrations 001.* applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: every user, grant and database of the setup migrations 001.* is there, recorded as their baseline')")" -ge 1 ] && echo 1)" 1 \
+    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied the setup migrations as ffs_bootstrap" || echo "found every user and grant of database-setup.sql: the baseline")"
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(extdb_admin -d syncserver -c "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'before_insert_user'" < /dev/null) $(extdb_admin -d syncserver -c "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'users' AND relnamespace = 'public'::regnamespace" < /dev/null)" \
       "1 syncserver" "SYNC_MAX_USERS trigger on your server, the tables of SYNC_POSTGRES_USER (no superuser)"
@@ -1180,10 +1184,10 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # again, run there first), a setting changed and rendered again, every unit started again
   cp -p .env "${WORK}/external.env"
   ./prepare_environment.sh --upgrade < /dev/null > upgrade-external.log 2>&1
-  if [ -n "${DB_BOOTSTRAP:-}" ]; then upgrade_said='^Your own database server: the stack applies database-setup.sql itself at the next start, as ffs_bootstrap'
-  else upgrade_said='^Your own database server: run database-setup.sql there first'; fi
-  check "$? $(grep -c "${upgrade_said}" upgrade-external.log) $(grep -c 'nothing changed$' upgrade-external.log) $(cmp -s .env "${WORK}/external.env" && echo same)" "0 1 1 same" \
-    "--upgrade on your own server: database-setup.sql written again$([ -n "${DB_BOOTSTRAP:-}" ] && echo ", the bootstrap kept"), nothing else to change (quadlets)"
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then upgrade_said='^Your own database server: the stack applies the setup migrations it lacks itself at the next start, as ffs_bootstrap'
+  else upgrade_said='^Your own database server: .*run database-setup.sql there first'; fi
+  check "$? $(grep -c "${upgrade_said}" upgrade-external.log) $(grep -c 'nothing changed$' upgrade-external.log) $(cmp -s .env "${WORK}/external.env" && echo same) $(ls database-setup.sql.before-upgrade-* | wc -l) $(stat -c %a database-setup.sql.before-upgrade-*)" "0 1 1 same 1 600" \
+    "--upgrade on your own server: database-setup.sql written again, the one of before kept (0600)$([ -n "${DB_BOOTSTRAP:-}" ] && echo ", the bootstrap kept"), nothing else to change (quadlets)"
   if [ -z "${DB_BOOTSTRAP:-}" ]; then
     extdb_setup > /dev/null 2> setup-sql-again.log
     check "$?" 0 "database-setup.sql runs again on the server"
@@ -1191,10 +1195,19 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   sed -i 's|^ADMIN_STALE_DAYS=.*|ADMIN_STALE_DAYS=45|' .env
   ./prepare_environment.sh --render-units < /dev/null > render-units-external.log 2>&1
   check "$? $(sed -n 's/^  ✓ //p' render-units-external.log | paste -sd' ')" "0 firefox-sync-admin.container" "--render-units on your own server: the admin UI's unit alone"
+  # (the one-shot db-bootstrap is not active once it ran: no RemainAfterExit)
+  check "$(systemctl --user is-active firefox-sync-db-bootstrap.service)" inactive "firefox-sync-db-bootstrap inactive once it ran"
+  boot_runs() { journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c 'Started firefox-sync-db-bootstrap.service\|Finished firefox-sync-db-bootstrap.service'; }
+  runs_before=$(boot_runs)
   timeout 300 systemctl --user stop firefox-sync-syncstorage.service firefox-sync-admin.service firefox-sync-syncstorage-migrate.service \
-    firefox-sync-tokenserver-db-init.service firefox-sync-db-bootstrap.service $([ "${SYNC_DB}" = postgres ] && echo firefox-sync-sync-role-init.service)
+    firefox-sync-tokenserver-db-init.service $([ "${SYNC_DB}" = postgres ] && echo firefox-sync-sync-role-init.service)
   timeout 900 systemctl --user start firefox-sync-admin.service firefox-sync-syncstorage.service
-  check "$? $(hb) $(admin_up /login)" "0 200 200" "the units started again, rendered again (your own server)"
+  check "$? $(hb) $(admin_up /login) $([ "$(boot_runs)" -gt "${runs_before}" ] && echo again)" "0 200 200 again" \
+    "the units started again, rendered again (your own server): db-bootstrap ran again before the migrations"
+  # a restart of the migrations alone runs it again too (it requires it, which is not active)
+  runs_before=$(boot_runs)
+  timeout 600 systemctl --user restart firefox-sync-syncstorage-migrate.service
+  check "$? $([ "$(boot_runs)" -gt "${runs_before}" ] && echo again)" "0 again" "systemctl --user restart firefox-sync-syncstorage-migrate: db-bootstrap ran again first"
   [ "${FAILED}" = 0 ] || { journalctl --user -u 'firefox-sync-*' --no-pager | tail -40; podman logs --tail 20 "${EXTDB}"; }
   stop_quadlets
   podman rm -f "${EXTDB}" > /dev/null 2>&1

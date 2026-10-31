@@ -32,13 +32,13 @@
 #                   without it (the default, lts) the containers refuse to upgrade the data, and that
 #                   --upgrade pins it
 #   EXTERNAL_DB     set to 1 for a database server outside the stack (SYNC_DB_CONTAINERS=0, docs/databases.md#your-own-server),
-#                   created with only the grants of db/<engine>/sync.sql: MySQL with binary logging
+#                   created with only the grants of db/<engine>/setup/sync: MySQL with binary logging
 #                   for mysql, a PostgreSQL (postgres:latest) owner that is no superuser for postgres; on its own
 #                   network (EXTDB_SUBNET, default: 10.232.1.0/24 mysql, 10.232.2.0/24 postgres). Its
 #                   db-bootstrap checks them at every start; a release that needs a user they lack (the
-#                   admin UI's reader dropped) stops the start, naming it, until db/<engine>/sync.sql runs again
+#                   admin UI's reader dropped) stops the start, naming it, until db/<engine>/setup/sync runs again
 #   DB_BOOTSTRAP    with EXTERNAL_DB=1, set to 1: the server has only the bootstrap account of
-#                   db/<engine>/bootstrap.sql (docs/databases.md#the-bootstrap-account, nothing more),
+#                   db/<engine>/setup/sync-bootstrap (docs/databases.md#the-bootstrap-account, nothing more),
 #                   SYNC_DB_BOOTSTRAP_USER in .env: db-bootstrap creates the stack's databases and users
 #                   at every start, and creates the dropped reader again at the next one
 #   UPGRADE_FROM    a checkout of an earlier release (e.g. git worktree add /tmp/ffs-from <tag>):
@@ -362,9 +362,9 @@ new_server() {
 # the admin UI's tables left in the tokenserver database
 old_tables() {
   if [ "${BACKEND}" = mysql ]; then
-    sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'ffs\\_%';"
+    sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'ffs\\_%' AND table_name NOT LIKE 'ffs\\_setup\\_%';"
   else
-    sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'ffs\\_%';"
+    sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'ffs\\_%' AND table_name NOT LIKE 'ffs\\_setup\\_%';"
   fi
 }
 
@@ -433,11 +433,11 @@ start_extdb() {
         -e "s|@SYNC_TOKENSERVER_PASSWORD@|${SYNC_TOKENSERVER_DB_PASSWORD}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
         -e "s|@SYNC_STORAGE_USER@|${SYNC_STORAGE_DB_USER}|g" -e "s|@SYNC_STORAGE_PASSWORD@|${SYNC_STORAGE_DB_PASSWORD}|g" \
         -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" -e "s|@ADMIN_PASSWORD@|${ADMIN_DB_SECRET}|g" \
-        "${CODE}/db/mysql/sync.sql"
+        "${CODE}"/db/mysql/setup/sync/*.sql
   else
     sed -e "s|@SYNC_POSTGRES_DATABASE@|${SYNC_POSTGRES_NAME}|g" -e "s|@SYNC_POSTGRES_USER@|${SYNC_POSTGRES_USER}|g" \
         -e "s|@SYNC_POSTGRES_PASSWORD@|${SYNC_POSTGRES_PASSWORD}|g" -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" \
-        -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" -e "s|@ADMIN_PASSWORD@|${ADMIN_DB_SECRET}|g" "${CODE}/db/postgres/sync.sql"
+        -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" -e "s|@ADMIN_PASSWORD@|${ADMIN_DB_SECRET}|g" "${CODE}"/db/postgres/setup/sync/*.sql
   fi > "${WORK}/database-setup.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-setup.sql")" 0 "external database: SQL template filled in"
   if [ -n "${DB_BOOTSTRAP:-}" ]; then
@@ -467,15 +467,15 @@ start_extdb() {
   done
 }
 
-# DB_BOOTSTRAP=1: the account of db/<engine>/bootstrap.sql on the external server, as its
+# DB_BOOTSTRAP=1: the account of db/<engine>/setup/sync-bootstrap on the external server, as its
 # administrator (PostgreSQL: the superuser), and nothing else (docs/databases.md#the-bootstrap-account)
 extdb_bootstrap_account() {
-  local template=${CODE}/db/mysql/bootstrap.sql
-  [ "${BACKEND}" = postgres ] && template=${CODE}/db/postgres/bootstrap.sql
+  local template=("${CODE}"/db/mysql/setup/sync-bootstrap/*.sql)
+  [ "${BACKEND}" = postgres ] && template=("${CODE}"/db/postgres/setup/sync-bootstrap/*.sql)
   sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
       -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
       -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "s|@SYNC_POSTGRES_USER@|${SYNC_POSTGRES_USER}|g" \
-      -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" "${template}" > "${WORK}/database-bootstrap.sql"
+      -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" "${template[@]}" > "${WORK}/database-bootstrap.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap account's SQL filled in" || return 1
   extdb_admin < "${WORK}/database-bootstrap.sql" > /dev/null || return 1
 }
@@ -517,7 +517,7 @@ if [ -n "${EXTDB}" ]; then
   grep -E '^(PASS|FAIL):' "${WORK}/db_setup.log" | sed 's/^/  /'
   echo "== external database server ${EXTDB} ($([ "${BACKEND}" = mysql ] && echo "${SYNC_MYSQL_IMAGE}" || echo postgres:latest))"
   start_extdb
-  check "$?" 0 "external database server with $([ -n "${DB_BOOTSTRAP:-}" ] && echo "only the bootstrap account of db/${BACKEND}/bootstrap.sql" || echo "the databases and users of db/${BACKEND}/sync.sql")"
+  check "$?" 0 "external database server with $([ -n "${DB_BOOTSTRAP:-}" ] && echo "only the bootstrap account of db/${BACKEND}/setup/sync-bootstrap" || echo "the databases and users of db/${BACKEND}/setup/sync")"
 fi
 
 # a stack of an earlier KEEP=1 run of this project would make the fail-closed check pass
@@ -648,7 +648,7 @@ check "$?" 0 "./prepare_environment.sh --upgrade" || cat "${WORK}/upgrade.log"
 # your own server: --upgrade keeps the choice of the bootstrap, asks nothing, and says what happens with the SQL
 if [ -n "${EXTDB}" ]; then
   if [ -n "${DB_BOOTSTRAP:-}" ]; then
-    check "$(grep -c "^SYNC_DB_BOOTSTRAP_USER=${SYNC_DB_BOOTSTRAP_USER}$" "${UP}/.env") $(grep -c 'the stack applies database-setup.sql itself at the next start' "${WORK}/upgrade.log")" "1 1" \
+    check "$(grep -c "^SYNC_DB_BOOTSTRAP_USER=${SYNC_DB_BOOTSTRAP_USER}$" "${UP}/.env") $(grep -c 'the stack applies the setup migrations it lacks itself at the next start' "${WORK}/upgrade.log")" "1 1" \
       "--upgrade keeps SYNC_DB_BOOTSTRAP_USER: the stack applies database-setup.sql at the next start"
   else
     check "$(grep -c '^SYNC_DB_BOOTSTRAP_USER=.' "${UP}/.env") $(grep -c 'run database-setup.sql there first' "${WORK}/upgrade.log")" "0 1" \
@@ -718,6 +718,35 @@ if [ "${BACKEND}" = postgres ] && [ -z "${EXTERNAL_DB:-}" ]; then
     "${pg_image}" "backup service configured with SYNC_POSTGRES_IMAGE from .env"
 fi
 
+echo "== the setup migrations (docs/databases.md#setup-migrations): recorded, in the admin UI"
+# who recorded them: the init container with the stack's database containers, db-bootstrap
+# with your own server (baseline: the server had all of the SQL of db/<engine>/setup/sync,
+# run by hand here without the INSERTs of database-setup.sql; bootstrap: it ran them)
+setup_how=$(if [ -z "${EXTDB}" ]; then echo containers; elif [ -n "${DB_BOOTSTRAP:-}" ]; then echo bootstrap; else echo baseline; fi)
+setup_expected=$(grep -c "^$([ "${BACKEND}" = postgres ] && echo postgres || echo mysql)/setup/sync/" "${CODE}/db/setup-manifest")
+check "$(sql "SELECT number, how FROM ffs_setup_migrations WHERE scope = 'sync' ORDER BY number;" | tr '\t|' '  ' | paste -sd ',' -)" "$(seq -f "%g ${setup_how}" 1 "${setup_expected}" | paste -sd ',' -)" \
+  "ffs_setup_migrations: every setup migration of this release recorded (how ${setup_how})"
+check "$(metrics_show "ffs_db_setup_version{scope=\"sync\"} ${setup_expected}") $(metrics_show "ffs_db_setup_expected_version{scope=\"sync\"} ${setup_expected}") $(metrics_show 'ffs_db_setup_drift{scope="sync"} 0')" \
+  "yes yes yes" "the admin UI: setup version ${setup_expected}, this release expects ${setup_expected}, no drift (ffs_db_setup_*)"
+if [ -n "${EXTDB}" ]; then
+  # drift: what the admin UI's users have, changed by hand, seen by the admin UI's own check:
+  # its metric, its event (an alert); then put back
+  if [ "${BACKEND}" = mysql ]; then
+    extdb_admin -e "REVOKE EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* FROM '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
+  else
+    extdb_admin -c "GRANT CONNECT ON DATABASE ${ADMIN_DB_NAME} TO PUBLIC" < /dev/null > /dev/null
+  fi
+  check "$(metrics_show 'ffs_db_setup_drift{scope="sync"} 1')" yes "a $([ "${BACKEND}" = mysql ] && echo "grant revoked" || echo "CONNECT given to PUBLIC") by hand: ffs_db_setup_drift 1"
+  check "$([ "$(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'attention' AND detail LIKE 'The setup migrations of the Sync database server: something they give is missing: %$([ "${BACKEND}" = mysql ] && echo "lacks EXECUTE" || echo "every role may connect")%';")" -ge 1 ] && echo yes)" yes \
+    "and its event (an alert): the setup migrations of the Sync database server, something missing"
+  if [ "${BACKEND}" = mysql ]; then
+    extdb_admin -e "GRANT SELECT, EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* TO '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
+  else
+    extdb_admin -c "REVOKE ALL ON DATABASE ${ADMIN_DB_NAME} FROM PUBLIC" < /dev/null > /dev/null
+  fi
+  check "$(metrics_show 'ffs_db_setup_drift{scope="sync"} 0')" yes "put back: ffs_db_setup_drift 0"
+fi
+
 echo "== the migrations step ends when syncstorage-rs does not stop on SIGTERM"
 # its graceful shutdown can hang for good: the step kills it 30 s after SIGTERM, and still
 # succeeds (it answered its heartbeat: the migrations ran)
@@ -749,8 +778,8 @@ if [ -n "${EXTDB}" ]; then
   if [ -n "${DB_BOOTSTRAP:-}" ]; then
     check "${release_rc} $(wait_init) $(admin_healthy) $(admin_sync_sql 'SELECT 1;')" "0 0 healthy 1" \
       "the next start: db-bootstrap created ${ADMIN_DB_SYNC_USER} again, the stack and the admin UI up, the reader signs in"
-    check "$([ "$(dc logs db-bootstrap 2>&1 | grep -c "✓ database-setup.sql applied as ${SYNC_DB_BOOTSTRAP_USER}")" -ge 2 ] && echo yes)" yes \
-      "db-bootstrap applied database-setup.sql as ${SYNC_DB_BOOTSTRAP_USER} (the account of db/${BACKEND}/bootstrap.sql only) at every start"
+    check "$(dc logs db-bootstrap 2>&1 | grep -c "drift from the setup migrations, run again as ${SYNC_DB_BOOTSTRAP_USER}")" 1 \
+      "db-bootstrap found the drift and ran the setup migrations again as ${SYNC_DB_BOOTSTRAP_USER} (the account of db/${BACKEND}/setup/sync-bootstrap only)"
   else
     check "$([ "${release_rc}" != 0 ] && echo failed) $(state db-bootstrap ExitCode) $(state syncstorage Running || echo false) $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/__heartbeat__")" \
       "failed 1 false 000" "the next start stops in db-bootstrap, the Sync server down"

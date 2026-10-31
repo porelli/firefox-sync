@@ -903,7 +903,7 @@ fxa_base_parity() {
 # helm uninstall and install, the keys moved to fxa.keys.existingSecret; and turning the
 # accounts on in a release whose existingSecret lacks their keys (refused, nothing applied).
 # EXTERNAL_DB=1 (mysql): the accounts on your own server (a plain StatefulSet extdb-fxa, its
-# users from db/mysql/fxa-mysql.sql, the Secret ffs-own): install, flow, the admin UI's
+# users from db/mysql/setup/fxa-mysql, the Secret ffs-own): install, flow, the admin UI's
 # tests, the backups (Sync's alone, as compose's), Firefox; the steps of the bundled server
 # and of survival are not rerun.
 # SYNC_BACKEND=postgres: the Sync server on the bundled PostgreSQL (database.backend), the
@@ -925,7 +925,7 @@ fxa_e2e() {
     mysql|mariadb) ;;
     *) echo "Usage: $0 e2e <mysql|mariadb>"; exit 1 ;;
   esac
-  [[ -z "${external}" || ${backend} == mysql ]] || { echo "EXTERNAL_DB=1: e2e mysql only (db/mysql/fxa-mysql.sql)"; exit 1; }
+  [[ -z "${external}" || ${backend} == mysql ]] || { echo "EXTERNAL_DB=1: e2e mysql only (db/mysql/setup/fxa-mysql)"; exit 1; }
   PART=${PART:-}
   case "${PART}" in
     ""|main) ;;
@@ -2048,7 +2048,7 @@ fxa_delete_test_jobs() {
 # docs/databases.md#server-requirements says (binary logging, on by default on MySQL, with
 # log_bin_trust_function_creators; mysql_native_password=ON only on MySQL 8, for an accounts
 # image without mozilla/fxa#21554), its users made by its administrator with
-# db/mysql/fxa-mysql.sql (user fxa, policy user ffs_policy; on MySQL 8 its "-- native:"
+# db/mysql/setup/fxa-mysql (user fxa, policy user ffs_policy; on MySQL 8 its "-- native:"
 # lines); the Secret ffs-own with the chart's keys as it generates them, the passwords of
 # those users and FXA_MYSQL_POLICY_PASSWORD
 fxa_extdb() {
@@ -2075,12 +2075,12 @@ fxa_extdb() {
   [[ -n "${data}" ]] || fail "the chart's Secret not rendered"
   jq -n --argjson data "${data}" '{apiVersion: "v1", kind: "Secret", metadata: {name: "ffs-own"}, type: "Opaque", data: $data}' | kubectl apply -f - > /dev/null
   key() { jq -r --arg k "$1" '.[$k]' <<< "${data}" | base64 -d; }
-  sql=$(if [[ -n "${native}" ]]; then sed -e "/^-- native: /{s/^-- native: //;n;d;}" "${REPO_ROOT}/db/mysql/fxa-mysql.sql"; else cat "${REPO_ROOT}/db/mysql/fxa-mysql.sql"; fi \
+  sql=$(if [[ -n "${native}" ]]; then sed -e "/^-- native: /{s/^-- native: //;n;d;}" "${REPO_ROOT}"/db/mysql/setup/fxa-mysql/*.sql; else cat "${REPO_ROOT}"/db/mysql/setup/fxa-mysql/*.sql; fi \
     | sed -e "s|@FXA_USER@|fxa|g" -e "s|@FXA_PASSWORD@|$(key FXA_MYSQL_PASSWORD)|g" -e "s|@FXA_POLICY_USER@|ffs_policy|g" \
       -e "s|@FXA_POLICY_PASSWORD@|$(key FXA_MYSQL_POLICY_PASSWORD)|g" -e "s|@FXA_ADMIN_PASSWORD@|$(key FXA_ADMIN_DB_PASSWORD)|g")
-  ! grep -q '@[A-Z_]*@' <<< "${sql}" || fail "db/mysql/fxa-mysql.sql: placeholders left: $(grep -o '@[A-Z_]*@' <<< "${sql}" | sort -u | paste -sd' ' -)"
-  kubectl exec -i extdb-fxa-0 -- sh -c 'MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" mysql -uroot' <<< "${sql}" || fail "db/mysql/fxa-mysql.sql failed on extdb-fxa"
-  check "your own server extdb-fxa (${db_image}, $(jq -r 'join(" ")' <<< "${args}")), binary logging on; db/mysql/fxa-mysql.sql$([[ -z ${native} ]] || echo " (its -- native: lines)") as root (fxa, ffs_policy, ffs_admin); Secret ffs-own"
+  ! grep -q '@[A-Z_]*@' <<< "${sql}" || fail "db/mysql/setup/fxa-mysql: placeholders left: $(grep -o '@[A-Z_]*@' <<< "${sql}" | sort -u | paste -sd' ' -)"
+  kubectl exec -i extdb-fxa-0 -- sh -c 'MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" mysql -uroot' <<< "${sql}" || fail "db/mysql/setup/fxa-mysql failed on extdb-fxa"
+  check "your own server extdb-fxa (${db_image}, $(jq -r 'join(" ")' <<< "${args}")), binary logging on; db/mysql/setup/fxa-mysql$([[ -z ${native} ]] || echo " (its -- native: lines)") as root (fxa, ffs_policy, ffs_admin); Secret ffs-own"
 }
 
 # wait_init_failed <init container> <seconds>: in the only pod of POD_SELECTOR, that init

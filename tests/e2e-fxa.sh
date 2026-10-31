@@ -733,8 +733,8 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
         -e "s|@SYNC_TOKENSERVER_PASSWORD@|${SYNC_TOKENSERVER_DB_PASSWORD}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
         -e "s|@SYNC_STORAGE_USER@|${SYNC_STORAGE_DB_USER}|g" -e "s|@SYNC_STORAGE_PASSWORD@|${SYNC_STORAGE_DB_PASSWORD}|g" \
         -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" -e "s|@ADMIN_PASSWORD@|${ADMIN_DB_PASSWORD}|g" \
-        "${CODE}/db/mysql/sync.sql"
-    fxa_template "${CODE}/db/mysql/fxa-${FXA_DB}.sql" | sed -e "s|@FXA_USER@|${FXA_MYSQL_USER}|g" -e "s|@FXA_PASSWORD@|${FXA_MYSQL_PASSWORD}|g" \
+        "${CODE}"/db/mysql/setup/sync/*.sql
+    fxa_template <(cat "${CODE}"/db/mysql/setup/fxa-"${FXA_DB}"/*.sql) | sed -e "s|@FXA_USER@|${FXA_MYSQL_USER}|g" -e "s|@FXA_PASSWORD@|${FXA_MYSQL_PASSWORD}|g" \
         -e "s|@FXA_POLICY_USER@|${FXA_MYSQL_POLICY_USER}|g" -e "s|@FXA_POLICY_PASSWORD@|${FXA_MYSQL_POLICY_PASSWORD}|g" \
         -e "s|@FXA_ADMIN_PASSWORD@|${FXA_ADMIN_DB_PASSWORD}|g"; } > "${WORK}/database-setup.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-setup.sql")" 0 "external database: SQL templates filled in"
@@ -742,12 +742,12 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
     # only the accounts of docs/databases.md#the-bootstrap-account: the stack does the rest
     { [ "${SYNC_DB_CONTAINERS:-1}" = 0 ] && sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
           -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
-          -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" "${CODE}/db/mysql/bootstrap.sql"
-      sed -e "s|@BOOTSTRAP_USER@|${FXA_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${FXA_DB_BOOTSTRAP_PASSWORD}|g" "${CODE}/db/mysql/fxa-bootstrap.sql"; } \
+          -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" "${CODE}"/db/mysql/setup/sync-bootstrap/*.sql
+      sed -e "s|@BOOTSTRAP_USER@|${FXA_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${FXA_DB_BOOTSTRAP_PASSWORD}|g" "${CODE}"/db/mysql/setup/fxa-bootstrap/*.sql; } \
       > "${WORK}/database-bootstrap.sql"
     check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap accounts' SQL filled in"
     extdb_admin < "${WORK}/database-bootstrap.sql"
-    check "$?" 0 "external database server with only the bootstrap accounts of db/mysql/bootstrap.sql and fxa-bootstrap.sql"
+    check "$?" 0 "external database server with only the bootstrap accounts of db/mysql/setup/sync-bootstrap and fxa-bootstrap"
   else
     extdb_admin < "${WORK}/database-setup.sql"
     check "$?" 0 "external database server with the users of db/mysql/"
@@ -858,6 +858,19 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
 else
   fxa_sql() { dc exec -T -e MYSQL_PWD="${FXA_MYSQL_PASSWORD}" fxa-db "${DB_CLIENT}" -uroot -sN -e "$1" 2> /dev/null; }
 fi
+# the setup migrations of the accounts (docs/databases.md#setup-migrations): recorded by
+# fxa-policy with fxa-db, by fxa-db-bootstrap with your own server (baseline: the server had
+# them all, by hand without the INSERTs of database-setup-fxa.sql), and in the admin UI
+fxa_how=$(if [ "${FXA_DB_CONTAINERS:-1}" != 0 ]; then echo containers; elif [ -n "${DB_BOOTSTRAP:-}" ]; then echo bootstrap; else echo baseline; fi)
+fxa_expected=$(grep -c "^mysql/setup/fxa-${FXA_DB}/" "${CODE}/db/setup-manifest")
+check "$(fxa_sql "SELECT number, how FROM ffs.ffs_setup_migrations WHERE scope = 'fxa' ORDER BY number" | tr '\t' ' ' | paste -sd ',' -)" \
+  "$(seq -f "%g ${fxa_how}" 1 "${fxa_expected}" | paste -sd ',' -)" "ffs.ffs_setup_migrations: the accounts' setup migrations recorded (how ${fxa_how})"
+for _ in $(seq 1 30); do
+  shown=$(dc exec -T syncstorage curl -s -H 'Authorization: Bearer ffs-test-metrics-token' http://ffs-admin:8080/metrics | grep -cxE "ffs_db_setup_(expected_)?version\{scope=\"fxa\"\} ${fxa_expected}|ffs_db_setup_drift\{scope=\"fxa\"\} 0")
+  [ "${shown}" = 3 ] && break
+  sleep 1
+done
+check "${shown}" 3 "the admin UI: the accounts' setup version ${fxa_expected}, as this release expects, no drift (ffs_db_setup_*{scope=\"fxa\"})"
 if [ "${SYNC_DB_CONTAINERS:-1}" = 0 ]; then
   ts_sql() { docker exec -i -e MYSQL_PWD="${SYNC_TOKENSERVER_DB_PASSWORD}" "${EXTDB}" "${DB_CLIENT}" -u"${SYNC_TOKENSERVER_DB_USER}" "${SYNC_TOKENSERVER_DB_NAME}" -sN -e "$1" < /dev/null 2> /dev/null; }
   admin_sql() { docker exec -i -e MYSQL_PWD="${ADMIN_DB_PASSWORD}" "${EXTDB}" "${DB_CLIENT}" -u"${ADMIN_DB_USER}" "${ADMIN_DB_NAME}" -sN -e "$1" < /dev/null 2> /dev/null; }
@@ -1047,8 +1060,8 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ] && [ -z "${RERUN:-}" ]; then
   dc up -d --no-deps --force-recreate fxa-db-bootstrap > /dev/null 2>&1
   bootstrap_rc=$(timeout 600 docker wait "$(dc ps -a -q fxa-db-bootstrap)")
   if [ -n "${DB_BOOTSTRAP:-}" ]; then
-    check "${bootstrap_rc} $(trigger_grant) $(dc logs fxa-db-bootstrap 2>&1 | grep -c "✓ database-setup-fxa.sql applied as ${FXA_DB_BOOTSTRAP_USER}")" "0 1 1" \
-      "fxa-db-bootstrap applied database-setup-fxa.sql as ${FXA_DB_BOOTSTRAP_USER} (the account of db/mysql/fxa-bootstrap.sql only): the grant back"
+    check "${bootstrap_rc} $(trigger_grant) $(dc logs fxa-db-bootstrap 2>&1 | grep -c "drift from the setup migrations, run again as ${FXA_DB_BOOTSTRAP_USER}")" "0 1 1" \
+      "fxa-db-bootstrap found the drift and ran the setup migrations again as ${FXA_DB_BOOTSTRAP_USER} (the account of db/mysql/setup/fxa-bootstrap only): the grant back"
   else
     check "${bootstrap_rc} $(dc logs fxa-db-bootstrap 2>&1 | grep -c "'${grantee}' lacks TRIGGER on \`fxa\`: GRANT SELECT, UPDATE, DELETE, TRIGGER, EXECUTE ON \`fxa\`.\* TO '${grantee}'@'%' WITH GRANT OPTION;") $(dc logs fxa-db-bootstrap 2>&1 | grep -c 'Run database-setup-fxa.sql again')" \
       "1 1 1" "fxa-db-bootstrap stops, naming the missing grant and database-setup-fxa.sql to run again"

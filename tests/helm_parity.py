@@ -12,6 +12,7 @@ compose's. The self-hosted accounts (compose/fxa.yml) too: the fxa-* cases.
 Needs docker compose (config only: no daemon) and helm. The test .env is .env-example as
 tests/e2e.sh writes it: its placeholders filled, a few values per case.
 """
+import glob
 import json
 import os
 import re
@@ -67,8 +68,12 @@ ALLOWED_DIFFERENCES = {
     "*:db-init/FFS_BOTH_ENV_NAMES": "as migrate's",
     f"{SYNC_POSTGRES},external-postgres:sync-role/FFS_BOTH_ENV_NAMES": "as migrate's",
     "external-mariadb,external-mysql,external-postgres:db-bootstrap/FFS_BOTH_ENV_NAMES": "as migrate's",
+    "external-mariadb,external-mysql,external-postgres:db-bootstrap/FFS_SETUP_PENDING": "how db-bootstrap's message says to "
+    "print the SQL of the setup migrations your server lacks again: docker compose run (compose), kubectl logs of its init "
+    "container (the chart)",
+    "fxa-external:fxa-db-bootstrap/FFS_SETUP_PENDING": "as db-bootstrap's",
     "fxa-external:fxa-db-bootstrap/FXA_MYSQL_ARGS": "compose-only: FXA_MYSQL_ARGS of .env says mysql_native_password for an "
-    "accounts image without mozilla/fxa#21554 (the \"-- native:\" lines of fxa-mysql.sql); the chart's own server takes the "
+    "accounts image without mozilla/fxa#21554 (the \"-- native:\" lines of db/mysql/setup/fxa-mysql); the chart's own server takes the "
     "server's default authentication, as docs/databases.md#with-helm says",
     "*:db-init/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the init container's warning; no .env here",
     "*:admin/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the admin UI's setup check; no .env here",
@@ -298,13 +303,13 @@ IDENTICAL_FILES = {
     "charts/firefox-sync/files/admin-user.sh": "db/mysql/admin-user.sh",
     "charts/firefox-sync/files/postgres-keep-major.sh": "db/postgres/keep-major.sh",
     "charts/firefox-sync/files/db-setup.sh": "db/db-setup.sh",
-    "charts/firefox-sync/files/sync-mysql.sql": "db/mysql/sync.sql",
-    "charts/firefox-sync/files/sync-postgres.sql": "db/postgres/sync.sql",
-    "charts/firefox-sync/files/fxa-mysql.sql": "db/mysql/fxa-mysql.sql",
-    "charts/firefox-sync/files/fxa-mariadb.sql": "db/mysql/fxa-mariadb.sql",
     "charts/firefox-sync/files/fxa/content-server.js": "config/fxa/content-server.js",
     "charts/firefox-sync/files/fxa/oauth-clients.js": "config/fxa/oauth-clients.js",
 }
+# and the setup migrations of db/<engine>/setup/ (files/db/, tests/setup_migrations.sh too)
+for _setup in sorted(glob.glob(os.path.join(REPO, "db", "*", "setup", "*", "*.sql"))):
+    _rel = os.path.relpath(_setup, REPO)
+    IDENTICAL_FILES["charts/firefox-sync/files/" + _rel] = _rel
 
 # compose service -> chart (workload kind, workload name, container, key prefix, init or one-shot);
 # a compose service of the case missing here fails

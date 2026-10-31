@@ -779,10 +779,20 @@ external_lint() {
     out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set database.backend="${backend}" "${ext[@]}" | manifests)
     [[ "$(jq -r '[.[] | select(.kind == "StatefulSet" or .kind == "PersistentVolumeClaim" or .kind == "Secret" or .kind == "ConfigMap") | .kind + "/" + .metadata.name] | join(" ")' <<< "${out}")" == "ConfigMap/test-release-firefox-sync-db-setup" ]] \
       || fail "${backend}, bundled=false: a database server, volume, Secret or db-scripts rendered: $(jq -c '[.[] | .kind + "/" + .metadata.name]' <<< "${out}")"
-    # db-bootstrap's script and SQL (compose's db-bootstrap), before the Sync role and the migrations
+    # db-bootstrap's script and setup migrations (compose's db-bootstrap, db/ at /ffs-db), before
+    # the Sync role and the migrations
+    local kind setup f
+    kind=$([[ ${backend} == postgres ]] && echo postgres || echo mysql)
+    setup=$(cd "${CHART_DIR}/files/db" && ls -1 "${kind}"/setup/sync/*.sql)
     [[ "$(jq -r '.[] | select(.kind == "ConfigMap") | .data["db-setup.sh"]' <<< "${out}")" == "$(cat "${CHART_DIR}/files/db-setup.sh")" ]] \
-      && [[ "$(jq -r '.[] | select(.kind == "ConfigMap") | .data["sync.sql"]' <<< "${out}")" == "$(cat "${CHART_DIR}/files/sync-$([[ ${backend} == postgres ]] && echo postgres || echo mysql).sql")" ]] \
-      || fail "${backend}, bundled=false: the db-setup ConfigMap is not files/db-setup.sh and the backend's sync.sql"
+      || fail "${backend}, bundled=false: the db-setup ConfigMap's db-setup.sh is not files/db-setup.sh"
+    [[ "$(jq -r '.[] | select(.kind == "ConfigMap") | .data | keys | join(" ")' <<< "${out}")" == "db-setup.sh $(tr '/' '_' <<< "${setup}" | paste -sd ' ' -)" ]] \
+      || fail "${backend}, bundled=false: the db-setup ConfigMap has $(jq -r '.[] | select(.kind == "ConfigMap") | .data | keys | join(" ")' <<< "${out}"), not db-setup.sh and the setup migrations of ${kind}/setup/sync"
+    for f in ${setup}; do
+      [[ "$(jq -r --arg k "${f//\//_}" '.[] | select(.kind == "ConfigMap") | .data[$k]' <<< "${out}")" == "$(cat "${CHART_DIR}/files/db/${f}")" ]] || fail "${backend}: the db-setup ConfigMap's ${f} is not files/db/${f}"
+      [[ "$(jq -r --arg k "${f//\//_}" '.[] | select(.kind == "Deployment" and .metadata.name == "test-release-firefox-sync-syncstorage") | .spec.template.spec.volumes[] | select(.name == "db-setup") | .configMap.items[] | select(.key == $k) | .path' <<< "${out}")" == "${f}" ]] \
+        || fail "${backend}: ${f} not mounted at /ffs-db/${f}"
+    done
     [[ "$(jq -r '.[] | select(.kind == "Deployment" and .metadata.name == "test-release-firefox-sync-syncstorage") | [.spec.template.spec.initContainers[].name] | join(" ")' <<< "${out}")" \
       == "wait-db db-bootstrap $([[ ${backend} == postgres ]] && echo "sync-role ")migrate db-init" ]] || fail "${backend}, bundled=false: the init containers are not wait-db db-bootstrap (sync-role) migrate db-init"
     [[ "$(jq -r '[.[] | select(.kind == "Service") | .metadata.name] | join(" ")' <<< "${out}")" == "test-release-firefox-sync-syncstorage" ]] \
@@ -796,6 +806,28 @@ external_lint() {
   [[ "${out}" == '{"name":"SYNC_DB_BOOTSTRAP_USER","value":"ffs_bootstrap"}'$'\n''{"name":"SYNC_DB_BOOTSTRAP_PASSWORD","valueFrom":{"secretKeyRef":{"name":"mine","key":"SYNC_DB_BOOTSTRAP_PASSWORD"}}}' ]] \
     || fail "database.external.bootstrap.user: db-bootstrap's env is ${out}"
   check "database.external.bootstrap.user: SYNC_DB_BOOTSTRAP_USER, and SYNC_DB_BOOTSTRAP_PASSWORD from existingSecret"
+  # for your own server only, its password from existingSecret: the render fails otherwise, and
+  # with an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD (lookup: tested on its data here)
+  out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set database.external.bootstrap.user=ffs_bootstrap 2>&1) \
+    && fail "database.external.bootstrap.user with the bundled database rendered"
+  grep -qF "database.external.bootstrap.user is for your own server (database.bundled=false)" <<< "${out}" || fail "bootstrap.user, bundled: not the message: ${out}"
+  out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set database.bundled=false --set database.external.host=db.example.test \
+    --set database.external.bootstrap.user=ffs_bootstrap 2>&1) && fail "database.external.bootstrap.user without existingSecret rendered"
+  grep -qF "database.external.bootstrap.user needs existingSecret, with SYNC_DB_BOOTSTRAP_PASSWORD" <<< "${out}" || fail "bootstrap.user without existingSecret: not the message: ${out}"
+  local d
+  d=$(mktemp -d)
+  cp -r "${CHART_DIR}" "${d}/chart"
+  printf '%s\n' '{{- include "firefox-sync.checkSecretKeys" (dict "root" . "name" .Values.existingSecret "data" (fromJson (.Files.Get "files/data.json"))) }}' \
+    'apiVersion: v1' 'kind: ConfigMap' 'metadata: {name: checked}' > "${d}/chart/templates/zz-check.yaml"
+  echo '{"SYNC_MASTER_SECRET":"eA=="}' > "${d}/chart/files/data.json"
+  out=$(helm template test-release "${d}/chart" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml 2>&1) \
+    && fail "an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD passes"
+  grep -qF "existingSecret mine lacks SYNC_DB_BOOTSTRAP_PASSWORD" <<< "${out}" || fail "an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD: not the message: ${out}"
+  echo '{"SYNC_MASTER_SECRET":"eA==","SYNC_DB_BOOTSTRAP_PASSWORD":"eA=="}' > "${d}/chart/files/data.json"
+  helm template test-release "${d}/chart" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml > /dev/null \
+    || fail "an existingSecret with SYNC_DB_BOOTSTRAP_PASSWORD refused"
+  rm -rf "${d}"
+  check "database.external.bootstrap.user: refused with the bundled database and without existingSecret; an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD refused naming it"
   # MariaDB/MySQL: compose's MARIADB_TOKENSERVER_* and MARIADB_SYNCSTORAGE_*, the storage
   # on another server too; the init container's TLS check from tlsVerify
   out=$(env_values SYNC_SYNCSTORAGE__DATABASE_URL --set database.backend=mysql "${ext[@]}")
@@ -945,7 +977,7 @@ ingress_lint() {
 # FxA, what a Firefox client does (tests/test_client_flow.py), fail closed, and upgrades.
 # EXTERNAL_DB=1 (mysql, postgres): on a database server of its own in the cluster, which the
 # chart does not manage (database.bundled=false), as tests/e2e.sh's EXTERNAL_DB=1; with
-# DB_BOOTSTRAP=1 that server has only the bootstrap account of db/<engine>/bootstrap.sql, and
+# DB_BOOTSTRAP=1 that server has only the bootstrap account of db/<engine>/setup/sync-bootstrap, and
 # db-bootstrap creates the rest (database.external.bootstrap.user), also the admin UI's reader
 # dropped later (docs/databases.md#let-the-stack-apply-them)
 e2e() {
@@ -1097,7 +1129,7 @@ e2e() {
     kubectl delete pod -l "${POD_SELECTOR}" --wait=true
     kubectl wait --for=condition=Ready pod -l "${POD_SELECTOR}" --timeout=10m || fail "pod not Ready after the reader was dropped"
     [[ "$(reader)" == 1 ]] || fail "db-bootstrap did not create ${EXT_ADMIN_SYNC} again"
-    kubectl logs deploy/"${FULL}"-syncstorage -c db-bootstrap | grep -q '✓ database-setup.sql applied as ffs_bootstrap' || fail "db-bootstrap did not apply the SQL as ffs_bootstrap"
+    kubectl logs deploy/"${FULL}"-syncstorage -c db-bootstrap | grep -q 'drift from the setup migrations, run again as ffs_bootstrap' || fail "db-bootstrap did not run the setup migrations again as ffs_bootstrap"
     check "the admin UI's reader dropped: the next pod's db-bootstrap created it again as ffs_bootstrap, Ready"
   fi
 
@@ -1655,7 +1687,7 @@ extdb_admin() {
 # EXTERNAL_DB=1: a database server the chart does not manage, mirroring tests/e2e.sh's
 # start_extdb (a plain StatefulSet and Service extdb, a test fixture: MySQL 8 with binary
 # logging, or PostgreSQL 18 administered by a role that is no superuser), the databases and
-# users of docs/databases.md#create-the-databases-and-users (db/<engine>/sync.sql with its placeholders filled in) under names
+# users of docs/databases.md#create-the-databases-and-users (db/<engine>/setup/sync with its placeholders filled in) under names
 # other than the defaults, and the Secret of existingSecret with the same passwords
 start_extdb() {
   EXT_ADMIN_DB=own_admin EXT_ADMIN_USER=own_admin_ui EXT_ADMIN_SYNC=own_admin_sync
@@ -1668,25 +1700,25 @@ start_extdb() {
     sed -e "s|@SYNC_TOKENSERVER_DATABASE@|${EXT_TS_DB}|g" -e "s|@SYNC_TOKENSERVER_USER@|${EXT_TS_USER}|g" -e "s|@SYNC_TOKENSERVER_PASSWORD@|${ts}|g" \
       -e "s|@SYNC_STORAGE_DATABASE@|${EXT_ST_DB}|g" -e "s|@SYNC_STORAGE_USER@|${EXT_ST_USER}|g" -e "s|@SYNC_STORAGE_PASSWORD@|${st}|g" \
       -e "s|@ADMIN_DATABASE@|${EXT_ADMIN_DB}|g" -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" \
-      -e "s|@ADMIN_PASSWORD@|${admin}|g" "${REPO_ROOT}/db/mysql/sync.sql" > "${EXT_SQL}"
+      -e "s|@ADMIN_PASSWORD@|${admin}|g" "${REPO_ROOT}"/db/mysql/setup/sync/*.sql > "${EXT_SQL}"
   else
     sed -e "s|@SYNC_POSTGRES_DATABASE@|${EXT_PG_DB}|g" -e "s|@SYNC_POSTGRES_USER@|${EXT_PG_USER}|g" -e "s|@SYNC_POSTGRES_PASSWORD@|${pg}|g" \
       -e "s|@ADMIN_DATABASE@|${EXT_ADMIN_DB}|g" -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" \
-      -e "s|@ADMIN_PASSWORD@|${admin}|g" "${REPO_ROOT}/db/postgres/sync.sql" > "${EXT_SQL}"
+      -e "s|@ADMIN_PASSWORD@|${admin}|g" "${REPO_ROOT}"/db/postgres/setup/sync/*.sql > "${EXT_SQL}"
   fi
-  ! grep -q '@[A-Z_]*@' "${EXT_SQL}" || fail "placeholders left in db/${BACKEND}/sync.sql: $(grep -o '@[A-Z_]*@' "${EXT_SQL}" | sort -u | paste -sd' ' -)"
+  ! grep -q '@[A-Z_]*@' "${EXT_SQL}" || fail "placeholders left in db/${BACKEND}/setup/sync: $(grep -o '@[A-Z_]*@' "${EXT_SQL}" | sort -u | paste -sd' ' -)"
   if [[ -n "${DB_BOOTSTRAP:-}" ]]; then
     # only the account of docs/databases.md#the-bootstrap-account: db-bootstrap does the rest
     EXT_BOOT=$(rnd)
     EXT_BOOT_SQL=$(mktemp)
     sed -e "s|@BOOTSTRAP_USER@|ffs_bootstrap|g" -e "s|@BOOTSTRAP_PASSWORD@|${EXT_BOOT}|g" -e "s|@SYNC_TOKENSERVER_DATABASE@|${EXT_TS_DB}|g" \
       -e "s|@SYNC_STORAGE_DATABASE@|${EXT_ST_DB}|g" -e "s|@ADMIN_DATABASE@|${EXT_ADMIN_DB}|g" -e "s|@SYNC_POSTGRES_USER@|${EXT_PG_USER}|g" \
-      -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" "${REPO_ROOT}/db/$([[ ${BACKEND} == postgres ]] && echo postgres || echo mysql)/bootstrap.sql" > "${EXT_BOOT_SQL}"
+      -e "s|@ADMIN_USER@|${EXT_ADMIN_USER}|g" -e "s|@ADMIN_SYNC_USER@|${EXT_ADMIN_SYNC}|g" "${REPO_ROOT}"/db/"$([[ ${BACKEND} == postgres ]] && echo postgres || echo mysql)"/setup/sync-bootstrap/*.sql > "${EXT_BOOT_SQL}"
     extdb_server extdb "${EXT_BOOT_SQL}"
-    check "your own database server (${EXTDB_IMAGE}, not the chart's) with only the bootstrap account of db/${BACKEND}/bootstrap.sql"
+    check "your own database server (${EXTDB_IMAGE}, not the chart's) with only the bootstrap account of db/${BACKEND}/setup/sync-bootstrap"
   else
     extdb_server extdb
-    check "your own database server (${EXTDB_IMAGE}, not the chart's) with the SQL of docs/databases.md#create-the-databases-and-users (db/${BACKEND}/sync.sql) run as the administrator$([[ ${BACKEND} == postgres ]] && echo ' (CREATEROLE, CREATEDB, no superuser)')"
+    check "your own database server (${EXTDB_IMAGE}, not the chart's) with the SQL of docs/databases.md#create-the-databases-and-users (db/${BACKEND}/setup/sync) run as the administrator$([[ ${BACKEND} == postgres ]] && echo ' (CREATEROLE, CREATEDB, no superuser)')"
   fi
   # your Secret: the stack's secrets and the passwords of that SQL
   local keys=(--from-literal=SYNC_MASTER_SECRET="$(rnd)" --from-literal=METRICS_HASH_SECRET="$(rnd)" --from-literal=ADMIN_PASSWORD="$(rnd)"
@@ -1733,14 +1765,14 @@ extdb_server() {
   if [[ -n "${sql}" ]]; then
     EXTDB_POD=${name}-0 extdb_admin < "${sql}" > /dev/null || fail "${sql} refused by ${name}"
   elif [[ "${BACKEND}" == mysql ]]; then
-    EXTDB_POD=${name}-0 extdb_admin < "${EXT_SQL}" > /dev/null || fail "db/mysql/sync.sql refused by ${name}"
+    EXTDB_POD=${name}-0 extdb_admin < "${EXT_SQL}" > /dev/null || fail "db/mysql/setup/sync refused by ${name}"
   else
     # as a role with CREATEROLE and CREATEDB, no superuser: what managed services give
     local dbadmin
     dbadmin=$(rnd)
     EXTDB_POD=${name}-0 extdb_admin -c "CREATE ROLE dbadmin LOGIN CREATEROLE CREATEDB PASSWORD '${dbadmin}'" < /dev/null > /dev/null || fail "no administrator role on ${name}"
     kubectl exec -i "${name}-0" -- env PGPASSWORD="${dbadmin}" psql -X -h 127.0.0.1 -U dbadmin -d postgres -v ON_ERROR_STOP=1 -q < "${EXT_SQL}" > /dev/null \
-      || fail "db/postgres/sync.sql refused by ${name} (as dbadmin)"
+      || fail "db/postgres/setup/sync refused by ${name} (as dbadmin)"
   fi
 }
 
