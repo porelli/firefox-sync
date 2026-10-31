@@ -234,6 +234,19 @@ s/@FXA_POLICY_USER@/@FXA_USER@/g' "${source}" > "${step}" && mv "${step}" "${sou
   [ -z "${missing}" ] || fail "${missing} is empty: set it in .env"
   (umask 077; sed_file "${EXEC_SCRIPT}" "${source}" > "${run}") || exit 1
   sed_file "${SHOW_SCRIPT}" "${source}" > "${shown}" || exit 1
+  # the _ of a database name of a GRANT is a wildcard (ffs_admin is also ffsXadmin): escaped,
+  # \_, the stack's databases alone (the bootstrap account's grants and those it gives, alike:
+  # MySQL lets it grant on a pattern it holds)
+  case "${SCOPE}" in *)
+    # shellcheck disable=SC2016 # (sed's backticks)
+    local escape='/ ON `[^`]*`\.\* TO /{
+:a
+s/\(ON `[^`]*[^\\`]\)_\([^`]*`\.\* TO \)/\1\\_\2/
+ta
+}'
+    (umask 077; sed_file "${escape}" "${run}" > "${step}" && mv "${step}" "${run}") || exit 1
+    sed_file "${escape}" "${shown}" > "${step}" && mv "${step}" "${shown}" || exit 1 ;;
+  esac
   ! grep -q '@[A-Z_]*@' "${run}" || fail "${file} has placeholders this script does not know: $(grep -o '@[A-Z_]*@' "${run}" | sort -u | tr '\n' ' ')"
 }
 mkdir -p "${WORK}/run" "${WORK}/shown"
@@ -412,11 +425,32 @@ redact() {
 #   U <line>                 a GRANT or REVOKE line not understood
 # with the privileges of the roles a session has at sign-in (the default ones); all: of every
 # role granted (any of them a SET ROLE away)
+# mandatory_roles <user> <password> <host> <port>: MySQL's @@mandatory_roles, every account's
+# (a SET ROLE away), "`role`@`host`" per line; none on MariaDB. A name not of the forms of
+# account names: an error (fail closed)
+mandatory_roles() {
+  local out item u h
+  out=$(my_q "$1" "$2" "$3" "$4" 'SELECT @@GLOBAL.mandatory_roles' 2> /dev/null) || return 0
+  while IFS= read -r item; do
+    item=${item// /} item=${item//\`/} item=${item//\'/}
+    [ -n "${item}" ] || continue
+    u=${item%%@*} h=%
+    [[ "${item}" == *@* ]] && h=${item#*@}
+    [[ "${u}" =~ ^[A-Za-z0-9_.-]{1,32}$ && "${h}" =~ ^[A-Za-z0-9_.%:-]{1,255}$ ]] || { echo "a mandatory role not understood: ${item}" >&2; return 1; }
+    # shellcheck disable=SC2016 # (backticks of the names)
+    printf '`%s`@`%s`\n' "${u}" "${h}"
+  done <<< "${out//,/$'\n'}"
+}
 grants_of() {
-  local user=$1 password=$2 host=$3 port=$4 every=${5:-} out roles line r using
+  local user=$1 password=$2 host=$3 port=$4 every=${5:-} out roles line r using mandatory
   local -a lines=() direct=()
   out=$(my_q "${user}" "${password}" "${host}" "${port}" 'SHOW GRANTS') || { printf '%s\n' "${out}" >&2; return 1; }
   mapfile -t lines <<< "${out}"
+  # (every role: MySQL's mandatory ones too, which SHOW GRANTS leaves out)
+  if [ -n "${every}" ]; then
+    mandatory=$(mandatory_roles "${user}" "${password}" "${host}" "${port}") || return 1
+    [ -z "${mandatory}" ] || direct+=("$(paste -sd ',' - <<< "${mandatory}" | sed -e 's/,/, /g')")
+  fi
   for line in "${lines[@]}"; do
     # a role granted: GRANT `r`@`%` TO ... (MySQL), GRANT `r` TO `u`@`%` (MariaDB)
     if [[ "${line}" =~ ^GRANT\ (\`[^\`]+\`(@\`[^\`]*\`)?(,\ \`[^\`]+\`(@\`[^\`]*\`)?)*)\ TO\ \`${user}\`@ ]]; then
@@ -537,8 +571,24 @@ lacks() {
 
 # ---- the end state of every file: PROBLEMS (each with the statement that gives it), the
 # warnings printed as they come
-PROBLEMS=()
+# PROBLEMS stop the start; ADMIN_PROBLEMS, those of the admin UI's own users and database only
+# (optional: the Sync server and the accounts work without them, as before the setup
+# migrations), are a warning and the admin UI's (ffs_setup_state result 'admin')
+PROBLEMS=() ADMIN_PROBLEMS=()
 problem() { PROBLEMS+=("$1"); }
+# problem_of <user or database> <text>: the admin UI's when it is one of its names
+problem_of() {
+  local admin_names=" ffs_admin "
+  [ "${MAIN}" = fxa ] || admin_names=" ${ADMIN_DB_USER:-ffs_admin_ui} ${ADMIN_DB_SYNC_USER:-ffs_admin_sync} ${ADMIN_DB_NAME:-ffs_admin} "
+  case "${admin_names}" in
+    *" $1 "*) ADMIN_PROBLEMS+=("$2") ;;
+    *) PROBLEMS+=("$2") ;;
+  esac
+}
+# PostgreSQL: the files pg_check checks the end state of (hand-coded: 001). A later file needs it
+# extended, and this raised (tests/setup_migrations.sh refuses one above it); the baseline
+# records no file above it
+PG_CHECKED=1
 ALL_RUN=${WORK}/all-run.sql ALL_SHOWN=${WORK}/all-shown.sql
 for i in "${!NAMES[@]}"; do cat "${WORK}/run/${NAMES[i]}"; done > "${ALL_RUN}"
 for i in "${!NAMES[@]}"; do cat "${WORK}/shown/${NAMES[i]}"; done > "${ALL_SHOWN}"
@@ -573,7 +623,7 @@ mysql_check() {
         signed[${key}]=yes grants[${key}]=${out}
       else
         signed[${key}]=no
-        problem "'$1' cannot sign in on $2:$3 ($(printf '%s' "${out}" | grep -v '^WARNING' | head -n 1)): ${created[$1]}${altered[$1]:-}"
+        problem_of "$1" "'$1' cannot sign in on $2:$3 ($(printf '%s' "${out}" | grep -v '^WARNING' | head -n 1)): ${created[$1]}${altered[$1]:-}"
       fi
     fi
     [ "${signed[${key}]}" = yes ]
@@ -586,19 +636,21 @@ mysql_check() {
     s=${run[i]}
     [[ "${s}" =~ ^GRANT\ (.+)\ ON\ \`([^\`]+)\`\.\*\ TO\ \'([^\']+)\'@\'[^\']*\'(\ WITH\ GRANT\ OPTION)?\;$ ]] || continue
     privs=${BASH_REMATCH[1]} db=${BASH_REMATCH[2]} user=${BASH_REMATCH[3]} grantable=${BASH_REMATCH[4]}
+    # (the database's name: the pattern's \_ the character)
+    db=${db//\\_/_}
     [ -n "${passwords[${user}]:-}" ] || { problem "no CREATE USER of '${user}' in the setup migrations"; continue; }
     read -r -a server <<< "$(db_server "${db}")"
     signs_in "${user}" "${server[0]}" "${server[1]}" || continue
     key="${user} ${server[0]} ${server[1]}"
     lack=$(lacks "${grants[${key}]}" "${db}" "${privs}" "${grantable}")
     if [ -n "${lack}" ]; then
-      problem "'${user}' lacks ${lack} on \`${db}\`: ${shown[i]}"
+      problem_of "${user}" "'${user}' lacks ${lack} on \`${db}\`: ${shown[i]}"
     elif [ -z "${checked_db[${db}]:-}" ]; then
       # the database itself, where the SQL creates it (the accounts' migrations create theirs)
       checked_db[${db}]=yes
       if printf '%s\n' "${run[@]}" | grep -qx "CREATE DATABASE IF NOT EXISTS \`${db}\`;" \
         && [ "$(my_q "${user}" "${passwords[${user}]}" "${server[0]}" "${server[1]}" "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '${db}'")" != 1 ]; then
-        problem "no database \`${db}\` on ${server[0]}:${server[1]}: CREATE DATABASE IF NOT EXISTS \`${db}\`;"
+        problem_of "${db}" "no database \`${db}\` on ${server[0]}:${server[1]}: CREATE DATABASE IF NOT EXISTS \`${db}\`;"
       fi
     fi
   done
@@ -652,17 +704,17 @@ pg_check() {
   [ -n "${ADMIN_DB_PASSWORD:-}" ] || return 0
   for role in "${ADMIN_DB_USER}" "${ADMIN_DB_SYNC_USER}"; do
     [ "$(pg_q "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT rolcanlogin FROM pg_roles WHERE rolname = '${role}'")" = t ] \
-      || problem "no role ${role} that can sign in: CREATE ROLE ${role} LOGIN PASSWORD '<ADMIN_DB_PASSWORD>';"
+      || problem_of "${ADMIN_DB_NAME}" "no role ${role} that can sign in: CREATE ROLE ${role} LOGIN PASSWORD '<ADMIN_DB_PASSWORD>';"
   done
   case "$(pg_q "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${ADMIN_DB_NAME}'")" in
-    "") problem "no database ${ADMIN_DB_NAME}: CREATE DATABASE ${ADMIN_DB_NAME} OWNER ${ADMIN_DB_USER} TEMPLATE template0;"; return ;;
+    "") problem_of "${ADMIN_DB_NAME}" "no database ${ADMIN_DB_NAME}: CREATE DATABASE ${ADMIN_DB_NAME} OWNER ${ADMIN_DB_USER} TEMPLATE template0;"; return ;;
     "${ADMIN_DB_USER}") ;;
-    *) problem "the database ${ADMIN_DB_NAME} is not ${ADMIN_DB_USER}'s: ALTER DATABASE ${ADMIN_DB_NAME} OWNER TO ${ADMIN_DB_USER};" ;;
+    *) problem_of "${ADMIN_DB_NAME}" "the database ${ADMIN_DB_NAME} is not ${ADMIN_DB_USER}'s: ALTER DATABASE ${ADMIN_DB_NAME} OWNER TO ${ADMIN_DB_USER};" ;;
   esac
   [ "$(pg_q "${owner}" "${SYNC_POSTGRES_PASSWORD}" "${db}" "SELECT has_database_privilege('public', '${ADMIN_DB_NAME}', 'CONNECT')")" = f ] \
-    || problem "every role may connect to the database ${ADMIN_DB_NAME}: REVOKE ALL ON DATABASE ${ADMIN_DB_NAME} FROM PUBLIC;"
+    || problem_of "${ADMIN_DB_NAME}" "every role may connect to the database ${ADMIN_DB_NAME}: REVOKE ALL ON DATABASE ${ADMIN_DB_NAME} FROM PUBLIC;"
   if ! out=$(pg_sql "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" -c "SELECT 1"); then
-    problem "'${ADMIN_DB_USER}' cannot sign in to the database ${ADMIN_DB_NAME} ($(head -n 1 <<< "${out}")): ALTER ROLE ${ADMIN_DB_USER} PASSWORD '<ADMIN_DB_PASSWORD>';"
+    problem_of "${ADMIN_DB_NAME}" "'${ADMIN_DB_USER}' cannot sign in to the database ${ADMIN_DB_NAME} ($(head -n 1 <<< "${out}")): ALTER ROLE ${ADMIN_DB_USER} PASSWORD '<ADMIN_DB_PASSWORD>';"
     return
   fi
   pg_foreign "${ADMIN_DB_USER}" "${ADMIN_DB_PASSWORD}" "${ADMIN_DB_NAME}" "${ADMIN_DB_USER}"
@@ -674,7 +726,7 @@ pg_check() {
 }
 # end_state: PROBLEMS of the end state of every file, the server's
 end_state() {
-  PROBLEMS=()
+  PROBLEMS=() ADMIN_PROBLEMS=()
   if [ "${ENGINE}" = postgres ]; then pg_check; else
     [ "${MAIN}" = fxa ] || [ "${STORAGE_HOST} ${STORAGE_PORT}" = "${MAIN_HOST} ${MAIN_PORT}" ] || wait_server "${STORAGE_HOST}" "${STORAGE_PORT}"
     mysql_check
@@ -742,11 +794,23 @@ ${sql}" > /dev/null 2>&1 || true
 # ---- one start at a time on the server (replicas of the chart start together): a session
 # that holds the lock until this script ends
 LOCK_PID=""
+# (PostgreSQL: advisory locks are per database: in the maintenance database postgres, whatever
+# the mode and the scope, so that every start shares it; in the record's database only when
+# the account may not connect to postgres, a managed service's choice: then the two modes of
+# one server are not serialized, and one server runs one of them)
 take_lock() {
+  if [ "${ENGINE}" = postgres ]; then
+    lock_in postgres 2> "${WORK}/lock-postgres.err" && return 0
+    grep -q 'permission denied\|does not exist' "${WORK}/lock-postgres.err" || { cat "${WORK}/lock-postgres.err" >&2; return 1; }
+    lock_in "${RECORD_DB}"
+  else
+    lock_in -
+  fi
+}
+lock_in() {
   local reply="" deadline in out
   if [ "${ENGINE}" = postgres ]; then
-    local db=${RECORD_DB}
-    [ -z "${BOOT_USER}" ] || db=postgres
+    local db=$1
     coproc LOCK { PGPASSWORD="${REC_PASSWORD}" PGCONNECT_TIMEOUT=10 psql -X -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "${REC_USER}" -d "${db}" -tA -v ON_ERROR_STOP=1 2>&1; }
   else
     coproc LOCK { MYSQL_PWD="${REC_PASSWORD}" "${CLIENT}" --protocol=tcp --connect-timeout=10 -h "${MAIN_HOST}" -P "${MAIN_PORT}" -u "${REC_USER}" ${TLS_ARGS[@]+"${TLS_ARGS[@]}"} -N -B --unbuffered 2>&1; }
@@ -766,8 +830,9 @@ take_lock() {
       continue
     fi
     case "${reply}" in
-      0*locked) return 1 ;;
-      *locked) return 0 ;;
+      # (GET_LOCK: 1 taken, 0 timed out, NULL an error; pg_advisory_lock: void, an empty column)
+      "1"$'\t'"locked"|"|locked") return 0 ;;
+      *locked) return 1 ;;
       ""|*WARNING*|*Warning*) ;;
       *) echo "${reply}" >&2; return 1 ;;
     esac
@@ -894,10 +959,15 @@ elif [ -n "${BOOT_USER}" ]; then
       # (what setup migration 001 of its account gives: the names, hosts and privilege columns of
       # mysql.user, nothing else of it; the privilege tables, which hold no secret)
       "T \`mysql\`.\`user\` SELECT ("*")")
-        p=${line#T \`mysql\`.\`user\` SELECT (} p=${p%)} p=${p//\`/}
-        while IFS= read -r a; do
-          case "${a# }" in User|Host|*_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
-        done <<< "${p//,/$'\n'}" ;;
+        # (the whole line one column list of SELECT, nothing else: anything more is too much)
+        if [[ "${line}" =~ ^T\ \`mysql\`\.\`user\`\ SELECT\ \(([^\(\)]*)\)$ ]]; then
+          p=${BASH_REMATCH[1]//\`/}
+          while IFS= read -r a; do
+            case "${a# }" in User|Host|*_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
+          done <<< "${p//,/$'\n'}"
+        else
+          p=${line#T } wide="${wide} ${p#* } on ${p%% *},"
+        fi ;;
       "T \`mysql\`.\`global_grants\` SELECT"|"T \`mysql\`.\`role_edges\` SELECT"|"T \`mysql\`.\`db\` SELECT"|"T \`mysql\`.\`tables_priv\` SELECT") ;;
       "T \`mysql\`.\`columns_priv\` SELECT"|"T \`mysql\`.\`procs_priv\` SELECT"|"T \`mysql\`.\`proxies_priv\` SELECT") ;;
       "R "*|"X "*) ;;
@@ -928,14 +998,46 @@ elif [ -n "${BOOT_USER}" ]; then
     privs=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT GROUP_CONCAT(CONCAT('u.', COLUMN_NAME, ' = ''Y''') SEPARATOR ' OR ')
         FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 'user' AND COLUMN_NAME LIKE '%\_priv'") || privs=""
     stack_users=$(sql_settings "${KIND}" | while read -r placeholder setting; do [[ "${setting}" == *_USER ]] && [ -n "${!setting:-}" ] && printf "'%s'," "${!setting}"; done)
-    # (the bootstrap account of the stack's other scope, Sync's or the accounts', on the same
-    # server: the stack's too, its name alone, which its own start checks as this one)
+    [ "${KIND}" != fxa ] || stack_users="${stack_users}'ffs_admin',"
+    # MySQL's mandatory roles: every account reaches them (a SET ROLE away)
+    mandatory=$(mandatory_roles "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}") || fail "${BOOT_USER}: the mandatory roles of ${MAIN_HOST}:${MAIN_PORT} not understood (@@mandatory_roles)"
+    # shellcheck disable=SC2001,SC2016 # (a line per role, backticks of the names)
+    mandatory_rows=$(sed -e 's/^`\(.*\)`@`\(.*\)`$/SELECT '"'"'\1'"'"' AS mu, '"'"'\2'"'"' AS mh/' <<< "${mandatory}" | paste -sd '|' - | sed -e 's/|/ UNION ALL /g')
+    # the bootstrap account of the stack's other scope (Sync's or the accounts'), left to its own
+    # start only when it is that: on this very server (the other scope's host and port these),
+    # 'name'@'%', no reserved nor stack name, and nothing of an administrator beyond what its
+    # setup migration 001 gives (CREATE USER, the read grants on the mysql schema). Otherwise
+    # it is checked as any other account
     PEER_USER=$([ "${MAIN}" = sync ] && echo "${FXA_DB_BOOTSTRAP_USER:-}" || echo "${SYNC_DB_BOOTSTRAP_USER:-}")
     [[ -z "${PEER_USER}" || "${PEER_USER}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || fail "the other bootstrap account '${PEER_USER}': A-Z, a-z, 0-9 and _ only, at most 32"
-    [ "${KIND}" != fxa ] || stack_users="${stack_users}'ffs_admin',"
+    peer=""
+    if [ -n "${PEER_USER}" ] && [ "${PEER_USER}" != "${BOOT_USER}" ] \
+      && [ "$(tr '[:upper:]' '[:lower:]' <<< "${FFS_PEER_DB_HOST:-}:${FFS_PEER_DB_PORT:-3306}")" = "$(tr '[:upper:]' '[:lower:]' <<< "${MAIN_HOST}:${MAIN_PORT}")" ]; then
+      case " root mysql healthcheck mariadb_sys mysql_sys postgres public ${stack_users//[\',]/ } " in
+        *" ${PEER_USER} "*) ;;
+        *)
+          other_privs=$(sed -e 's/ OR u\.Create_user_priv = .Y.//; s/u\.Create_user_priv = .Y. OR //' <<< "${privs}")
+          beyond=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT
+              (SELECT COUNT(*) FROM mysql.user u WHERE u.User = '${PEER_USER}' AND u.Host = '%' AND (${other_privs}))
+            + (SELECT COUNT(*) FROM mysql.global_grants WHERE USER = '${PEER_USER}' AND HOST = '%')
+            + (SELECT COUNT(*) FROM mysql.proxies_priv WHERE User = '${PEER_USER}' AND Host = '%')
+            + (SELECT COUNT(*) FROM mysql.role_edges WHERE TO_USER = '${PEER_USER}' AND TO_HOST = '%')
+            + (SELECT COUNT(*) FROM mysql.db WHERE User = '${PEER_USER}' AND Host = '%' AND 'mysql' LIKE Db)
+            + (SELECT COUNT(*) FROM mysql.procs_priv WHERE User = '${PEER_USER}' AND Host = '%' AND Db = 'mysql')
+            + (SELECT COUNT(*) FROM mysql.tables_priv WHERE User = '${PEER_USER}' AND Host = '%' AND Db = 'mysql'
+                AND NOT (Table_name IN ('global_grants', 'role_edges', 'db', 'tables_priv', 'columns_priv', 'procs_priv', 'proxies_priv') AND Table_priv = 'Select' AND Column_priv = '')
+                AND NOT (Table_name = 'user' AND Table_priv = '' AND Column_priv = 'Select'))
+            + (SELECT COUNT(*) FROM mysql.columns_priv WHERE User = '${PEER_USER}' AND Host = '%' AND Db = 'mysql'
+                AND NOT (Table_name = 'user' AND Column_priv = 'Select' AND (Column_name IN ('User', 'Host') OR Column_name LIKE '%\_priv')))") || beyond=""
+          [ "${beyond}" = 0 ] && peer=${PEER_USER} ;;
+      esac
+    fi
+    [ -z "${PEER_USER}" ] || [ -n "${peer}" ] || [ "${PEER_USER}" = "${BOOT_USER}" ] \
+      || echo "(the other bootstrap account '${PEER_USER}': not on ${MAIN_HOST}:${MAIN_PORT} as '${PEER_USER}'@'%' with its setup migration's grants alone, or a reserved or stack name: checked as any other account)"
     if [ -z "${privs}" ] || ! admins=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "WITH RECURSIVE reach (u, h, ru, rh) AS (
           SELECT User, Host, User, Host FROM mysql.user
-          UNION SELECT r.u, r.h, e.FROM_USER, e.FROM_HOST FROM reach r JOIN mysql.role_edges e ON e.TO_USER = r.ru AND e.TO_HOST = r.rh),
+          UNION SELECT r.u, r.h, e.FROM_USER, e.FROM_HOST FROM reach r JOIN mysql.role_edges e ON e.TO_USER = r.ru AND e.TO_HOST = r.rh
+          ${mandatory_rows:+UNION SELECT r.u, r.h, m.mu, m.mh FROM reach r JOIN (${mandatory_rows}) m}),
         admin (u, h) AS (
           SELECT u.User, u.Host FROM mysql.user u WHERE ${privs}
           UNION SELECT USER, HOST FROM mysql.global_grants
@@ -945,7 +1047,7 @@ elif [ -n "${BOOT_USER}" ]; then
           UNION SELECT User, Host FROM mysql.procs_priv WHERE Db = 'mysql'
           UNION SELECT User, Host FROM mysql.proxies_priv)
         SELECT DISTINCT CONCAT(IF(r.u IN (${stack_users%,}), 'stack ', 'admin '), '''', r.u, '''@''', r.h, '''') FROM reach r JOIN admin a ON a.u = r.ru AND a.h = r.rh
-        WHERE NOT (r.u = '${BOOT_USER}' AND r.h = '%') AND NOT (r.u = '${PEER_USER:-${BOOT_USER}}' AND r.h = '%')
+        WHERE NOT (r.u = '${BOOT_USER}' AND r.h = '%') AND NOT (r.u = '${peer:-${BOOT_USER}}' AND r.h = '%')
           AND (r.u IN (${stack_users%,}) OR NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = r.u AND g.HOST = r.h AND g.PRIV = 'SYSTEM_USER')) ORDER BY 1"); then
       fail "${BOOT_USER} cannot read the administrators of ${MAIN_HOST}:${MAIN_PORT} ($(head -n 1 <<< "${admins:-the columns of mysql.user}")): run its setup migrations again as the server's administrator, they give it SELECT on the privilege tables of the mysql schema (never the passwords' hashes; db-setup.sh print ${MAIN}-bootstrap, database-bootstrap$([ "${MAIN}" = fxa ] && echo -fxa).sql; ${DOC_BOOT})"
     fi
@@ -1069,20 +1171,25 @@ for n in ${REC_NUMBERS[@]+"${REC_NUMBERS[@]}"}; do [ "${n}" -le "${VERSION}" ] |
 
 # the command that prints the pending SQL again
 again() { echo "${FFS_SETUP_PENDING:-db-setup.sh pending ${SCOPE}}"; }
-show_problems() { printf '  - %s\n' "${PROBLEMS[@]}"; }
+show_problems() { printf '  - %s\n' ${PROBLEMS[@]+"${PROBLEMS[@]}"} ${ADMIN_PROBLEMS[@]+"${ADMIN_PROBLEMS[@]}"}; }
 
 if [ "${#REC_NUMBERS[@]}" = 0 ]; then
   # an install from before the setup migrations, or a new one: its end state is the baseline
+  # (PostgreSQL: of the files pg_check checks, the others stay pending)
   end_state
   if [ "${#PROBLEMS[@]}" = 0 ]; then
-    write_record baseline "${NUMBERS[@]}"
-    echo "✓ ${WHAT} on ${MAIN_HOST}:${MAIN_PORT}: every user, grant and database of the setup migrations $(span "${NUMBERS[@]}") is there, recorded as their baseline"
-    PENDING=() VERSION=${EXPECTED}
+    BASE_NUMBERS=() PENDING=()
+    for n in "${NUMBERS[@]}"; do
+      if [ "${ENGINE}" = postgres ] && [ "${n}" -gt "${PG_CHECKED}" ]; then PENDING+=("${n}"); else BASE_NUMBERS+=("${n}"); fi
+    done
+    write_record baseline "${BASE_NUMBERS[@]}"
+    echo "✓ ${WHAT} on ${MAIN_HOST}:${MAIN_PORT}: every user, grant and database of the setup migrations $(span "${BASE_NUMBERS[@]}") is there$([ "${#ADMIN_PROBLEMS[@]}" = 0 ] || echo " (but the admin UI's, below)"), recorded as their baseline"
+    VERSION=${BASE_NUMBERS[${#BASE_NUMBERS[@]}-1]}
   elif [ -z "${BOOT_USER}" ]; then
     echo "✗ ERROR: ${WHAT} on your server lack what this release needs (setup migrations $(span "${NUMBERS[@]}"), $([ -n "${UNREADABLE}" ] && echo "their record unreadable as ${REC_USER}: ${UNREADABLE}" || echo "nothing recorded yet")):"
     show_problems
     echo "  Run ${FILE} on that server as its administrator (./prepare_environment.sh --upgrade writes it again; Helm: the SQL of db/ filled in, $(again)), or let the stack do it at every start with ${USER_SETTING} (${DOC})"
-    write_state missing "$(printf '%s; ' "${PROBLEMS[@]}")"
+    write_state missing "$(printf '%s; ' "${PROBLEMS[@]}" ${ADMIN_PROBLEMS[@]+"${ADMIN_PROBLEMS[@]}"})"
     exit 1
   fi
 fi
@@ -1107,7 +1214,7 @@ fi
 
 # ---- the end state: drift (what was revoked or dropped by hand) is run again with the bootstrap
 end_state
-if [ "${#PROBLEMS[@]}" != 0 ] && [ -n "${BOOT_USER}" ]; then
+if [ "$((${#PROBLEMS[@]} + ${#ADMIN_PROBLEMS[@]}))" != 0 ] && [ -n "${BOOT_USER}" ]; then
   echo "${WHAT}: drift from the setup migrations, run again as ${BOOT_USER}:"
   show_problems
   for i in "${!NAMES[@]}"; do apply "${NAMES[i]}"; done
@@ -1124,6 +1231,14 @@ if [ "${#PROBLEMS[@]}" != 0 ]; then
   write_state drift "$(printf '%s; ' "${PROBLEMS[@]}")"
   exit 1
 fi
-write_state ok ""
+if [ "${#ADMIN_PROBLEMS[@]}" != 0 ]; then
+  # the admin UI's alone: Sync and the accounts start, the admin UI says what it lacks
+  warn "${WHAT} on ${MAIN_HOST}:${MAIN_PORT}: the admin UI's users or database lack what ${FILE} gives them (the Sync server and the accounts start, the admin UI shows this):"
+  printf '  - %s\n' "${ADMIN_PROBLEMS[@]}"
+  echo "  (run ${FILE} again on that server as its administrator: ${DOC})"
+  write_state admin "$(printf '%s; ' "${ADMIN_PROBLEMS[@]}")"
+else
+  write_state ok ""
+fi
 echo "✓ ${WHAT} on ${MAIN_HOST}:${MAIN_PORT}: setup version $(nnn "${VERSION}") (this release expects $(nnn "${EXPECTED}")), every user, grant and database of ${FILE} is there"
 exit 0

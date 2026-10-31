@@ -172,13 +172,15 @@ else
 fi
 
 # ---- the setup migrations (db/setup-manifest, docs/databases.md#the-record-of-the-setup-migrations).
-# With your own server db-bootstrap ran them, or checked them, and recorded every one before the
-# migrations (the start stops otherwise): nothing is missing here. With the stack's database
+# With your own server (SYNC_DB_CONTAINERS=0) db-bootstrap records them, never this. With the stack's database
 # containers, which create the same users and grants themselves, they are recorded here
 # (how 'containers'), so that the admin UI shows the version everywhere. A recorded file with
 # another checksum: a warning (db-setup.sh stops on it with your own server)
 record_setup() {
   local manifest=/scripts/setup-manifest path sum name values="" have
+  # (with your own server db-bootstrap records them, from the files it ran: an init image newer
+  # than those files must not record what never ran there)
+  [ "${SYNC_DB_CONTAINERS:-1}" != 0 ] || return 0
   [ -r "${manifest}" ] || return 0
   while read -r path sum; do
     case "${path}" in mysql/setup/sync/[0-9][0-9][0-9]-*.sql) ;; *) continue ;; esac

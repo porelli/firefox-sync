@@ -335,9 +335,13 @@ ask_bootstrap() { # <prefix: SYNC or FXA> <what>
     local answer user password
     read -r -e -p "Let the stack apply database changes itself at start${2} (needs a database account that can create users, see docs/databases.md#let-the-stack-apply-them)? (y/N): " answer
     case "${answer}" in y|Y|yes) ;; *) return 0 ;; esac
-    read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [ffs_bootstrap]: " user
-    user=${user:-ffs_bootstrap}
+    # (a name of its own per scope: on one server one account would get the two passwords)
+    local default=ffs_$([ "${1}" = FXA ] && echo fxa || echo sync)_bootstrap
+    read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [${default}]: " user
+    user=${user:-${default}}
     [[ "${user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "ERROR: not a valid user name (A-Z, a-z, 0-9, _): '${user}'"; exit 1; }
+    [ "${1}" != FXA ] || [ "${user}" != "${SYNC_DB_BOOTSTRAP_USER}" ] \
+        || { echo "ERROR: '${user}' is Sync's bootstrap account already: the accounts need one of their own (one account would get two passwords)"; exit 1; }
     # an account of its own, not one of the stack's users nor the server's administrator
     case " root postgres ${SYNC_TOKENSERVER_DB_USER:-} ${SYNC_STORAGE_DB_USER:-} ${SYNC_POSTGRES_USER:-} ${FXA_MYSQL_USER:-} ${FXA_MYSQL_POLICY_USER:-} ffs_admin ffs_admin_ui ffs_admin_sync " in
         *" ${user} "*) echo "ERROR: '${user}' is the server's administrator or one of the stack's users: the bootstrap needs an account of its own (docs/databases.md#the-bootstrap-account)"; exit 1 ;;

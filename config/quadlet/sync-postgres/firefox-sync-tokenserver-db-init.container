@@ -11,6 +11,8 @@ Image=%IMAGE_REPOSITORY%:%SYNC_INIT_IMAGE%-%SYNC_INIT_IMAGE_TAG%
 ContainerName=firefox-sync-tokenserver-db-init
 Network=firefox-sync-network.network
 
+# the setup migrations recorded (how containers) with the stack's database containers only
+Environment=SYNC_DB_CONTAINERS=%SYNC_DB_CONTAINERS%
 Environment=POSTGRES_SERVER=%SYNC_POSTGRES_HOST%
 Environment=POSTGRES_SERVER_PORT=%SYNC_POSTGRES_PORT%
 Environment=POSTGRES_DATABASE=%SYNC_POSTGRES_NAME%

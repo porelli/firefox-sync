@@ -118,6 +118,11 @@ spec:
             # the accounts' bootstrap account (its name only): the stack's too, on a server shared with them
             - name: FXA_DB_BOOTSTRAP_USER
               value: {{ ternary .Values.fxa.database.external.bootstrap.user "" (and .Values.fxa.enabled (not .Values.fxa.database.bundled)) | quote }}
+            # (and its server: the other account is left to its own start only when it is this one)
+            - name: FFS_PEER_DB_HOST
+              value: {{ ternary (include "firefox-sync.fxaDbHost" .) "" (and .Values.fxa.enabled (not .Values.fxa.database.bundled)) | quote }}
+            - name: FFS_PEER_DB_PORT
+              value: {{ ternary (include "firefox-sync.fxaDbPort" .) "" (and .Values.fxa.enabled (not .Values.fxa.database.bundled)) | quote }}
             {{- if eq $backend "postgres" }}
             - name: FFS_DB_ENGINE
               value: postgres
@@ -235,6 +240,11 @@ spec:
           {{- include "firefox-sync.noEscalation" . | nindent 10 }}
           {{- with include "firefox-sync.initResources" . }}{{ . | trim | nindent 10 }}{{ end }}
           env:
+            {{- if not .Values.database.bundled }}
+            # your own server: no setup migration recorded here (db-bootstrap records them)
+            - name: SYNC_DB_CONTAINERS
+              value: "0"
+            {{- end }}
             {{- if eq $backend "postgres" }}
             {{- $ts := dict "root" . "db" "tokenserver" }}
             - name: POSTGRES_SERVER

@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # (the commit before too: on main the released setup migrations are those of HEAD^)
+          fetch-depth: 2
       - name: Self-test of the checker
         run: python3 -I tests/test_check_markdown_links.py
       - name: Links
@@ -27,8 +30,8 @@ jobs:
       # (docs/databases.md#setup-migrations)
       - name: Setup migrations
         run: |
-          git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main || echo "no main to compare with"
-          BASE=origin/main bash tests/setup_migrations.sh
+          git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main || echo "no main to compare with"
+          bash tests/setup_migrations.sh
   site:
     runs-on: ubuntu-latest
     env:

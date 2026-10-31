@@ -67,6 +67,9 @@ services:
       FXA_DB_BOOTSTRAP_PASSWORD: ${FXA_DB_BOOTSTRAP_PASSWORD:-}
       # Sync's bootstrap account (its name only): the stack's too, on a server shared with Sync
       SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
+      # (and its server: the other account is left to its own start only when it is this one)
+      FFS_PEER_DB_HOST: ${SYNC_TOKENSERVER_DB_HOST:-${MARIADB_TOKENSERVER_SERVER:-tokenserver_db}}
+      FFS_PEER_DB_PORT: ${SYNC_TOKENSERVER_DB_PORT:-${MARIADB_TOKENSERVER_SERVER_PORT:-3306}}
       FXA_MYSQL_HOST: ${FXA_MYSQL_HOST:-fxa-db}
       FXA_MYSQL_PORT: ${FXA_MYSQL_PORT:-3306}
       FXA_MYSQL_USER: ${FXA_MYSQL_USER:-root}
@@ -115,6 +118,8 @@ services:
     image: ${ADMIN_IMAGE:-${IMAGE_REPOSITORY:-${REPOSITORY:-}}:admin-latest}
     command: [fxa-init]
     environment:
+      # the setup migrations recorded (how containers) with fxa-db only
+      FXA_DB_CONTAINERS: ${FXA_DB_CONTAINERS:-1}
       FXA_DB_HOST: ${FXA_MYSQL_HOST:-fxa-db}
       FXA_DB_PORT: ${FXA_MYSQL_PORT:-3306}
       # installs the policy and grants ffs_admin: FXA_MYSQL_POLICY_USER, empty: FXA_MYSQL_USER

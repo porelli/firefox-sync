@@ -8,6 +8,8 @@ Image=%IMAGE_REPOSITORY%:%SYNC_INIT_IMAGE%-%SYNC_INIT_IMAGE_TAG%
 ContainerName=firefox-sync-tokenserver-db-init
 Network=firefox-sync-network.network
 
+# the setup migrations recorded (how containers) with the stack's database containers only
+Environment=SYNC_DB_CONTAINERS=%SYNC_DB_CONTAINERS%
 Environment=MARIADB_SERVER=%SYNC_TOKENSERVER_DB_HOST%
 Environment=MARIADB_SERVER_PORT=%SYNC_TOKENSERVER_DB_PORT%
 # false with your own MySQL server: its certificate is self-signed

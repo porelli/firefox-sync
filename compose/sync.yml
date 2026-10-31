@@ -62,6 +62,9 @@ services:
       SYNC_DB_BOOTSTRAP_PASSWORD: ${SYNC_DB_BOOTSTRAP_PASSWORD:-}
       # the accounts' bootstrap account (its name only): the stack's too, on a server shared with them
       FXA_DB_BOOTSTRAP_USER: ${FXA_DB_BOOTSTRAP_USER:-}
+      # (and its server: the other account is left to its own start only when it is this one)
+      FFS_PEER_DB_HOST: ${FXA_MYSQL_HOST:-fxa-db}
+      FFS_PEER_DB_PORT: ${FXA_MYSQL_PORT:-3306}
       ADMIN_DB_USER: ${ADMIN_DB_USER:-ffs_admin_ui}
       ADMIN_DB_SYNC_USER: ${ADMIN_DB_SYNC_USER:-ffs_admin_sync}
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
@@ -160,6 +163,8 @@ services:
       FFS_OLD_ENV_NAMES: *old-env-names
       # the settings under both names: it refuses to start
       FFS_BOTH_ENV_NAMES: *both-env-names
+      # the setup migrations recorded (how containers) with the stack's database containers only
+      SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
 
   # optional admin UI (COMPOSE_PROFILES=admin), see docs/admin/README.md
   ffs-admin:

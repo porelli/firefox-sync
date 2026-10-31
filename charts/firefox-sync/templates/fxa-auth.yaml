@@ -183,6 +183,12 @@ spec:
             # Sync's bootstrap account (its name only): the stack's too, on a server shared with Sync
             - name: SYNC_DB_BOOTSTRAP_USER
               value: {{ ternary .Values.database.external.bootstrap.user "" (not .Values.database.bundled) | quote }}
+            # (and its server: the other account is left to its own start only when it is this one)
+            {{- $ts := dict "root" . "db" "tokenserver" }}
+            - name: FFS_PEER_DB_HOST
+              value: {{ ternary (include "firefox-sync.dbHost" $ts) "" (not .Values.database.bundled) | quote }}
+            - name: FFS_PEER_DB_PORT
+              value: {{ ternary (include "firefox-sync.dbPort" $ts) "" (not .Values.database.bundled) | quote }}
             - name: FXA_MYSQL_HOST
               value: {{ $dbHost | quote }}
             - name: FXA_MYSQL_PORT
@@ -237,6 +243,11 @@ spec:
           {{- with include "firefox-sync.fxaInitResources" . }}{{ . | trim | nindent 10 }}{{ end }}
           args: [fxa-init]
           env:
+            {{- if not $f.database.bundled }}
+            # your own server: no setup migration recorded here (db-bootstrap records them)
+            - name: FXA_DB_CONTAINERS
+              value: "0"
+            {{- end }}
             - name: FXA_DB_HOST
               value: {{ $dbHost | quote }}
             - name: FXA_DB_PORT

@@ -8,6 +8,8 @@ Requires=firefox-sync-fxa-migrations.service
 Image=%ADMIN_IMAGE%
 ContainerName=firefox-sync-fxa-policy
 Network=firefox-sync-network.network
+# the setup migrations recorded (how containers) with fxa-db only
+Environment="FXA_DB_CONTAINERS=%FXA_DB_CONTAINERS%"
 Environment="FXA_DB_HOST=%FXA_MYSQL_HOST%"
 Environment="FXA_DB_PORT=%FXA_MYSQL_PORT%"
 # installs the policy and grants ffs_admin: FXA_MYSQL_POLICY_USER, empty: FXA_MYSQL_USER (and its password)
