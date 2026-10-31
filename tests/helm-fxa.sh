@@ -7,7 +7,9 @@
 #               the chart with the accounts on a throwaway kind cluster (fxa_e2e);
 #               EXTERNAL_DB=1 (mysql only): on your own server instead of the bundled one;
 #               SYNC_BACKEND=postgres: the Sync server on the bundled PostgreSQL (default:
-#               the accounts' backend); SKIP_BROWSER=1: without the real Firefox (test_fxa_browser.py)
+#               the accounts' backend); SKIP_BROWSER=1: without the real Firefox (test_fxa_browser.py);
+#               PART=main or PART=survival: one half of it on its own cluster (CI runs the two
+#               at once), see fxa_e2e; empty: both, on one cluster
 #
 # PARITY_BASE_CHART=<dir>: chart 0.1.0 already extracted there (charts/firefox-sync of
 # PARITY_BASE, default 2512e9a), for a checkout without that commit (a copy without .git,
@@ -909,6 +911,10 @@ fxa_base_parity() {
 # docs/backups.md#restore-on-kubernetes says for PostgreSQL (its role, its one database, the
 # admin UI's), next to the accounts'.
 # SKIP_BROWSER=1: test_fxa_pairing.py alone in Firefox's image, not test_fxa_browser.py.
+# PART: the steps after the install in two halves of about the same length, each of which
+# needs nothing of the other: main (fxa_e2e_main: from the init containers to Firefox) and
+# survival (fxa_e2e_survival: from test_fxa_upgrade.py's before; not with EXTERNAL_DB=1).
+# Either one alone still sets up, installs and checks the install as a whole run does.
 # REPOSITORY, TAG: the Sync server's images, as tests/helm.sh; FXA_IMAGE (default REPOSITORY),
 # FXA_VERSION (default fxa-mono-latest): the accounts'; FXA_MARIADB_IMAGE, FXA_MYSQL_IMAGE:
 # their database (as tests/e2e-fxa.sh: the chart's lts when the accounts image has
@@ -920,6 +926,12 @@ fxa_e2e() {
     *) echo "Usage: $0 e2e <mysql|mariadb>"; exit 1 ;;
   esac
   [[ -z "${external}" || ${backend} == mysql ]] || { echo "EXTERNAL_DB=1: e2e mysql only (db/mysql/fxa-mysql.sql)"; exit 1; }
+  PART=${PART:-}
+  case "${PART}" in
+    ""|main) ;;
+    survival) [[ -z "${external}" ]] || { echo "PART=survival: the bundled server's steps, not with EXTERNAL_DB=1"; exit 1; } ;;
+    *) echo "PART=${PART}: main, survival, or empty (both)"; exit 1 ;;
+  esac
   # the Sync server's database (database.backend): the accounts' backend, or PostgreSQL
   SYNC_BACKEND=${SYNC_BACKEND:-${backend}}
   local flavor=mysql init_dir=db/mysql/init
@@ -944,18 +956,6 @@ fxa_e2e() {
     mariadb) pr=21494 fallback=docker.io/library/mariadb:11 given=${FXA_MARIADB_IMAGE:-} ;;
     mysql) pr=21554 fallback=docker.io/library/mysql:8 given=${FXA_MYSQL_IMAGE:-} ;;
   esac
-  if [[ -n "${given}" ]]; then
-    db_image=${given}
-  else
-    docker image inspect "${fxa_image}" > /dev/null 2>&1 || docker pull -q "${fxa_image}" > /dev/null || fail "${fxa_image} not pulled"
-    # shellcheck source=tests/fxa_fix.sh
-    source "${REPO_ROOT}/tests/fxa_fix.sh"
-    if ! fxa_image_fixed "mozilla/fxa#${pr}" "${fxa_image}"; then
-      db_image=${fallback}
-      echo "== ${fxa_image} without mozilla/fxa#${pr} (its labels, config/fxa/fixed-in): the accounts on ${db_image}"
-    fi
-  fi
-  db_args=(--set fxa.database.image."${backend}"="${db_image}")
   ADMIN_TAG=${TAG:-latest}
   CLUSTER="ffs-helm-fxa-${backend}${external:+-extdb}$([[ ${SYNC_BACKEND} == "${backend}" ]] || echo "-sync-${SYNC_BACKEND}")"
   REL=t
@@ -970,50 +970,93 @@ fxa_e2e() {
   PAIRING_IMAGE="${repository}:fxa-channelserver-latest"
   BROWSER_IMAGE="ffs-fxa-browser:src-$(cd "${SCRIPT_DIR}/browser" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
   POD_SELECTOR="app.kubernetes.io/instance=${REL},app.kubernetes.io/component=fxa-auth"
-
-  # the tests in Firefox's image (tests/browser), tagged by its files as tests/e2e-fxa.sh does:
-  # built first, so that the free space below is what is left with it
-  docker image inspect "${BROWSER_IMAGE}" > /dev/null 2>&1 || docker build -q -t "${BROWSER_IMAGE}" "${SCRIPT_DIR}/browser" > /dev/null \
-    || fail "the Firefox test image (tests/browser) not built"
-  # (Mozilla's latest release, tests/browser/Dockerfile: the first suspect when only it fails)
-  echo "Firefox test image ${BROWSER_IMAGE}: $(docker run --rm "${BROWSER_IMAGE}" firefox --version 2> /dev/null)"
-  # the accounts image is about 5 GB in the node, on top of the Sync server's images; and the
-  # Firefox image's copy there (kind load)
-  local free need
-  free=$(df -BG --output=avail "$(docker info -f '{{.DockerRootDir}}')" | tail -1 | tr -dc 0-9)
-  need=$(( 15 + ($(docker image inspect -f '{{.Size}}' "${BROWSER_IMAGE}") + 999999999) / 1000000000 ))
-  [[ "${free}" -ge "${need}" ]] || fail "${free} GB free for docker, the accounts' kind cluster needs ${need} GB (15, and ${BROWSER_IMAGE} in the node; vm.sh prune, docker system prune)"
+  local sync_db_image
+  sync_db_image=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["database"]["image"][sys.argv[2]])' \
+    "${CHART_DIR}/values.yaml" "${SYNC_BACKEND}") || fail "no database.image.${SYNC_BACKEND} in values.yaml"
   [[ ${backend} != mysql ]] || mysqld_apparmor_check
   # the images go into the node with docker save --platform (Docker 27 and later)
   docker save --help 2> /dev/null | grep -q -- '--platform' \
     || fail "docker $(docker version -f '{{.Server.Version}}' 2> /dev/null) has no docker save --platform: Docker 27 or later is needed"
 
-  echo "=== e2e of the accounts on kind (${backend}${external:+, your own server}, Sync on ${SYNC_BACKEND}) ==="
+  echo "=== e2e of the accounts on kind (${backend}${external:+, your own server}, Sync on ${SYNC_BACKEND}${PART:+, part ${PART}}) ==="
+  # what does not wait for anything runs at once (bg_start): the cluster's creation, the pulls
+  # of the images missing in the host's docker, the builds of the init image, the admin UI and
+  # Firefox's test image; then the images into the node, at once too
+  local t0=${SECONDS}
+  BG_DIR=$(mktemp -d)
   kind delete cluster --name "${CLUSTER}" > /dev/null 2>&1 || true
-  trap 'rc=$?; if ((rc)); then diagnostics; fi; kind delete cluster --name "${CLUSTER}"' EXIT
-  kind create cluster --name "${CLUSTER}" --wait 120s
+  trap 'rc=$?; bg_kill; if ((rc)); then diagnostics; fi; kind_teardown; rm -rf "${BG_DIR}"' EXIT
+  bg_start cluster kind create cluster --name "${CLUSTER}" --wait 120s
+  pull_missing() { docker image inspect "$1" > /dev/null 2>&1 || docker pull -q "$1" > /dev/null || fail "$1 not pulled"; }
+  # (the database image of the chart, or the one given: the fallback below, if any, after the
+  # accounts image's labels)
+  local image images=("${fxa_image}" "${SYNC_IMAGE}" "${PAIRING_IMAGE}" "${db_image}" "${redis_image}") n
+  [[ -z "${given}" ]] || images[3]=${given}
+  [[ ${sync_db_image} == "${images[3]}" ]] || images+=("${sync_db_image}")
+  # (and the test fixtures': the Ingress controller, the mail catcher)
+  images+=("${TRAEFIK_IMAGE}" "${MAILPIT_IMAGE}")
+  for n in "${!images[@]}"; do bg_start "pull-${n}" pull_missing "${images[n]}"; done
+  image_tags
+  bg_start build build_images "${repository}" "${flavor}" "${init_dir}"
+  # the tests in Firefox's image (tests/browser), tagged by its files as tests/e2e-fxa.sh does
+  # (not for PART=survival, which runs nothing in it)
+  local browser=1
+  [[ ${PART} != survival ]] || browser=""
+  [[ -z "${browser}" ]] || bg_start browser sh -c 'docker image inspect "$1" > /dev/null 2>&1 || docker build -q -t "$1" "$2" > /dev/null || { echo "the Firefox test image (tests/browser) not built"; exit 1; }' \
+    sh "${BROWSER_IMAGE}" "${SCRIPT_DIR}/browser"
+
+  if [[ -n "${given}" ]]; then
+    db_image=${given}
+  else
+    bg_wait pull-0
+    # shellcheck source=tests/fxa_fix.sh
+    source "${REPO_ROOT}/tests/fxa_fix.sh"
+    if ! fxa_image_fixed "mozilla/fxa#${pr}" "${fxa_image}"; then
+      db_image=${fallback}
+      echo "== ${fxa_image} without mozilla/fxa#${pr} (its labels, config/fxa/fixed-in): the accounts on ${db_image}"
+      # (the Sync server's database on the chart's image: kept)
+      if [[ ${sync_db_image} == "${images[3]}" ]]; then images+=("${db_image}"); else images[3]=${db_image}; fi
+      pull_missing "${db_image}"
+    fi
+  fi
+  db_args=(--set fxa.database.image."${backend}"="${db_image}")
+  if [[ -n "${browser}" ]]; then
+    bg_wait browser
+    # (Mozilla's latest release, tests/browser/Dockerfile: the first suspect when only it fails)
+    echo "Firefox test image ${BROWSER_IMAGE}: $(docker run --rm "${BROWSER_IMAGE}" firefox --version 2> /dev/null)"
+  fi
+  for n in "${!images[@]}"; do bg_wait "pull-${n}"; done
+  bg_wait build
+  # the accounts image is about 5 GB in the node, on top of the Sync server's images; and the
+  # Firefox image's copy there (kind load)
+  local free need
+  free=$(df -BG --output=avail "$(docker info -f '{{.DockerRootDir}}')" | tail -1 | tr -dc 0-9)
+  need=15
+  [[ -z "${browser}" ]] || need=$(( need + ($(docker image inspect -f '{{.Size}}' "${BROWSER_IMAGE}") + 999999999) / 1000000000 ))
+  [[ "${free}" -ge "${need}" ]] || fail "${free} GB free for docker, the accounts' kind cluster needs ${need} GB (15, and ${BROWSER_IMAGE} in the node; vm.sh prune, docker system prune)"
+  echo "(the images pulled and built: $((SECONDS - t0)) s)"
+  bg_wait cluster
   kubectl config use-context "kind-${CLUSTER}" > /dev/null
   # PodSecurity baseline, enforced, as tests/helm.sh
   kubectl label ns default pod-security.kubernetes.io/enforce=baseline pod-security.kubernetes.io/enforce-version=latest > /dev/null
-  load_images "${repository}" "${flavor}" "${init_dir}"
-  # the images of the host's docker (pulled there first when missing) into the node, as
-  # tests/helm.sh loads the Sync server's: the node's platform alone (a pulled image's export
-  # lacks the others), the import's layers dropped once unpacked (disk)
-  local image platform
+  # the images of the host's docker into the node, as tests/helm.sh loads the Sync server's:
+  # the node's platform alone (a pulled image's export lacks the others), the import's layers
+  # dropped once unpacked (disk); each in its own import, at once
+  local platform
   platform=$(docker version -f 'linux/{{.Server.Arch}}')
-  local sync_db_image
-  sync_db_image=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["database"]["image"][sys.argv[2]])' \
-    "${CHART_DIR}/values.yaml" "${SYNC_BACKEND}") || fail "no database.image.${SYNC_BACKEND} in values.yaml"
-  # (and the test fixtures': the Ingress controller, the mail catcher)
-  local fixtures_images="${TRAEFIK_IMAGE} ${MAILPIT_IMAGE}"
-  for image in "${SYNC_IMAGE}" "${fxa_image}" "${PAIRING_IMAGE}" "${db_image}" "${redis_image}" $([[ ${sync_db_image} == "${db_image}" ]] || echo "${sync_db_image}") ${fixtures_images}; do
-    docker image inspect "${image}" > /dev/null 2>&1 || docker pull -q "${image}" > /dev/null || fail "${image} not pulled"
-    docker save --platform "${platform}" "${image}" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import --digests \
-      --snapshotter=overlayfs --local --discard-unpacked-layers - > /dev/null || fail "${image} not loaded"
-  done
+  import_image() {
+    local s=${SECONDS}
+    docker save --platform "${platform}" "$1" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import --digests \
+      --snapshotter=overlayfs --local --discard-unpacked-layers - > /dev/null || fail "$1 not loaded"
+    echo "  $1: $((SECONDS - s)) s"
+  }
+  for n in "${!images[@]}"; do bg_start "import-${n}" import_image "${images[n]}"; done
+  bg_start load-built kind_load_built "${repository}" "${flavor}" "${init_dir}"
   # (Firefox's, built above)
-  kind load docker-image --name "${CLUSTER}" "${BROWSER_IMAGE}" > /dev/null || fail "${BROWSER_IMAGE} not loaded"
-  check "loaded from the host's docker: ${SYNC_IMAGE} ${fxa_image} ${PAIRING_IMAGE} ${BROWSER_IMAGE} ${db_image} ${redis_image}$([[ ${sync_db_image} == "${db_image}" ]] || echo " ${sync_db_image}") ${fixtures_images}"
+  [[ -z "${browser}" ]] || bg_start load-browser sh -c 'kind load docker-image --name "$1" "$2" > /dev/null || { echo "$2 not loaded"; exit 1; }' sh "${CLUSTER}" "${BROWSER_IMAGE}"
+  for n in "${!images[@]}"; do bg_wait "import-${n}"; done
+  bg_wait load-built load-browser
+  check "loaded from the host's docker: ${images[*]}${browser:+ ${BROWSER_IMAGE}} ($((SECONDS - t0)) s since the cluster's creation began)"
   fxa_fixtures
   # the user of fxa-redis' pod: the image's redis
   [[ "$(docker run --rm "${redis_image}" id redis)" == "uid=999(redis) gid=1000(redis)"* ]] \
@@ -1068,13 +1111,31 @@ fxa_e2e() {
   check "helm install with the accounts (${backend}$([[ -z ${external} ]] || echo ", your own server extdb-fxa, existingSecret ffs-own"), Sync on ${SYNC_BACKEND}) Ready, in a namespace enforcing PodSecurity baseline"
   admin_test_env
 
+  # (what both parts use)
+  local auth="deploy/${FULL}-fxa-auth" redis="deploy/${FULL}-fxa-redis" profile="deploy/${FULL}-fxa-profile"
+  local public=/fxa/packages/fxa-profile-server/var/public inits out ready revision name want
+  # (the bundled accounts database: the other backend, its volume's name on this one)
+  local other=mariadb old_claim=data claim="data-${FULL}-fxa-db-0"
+  [[ ${backend} == mysql ]] || { other=mysql; old_claim="data-mariadb"; claim="data-mariadb-${FULL}-fxa-db-0"; }
+  [[ ${PART} == survival ]] || fxa_e2e_main
+  if [[ -n "${external}" || ${PART} == main ]]; then
+    echo ""
+    echo "=== e2e of the accounts (${backend}${external:+, your own server}${PART:+, part ${PART}}) passed ==="
+    return 0
+  fi
+  fxa_e2e_survival
+  echo ""
+  echo "=== e2e of the accounts (${backend}${PART:+, part ${PART}}) passed ==="
+}
+
+# fxa_e2e_main: fxa_e2e's checks of the install, fail closed, the flows, the admin UI, the
+# backups, Firefox (PART=main; its names: fxa_e2e's, which calls it)
+fxa_e2e_main() {
   # the auth server only after its init containers, in compose's order, all succeeded
-  local inits
   inits=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r '.items[0].status.initContainerStatuses[]
     | "\(.name)=\(.state.terminated.exitCode // "none")"' | paste -sd' ' -) || true
   [[ "${inits}" == "keys-owner=0 wait-db=0 migrations=0 policy=0 wait-redis=0" ]] || fail "the auth pod's init containers: ${inits}"
   check "auth's init containers: ${inits}"
-  local auth="deploy/${FULL}-fxa-auth"
   # (oauth_gen_keys.js also writes openid-oldKey.json, FXA_OPENID_OLDKEYFILE)
   [[ "$(kubectl exec "${auth}" -c auth -- ls /fxa-keys | paste -sd' ' -)" == "oauth-clients.json openid-key.json openid-oldKey.json public-key.json secret-key.json vapid-keys.json" ]] \
     || fail "/fxa-keys has $(kubectl exec "${auth}" -c auth -- ls -l /fxa-keys)"
@@ -1107,7 +1168,6 @@ fxa_e2e() {
 
   # Redis' password (chart-only): auth's clients authenticate (requests that use its rate
   # limits and caches, then no NOAUTH error in Redis), a client without it is refused
-  local redis="deploy/${FULL}-fxa-redis"
   for _ in 1 2 3; do
     kubectl exec "${auth}" -c auth -- node -e "fetch('http://localhost:9000/v1/account/status', {method: 'POST', headers: {'content-type': 'application/json'},
       body: JSON.stringify({email: 'nobody@example.test'})}).then(r => process.exit(r.status < 500 ? 0 : 1), () => process.exit(1))" \
@@ -1142,10 +1202,16 @@ fxa_e2e() {
   # the client's address, the admin UI's sign-in)
   server_probe() {
     kubectl delete pod np-servers --ignore-not-found --wait=true > /dev/null
+    # (the five at once: each blocked one waits out its 5 s; printed in their order)
     kubectl run np-servers --image="${SYNC_IMAGE}" --image-pull-policy=Never --restart=Never --labels="ffs-e2e=np-servers$1" --command -- sh -c "
+      i=0
       for u in fxa-auth:9000/__heartbeat__ fxa-content:3030/__heartbeat__ fxa-profile:1111/__heartbeat__ fxa-profile:1114/img/a/00000000000000000000000000000000 fxa-pairing:8000/__heartbeat__; do
-        echo \"\${u%%/*} \$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://${FULL}-\${u})\"
-      done" > /dev/null
+        i=\$((i + 1))
+        echo \"\${u%%/*} \$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://${FULL}-\${u})\" > /tmp/np-\${i} &
+      done
+      wait
+      j=0
+      while [ \${j} -lt \${i} ]; do j=\$((j + 1)); cat /tmp/np-\${j}; done" > /dev/null
     kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/np-servers --timeout=3m > /dev/null || fail "np-servers did not complete"
     kubectl logs np-servers 2>&1 | paste -sd' ' -
   }
@@ -1164,7 +1230,7 @@ fxa_e2e() {
 
   # fail closed: a wrong password of the accounts' database stops auth at the migrations
   # (wait-db has no credentials), never Ready, out of its Service
-  local good ready
+  local good
   good=$(kubectl get secret "${SECRET}" -o jsonpath='{.data.FXA_MYSQL_PASSWORD}')
   kubectl patch secret "${SECRET}" --type merge -p "{\"data\":{\"FXA_MYSQL_PASSWORD\":\"$(printf wrong | base64)\"}}"
   kubectl delete pod -l "${POD_SELECTOR}" --wait=true
@@ -1194,8 +1260,7 @@ fxa_e2e() {
   if [[ -z "${external}" ]]; then
     # the other backend on this release: refused at render time (checkFxaDbBackend's lookup),
     # before anything is applied: auth's Deployment, fxa-db and its volume as they were
-    local other=mariadb old_claim=data claim="data-${FULL}-fxa-db-0" auth_before auth_after sts_before
-    [[ ${backend} == mysql ]] || { other=mysql; old_claim="data-mariadb"; claim="data-mariadb-${FULL}-fxa-db-0"; }
+    local auth_before auth_after sts_before
     auth_before=$(kubectl get "${auth}" -o json | jq -cS '[.metadata.generation, .spec]')
     sts_before=$(kubectl get sts "${FULL}-fxa-db" -o json | jq -cS '[.metadata.generation, .spec]')
     if out=$(helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set fxa.database.backend="${other}" --timeout 2m 2>&1); then
@@ -1234,7 +1299,6 @@ fxa_e2e() {
     local major_image=${running_image%:*}:latest
     [[ ${running_image} == *:latest ]] && major_image=${running_image%:*}:lts
     sts_before=$(kubectl get sts "${FULL}-fxa-db" -o json | jq -cS '[.metadata.generation, .spec]')
-    local revision
     revision=$(helm history "${REL}" -o json | jq -r 'last | .revision')
     if out=$(helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set fxa.database.image."${backend}"="${major_image}" --timeout 2m 2>&1); then
       fail "helm upgrade to fxa.database.image.${backend}=${major_image} accepted"
@@ -1298,7 +1362,6 @@ fxa_e2e() {
 
   # the accounts' pages and profiles: Ready (helm's --wait), after their init containers; the
   # avatars' volume 10001's, with the image's directory in it; Redis' password in their env
-  local name want
   for name in content profile; do
     [[ "$(kubectl get deploy "${FULL}-fxa-${name}" -o jsonpath='{.status.readyReplicas}' 2> /dev/null)" == 1 ]] || fail "${FULL}-fxa-${name} not Ready"
   done
@@ -1308,7 +1371,6 @@ fxa_e2e() {
     [[ "${got}" == "${name#*:}" ]] || fail "the ${name%%:*} pod's init containers: ${got}"
   done
   check "content and profile Ready; their init containers: wait-accounts=0; images-owner=0 images-seed=0 wait-auth=0"
-  local profile="deploy/${FULL}-fxa-profile" public=/fxa/packages/fxa-profile-server/var/public
   got=$(kubectl exec "${profile}" -c profile -- sh -c "stat -c %u ${public}; ls -A ${public}" | paste -sd' ' -)
   [[ "${got}" == "10001 .keep" ]] || fail "the avatars' volume: ${got} (expected 10001's, with the image's .keep)"
   # shellcheck disable=SC2016 # (the regex, literally)
@@ -1681,12 +1743,11 @@ PY
     check "a real Firefox (test_fxa_browser.py) and the pairing server (test_fxa_pairing.py) through the Ingresses: ${got}"
   fi
 
-  if [[ -n "${external}" ]]; then
-    echo ""
-    echo "=== e2e of the accounts (${backend}, your own server) passed ==="
-    return 0
-  fi
+}
 
+# fxa_e2e_survival: what must survive (PART=survival; the bundled server alone; its names:
+# fxa_e2e's, which calls it)
+fxa_e2e_survival() {
   # what must survive what follows (test_fxa_upgrade.py, before): an account with its session
   # and device, an OAuth refresh token, Sync data; FXA_OLD_LEVELS the schema levels now
   # (dbMetadata), which the admin UI shows. Its "after" (upgrade_after) runs after each step
@@ -1874,9 +1935,6 @@ PY
   [[ "$(helm history "${REL}" -o json | jq -r 'last | "\(.revision) \(.status)"')" == "${revision} deployed" ]] || fail "the refused upgrade left: $(helm history "${REL}" | tail -2)"
   ! kubectl get deploy,sts -o name | grep -q -- '-fxa-' || fail "the refused upgrade created: $(kubectl get deploy,sts -o name | grep -- '-fxa-')"
   check "existingSecret ffs-own with the Sync server's keys alone: helm upgrade --set fxa.enabled=true refused (${want#firefox-sync: }), revision ${revision} still deployed, nothing of the accounts"
-
-  echo ""
-  echo "=== e2e of the accounts (${backend}) passed ==="
 }
 
 # fxa_postgres_restore <backup Job>: SYNC_BACKEND=postgres, the Sync scope of that Job's run
@@ -2026,7 +2084,7 @@ wait_init_failed() {
     code=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r --arg c "$1" '[.items[].status.initContainerStatuses[]? | select(.name == $c)
       | .state.terminated.exitCode // .lastState.terminated.exitCode // 0] | if length == 1 then .[0] else 0 end') || code=0
     [[ "${code}" -gt 0 ]] && return 0
-    sleep 5
+    sleep 2
   done
   echo "pod status: $(pod_status)"
   return 1
@@ -2115,10 +2173,11 @@ fxa_job() {
 }
 
 # fxa_client_pod <name>: a pod of the tests (the Sync server's image) waiting for kubectl exec
+# (its sleep, PID 1, ignores SIGTERM: a grace period of 1 s, not the default 30 s, on delete)
 fxa_client_pod() {
   kubectl delete pod "$1" --ignore-not-found --wait=true > /dev/null
   jq -n --arg name "$1" --argjson spec "$(fxa_test_spec "${SYNC_IMAGE}" '["sleep", "3600"]')" \
-    '{apiVersion: "v1", kind: "Pod", metadata: {name: $name, labels: {"ffs-e2e": $name, "ffs-e2e-direct": "true"}}, spec: $spec}' | kubectl apply -f - > /dev/null
+    '{apiVersion: "v1", kind: "Pod", metadata: {name: $name, labels: {"ffs-e2e": $name, "ffs-e2e-direct": "true"}}, spec: ($spec + {terminationGracePeriodSeconds: 1})}' | kubectl apply -f - > /dev/null
   kubectl wait --for=condition=Ready "pod/$1" --timeout=3m > /dev/null || fail "the test pod $1 not Ready"
 }
 

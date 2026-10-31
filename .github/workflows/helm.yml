@@ -244,31 +244,46 @@ jobs:
   ## the chart with the self-hosted accounts on kind (tests/helm-fxa.sh), per accounts database ##
   e2e-fxa:
     needs: version
+    name: e2e-fxa (${{ matrix.config }}, ${{ matrix.part }})
     # (arm64 as in e2e)
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: read
       # this repository's accounts and syncstorage images
       packages: read
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
+        # tests/helm-fxa.sh's two parts (PART), each on a runner of its own: the whole e2e on
+        # one cluster takes about 30 minutes; main is the install's checks, fail closed, the
+        # flows, the admin UI, the backups and Firefox, survival what follows an upgrade
+        part: [main, survival]
+        config: [mysql, mariadb, mysql-extdb, mysql-sync-postgres, mysql-arm64]
+        exclude:
+          # (your own server: no survival part, as tests/helm-fxa.sh)
+          - config: mysql-extdb
+            part: survival
         include:
-          - fxa_db: mysql
+          - config: mysql
+            fxa_db: mysql
           # (the real Firefox runs once, on MySQL: about 1 GB of image and 10 minutes)
-          - fxa_db: mariadb
+          - config: mariadb
+            fxa_db: mariadb
             skip_browser: "1"
-          - fxa_db: mysql
+          - config: mysql-extdb
+            fxa_db: mysql
             external_db: "1"
             skip_browser: "1"
           # the Sync server on PostgreSQL next to the accounts (MySQL): the backups of both
           # scopes, the restores of docs/backups.md#restore-on-kubernetes for each
-          - fxa_db: mysql
+          - config: mysql-sync-postgres
+            fxa_db: mysql
             sync_backend: postgres
             skip_browser: "1"
           # once on arm64, with Firefox (tests/browser builds for arm64 too)
-          - fxa_db: mysql
+          - config: mysql-arm64
+            fxa_db: mysql
             arch: arm64
     steps:
       - name: Checkout
@@ -278,9 +293,12 @@ jobs:
 
       - name: Free disk space
         # the accounts image (about 5 GB) in docker and again in the kind node: the e2e
-        # checks for 15 GB plus the Firefox image before it creates the cluster
+        # checks for 15 GB plus the Firefox image. The runners have several times that now,
+        # and removing these takes up to 3 minutes: only when there is less than 40 GB
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          if (( $(df -BG --output=avail / | tail -1 | tr -dc 0-9) < 40 )); then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          fi
           df -h /
 
       - name: Set up Helm
@@ -310,8 +328,9 @@ jobs:
           fi
           sudo grep mysqld /sys/kernel/security/apparmor/profiles && exit 1 || echo "no mysqld profile loaded"
 
-      - name: The accounts on kind (${{ matrix.fxa_db }}${{ matrix.external_db && ', your own database server' || '' }}${{ matrix.sync_backend && format(', Sync on {0}', matrix.sync_backend) || '' }}${{ matrix.arch && format(', {0}', matrix.arch) || '' }})
+      - name: The accounts on kind (${{ matrix.fxa_db }}${{ matrix.external_db && ', your own database server' || '' }}${{ matrix.sync_backend && format(', Sync on {0}', matrix.sync_backend) || '' }}${{ matrix.arch && format(', {0}', matrix.arch) || '' }}, part ${{ matrix.part }})
         env:
+          PART: ${{ matrix.part }}
           FXA_DB: ${{ matrix.fxa_db }}
           EXTERNAL_DB: ${{ matrix.external_db }}
           SYNC_BACKEND: ${{ matrix.sync_backend }}

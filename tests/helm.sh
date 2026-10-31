@@ -965,7 +965,7 @@ e2e() {
 
   echo "=== e2e on kind (${backend}${EXTERNAL:+, your own database server}) ==="
   kind delete cluster --name "${CLUSTER}" > /dev/null 2>&1 || true
-  trap 'rc=$?; if ((rc)); then diagnostics; fi; kind delete cluster --name "${CLUSTER}"' EXIT
+  trap 'rc=$?; if ((rc)); then diagnostics; fi; kind_teardown' EXIT
   kind create cluster --name "${CLUSTER}" --wait 120s
   kubectl config use-context "kind-${CLUSTER}" > /dev/null
   # the namespace at PodSecurity baseline (docs/install/helm.md#requirements), enforced: every pod of the

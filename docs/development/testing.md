@@ -237,7 +237,9 @@ The unit tests (`cd admin && go test ./...`) cover the backups' age and failures
 
     `REPOSITORY`, `TAG`, `FXA_IMAGE` and `FXA_VERSION` choose the images, as in `tests/e2e-fxa.sh`. The accounts database is `mysql:8` or `mariadb:11` when the accounts image lacks the patch for `lts` ([Upstream patches](../reference/images.md#upstream-patches)); `FXA_MYSQL_IMAGE` and `FXA_MARIADB_IMAGE` override that.
 
-[helm.yml](/.github/workflows/helm.yml) runs `fxa_lint` through `tests/helm.sh lint`, with the whole history for `git archive`, and the e2e (`e2e-fxa`) on MySQL with Firefox, MariaDB, your own MySQL server, MySQL with the Sync server on PostgreSQL, and MySQL with Firefox on arm64.
+    `PART=main` runs the steps after the install up to Firefox, `PART=survival` the ones from `test_fxa_upgrade.py`'s before phase on (the upgrade, the refused policy, a new Redis pod, `helm uninstall` and `install`, the keys in `fxa.keys.existingSecret`, `fxa.volumeOwnerInit=false`, an `existingSecret` without the accounts' keys). Each part sets up its own cluster and install; empty runs both on one cluster.
+
+[helm.yml](/.github/workflows/helm.yml) runs `fxa_lint` through `tests/helm.sh lint`, with the whole history for `git archive`, and the e2e (`e2e-fxa`) on MySQL with Firefox, MariaDB, your own MySQL server, MySQL with the Sync server on PostgreSQL, and MySQL with Firefox on arm64, each as two jobs, `PART=main` and `PART=survival` (your own server has no survival part).
 
 ## Docs that tests read
 
