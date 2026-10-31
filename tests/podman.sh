@@ -1159,8 +1159,12 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   check "$?" 0 "systemctl --user start firefox-sync-syncstorage.service (your own server)"
   check "$(hb)" 200 "/__heartbeat__ (quadlets, your own server)"
   # (each line twice in the journal: the unit's and the container's)
-  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ setup migrations 001.* applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: every user, grant and database of the setup migrations 001.* is there, recorded as their baseline')")" -ge 1 ] && echo 1)" 1 \
-    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied the setup migrations as ffs_bootstrap" || echo "found every user and grant of database-setup.sql: the baseline")"
+  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ setup migrations 001.* applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: setup version 001 .*every user, grant and database of database-setup.sql is there')")" -ge 1 ] && echo 1)" 1 \
+    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied the setup migrations as ffs_bootstrap" || echo "found every user and grant of database-setup.sql")"
+  # the record: database-setup.sql of prepare_environment.sh has the INSERTs (manual), or the bootstrap ran them
+  if [ "${SYNC_DB}" = postgres ]; then ext_record=$(extdb_admin -d syncserver -c "SELECT number || ' ' || how FROM ffs_setup_migrations WHERE scope = 'sync'" < /dev/null)
+  else ext_record=$(extdb_admin -e "SELECT CONCAT(number, ' ', how) FROM $(env_of SYNC_TOKENSERVER_DB_NAME).ffs_setup_migrations WHERE scope = 'sync'" < /dev/null); fi
+  check "${ext_record}" "1 $([ -n "${DB_BOOTSTRAP:-}" ] && echo bootstrap || echo manual)" "the setup migrations recorded on your server ($([ -n "${DB_BOOTSTRAP:-}" ] && echo "by the bootstrap" || echo "by the INSERTs of database-setup.sql, manual"))"
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(extdb_admin -d syncserver -c "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'before_insert_user'" < /dev/null) $(extdb_admin -d syncserver -c "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'users' AND relnamespace = 'public'::regnamespace" < /dev/null)" \
       "1 syncserver" "SYNC_MAX_USERS trigger on your server, the tables of SYNC_POSTGRES_USER (no superuser)"
