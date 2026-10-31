@@ -469,11 +469,11 @@ check "$(env_value FXA_DB_CONTAINERS) $(env_value FXA_MYSQL_HOST):$(env_value FX
 for f in database-setup.sql database-setup-fxa.sql; do
   check "$(stat -c %a "${SETUP}/${f}" 2> /dev/null) $(grep -c '@[A-Z_]*@' "${SETUP}/${f}")" "600 0" "${f}: for this user only, filled in"
 done
-check "$(grep -c "'tokenserver'@'%' IDENTIFIED BY '$(env_value SYNC_TOKENSERVER_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -c 'ON `sync_storage`.\* TO' "${SETUP}/database-setup.sql")" \
+check "$(grep -c "'tokenserver'@'%' IDENTIFIED BY '$(env_value SYNC_TOKENSERVER_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -c 'ON `sync\\_storage`.\* TO' "${SETUP}/database-setup.sql")" \
   "2 3" "database-setup.sql with the generated password (created, set again) and the names given"
 # the admin UI's own users and database, out of the Sync users' reach (the storage: the names
 # given; with the storage on another server, the commented statements for it)
-check "$(grep -c "'ffs_admin_\(ui\|sync\)'@'%' IDENTIFIED BY '$(env_value ADMIN_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -cE "^GRANT (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, LOCK TABLES ON \`ffs_admin\`\.\* TO 'ffs_admin_ui'|SELECT, EXECUTE ON \`tokenserver\`\.\* TO 'ffs_admin_sync'|SELECT, DELETE ON \`sync_storage\`\.\* TO 'ffs_admin_sync')@'%';$" "${SETUP}/database-setup.sql")" \
+check "$(grep -c "'ffs_admin_\(ui\|sync\)'@'%' IDENTIFIED BY '$(env_value ADMIN_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -cE "^GRANT (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, LOCK TABLES ON \`ffs\\\\_admin\`\.\* TO 'ffs_admin_ui'|SELECT, EXECUTE ON \`tokenserver\`\.\* TO 'ffs_admin_sync'|SELECT, DELETE ON \`sync\\\\_storage\`\.\* TO 'ffs_admin_sync')@'%';$" "${SETUP}/database-setup.sql")" \
   "6 3" "database-setup.sql with the admin UI's users (its database; the Sync data) and its database"
 # the accounts' user: the server's default (caching_sha2_password) with mozilla/fxa#21554 in the
 # image, else mysql_native_password, and the server it needs said

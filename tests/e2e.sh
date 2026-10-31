@@ -953,7 +953,8 @@ if [ -n "${EXTDB}" ]; then
     echo "${grants}" | sed 's/^/  /'
     check "$(echo "${grants}" | grep -cE 'ALL PRIVILEGES|SUPER')" 0 "no ALL PRIVILEGES or SUPER for the Sync users"
     check "$(echo "${grants}" | grep -c "${ADMIN_DB_NAME}")" 0 "no grant for the Sync users on the admin UI's database"
-    admin_grants=$(echo "SHOW GRANTS FOR '${ADMIN_DB_USER}'@'%'; SHOW GRANTS FOR '${ADMIN_DB_SYNC_USER}'@'%';" | extdb_admin)
+    # database names with _ escaped (\_, printed \\_ by the client) read as written
+    admin_grants=$(echo "SHOW GRANTS FOR '${ADMIN_DB_USER}'@'%'; SHOW GRANTS FOR '${ADMIN_DB_SYNC_USER}'@'%';" | extdb_admin | sed 's/\\*_/_/g')
     echo "${admin_grants}" | sed 's/^/  /'
     check "$(echo "${admin_grants}" | grep -vc '^GRANT USAGE ON \*\.\*') $(echo "${admin_grants}" | grep -cE 'ALL PRIVILEGES|SUPER|GRANT OPTION')" "3 0" \
       "the admin UI's users: its database; SELECT and EXECUTE on the tokenserver, SELECT and DELETE on the storage"
