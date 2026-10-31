@@ -238,7 +238,7 @@ It runs the SQL as `prepare_environment.sh` writes it: users with the host part 
 **The trade-off.** It is opt-in, and the default (the check alone, the SQL run by you) is the safest. With it the stack holds the password of an account that can manage other database accounts. Its rights on databases are limited to the stack's own, but its rights on accounts are not:
 
 - MariaDB: `CREATE USER` can change, rename or drop any account of the server, `root` too. MariaDB has nothing that protects an account from it: whoever gets this password can make themselves the server's administrator. The bootstrap account is an administrator's equivalent there. The stack allows it, and says so in a warning at every start.
-- MySQL: the same, except for the accounts with `SYSTEM_USER` (8.0.16 and later). The stack refuses the bootstrap unless every account of the server with administrator privileges (`SUPER`, `CREATE USER` or `GRANT OPTION` on the whole server, and `root`) holds `SYSTEM_USER`, and names those that lack it: `GRANT SYSTEM_USER ON *.* TO ...` as the server's administrator. `root` has it by default. The bootstrap account itself must not have it. Before 8.0.16 it is refused.
+- MySQL: the same, except for the accounts with `SYSTEM_USER` (8.0.16 and later). The stack refuses the bootstrap unless every administrator of the server holds `SYSTEM_USER`, and names those that lack it: `GRANT SYSTEM_USER ON *.* TO ...` as the server's administrator. An administrator here: any privilege on the whole server beyond `USAGE` (a dynamic one such as `BACKUP_ADMIN` too), or any grant on the `mysql` schema, itself or through a role. `root` has `SYSTEM_USER` by default; the bootstrap account itself must not have it. The bootstrap account can still change or drop every other account without `SYSTEM_USER`, those of other applications on the server too, and the stack says so in a warning at every start. Before 8.0.16 it is refused.
 - PostgreSQL: 16 or later only. There `CREATEROLE` reaches only the roles it created, or was given `ADMIN OPTION` on. Before 16 it reaches every role but the superusers, the predefined ones such as `pg_read_server_files` too: close to a superuser, so the stack refuses the bootstrap there and keeps the check alone.
 
 So use it with a database server, or an instance, that the stack has to itself, and hold that password no longer than you need it:
@@ -265,9 +265,15 @@ MariaDB and MySQL, for Sync:
 CREATE USER IF NOT EXISTS 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 ALTER USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
 GRANT CREATE USER ON *.* TO 'ffs_bootstrap'@'%';
-GRANT SELECT (User, Host, Super_priv, Create_user_priv, Grant_priv) ON mysql.user TO 'ffs_bootstrap'@'%';
--- MySQL only:
+GRANT SELECT (User, Host) ON mysql.user TO 'ffs_bootstrap'@'%';
+-- MySQL only: who is an administrator (the privilege columns of mysql.user, the privilege tables)
+GRANT SELECT (Select_priv, Insert_priv, ..., Drop_role_priv) ON mysql.user TO 'ffs_bootstrap'@'%';
 GRANT SELECT ON mysql.global_grants TO 'ffs_bootstrap'@'%';
+GRANT SELECT ON mysql.role_edges TO 'ffs_bootstrap'@'%';
+GRANT SELECT ON mysql.db TO 'ffs_bootstrap'@'%';
+GRANT SELECT ON mysql.tables_priv TO 'ffs_bootstrap'@'%';
+GRANT SELECT ON mysql.columns_priv TO 'ffs_bootstrap'@'%';
+GRANT SELECT ON mysql.procs_priv TO 'ffs_bootstrap'@'%';
 GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
@@ -276,7 +282,7 @@ GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
 For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa_oauth`, `fxa_profile`, `pushbox` and `ffs` instead of the three above.
 
 - `CREATE USER` creates the stack's users, and sets their passwords again (`ALTER USER`).
-- `SELECT (User, Host, ...) ON mysql.user`: which accounts of the stack's names exist, on which hosts, and which accounts are administrators. Nothing else of `mysql.user`, not the passwords' hashes. On MySQL also `mysql.global_grants` (who holds `SYSTEM_USER`, no secret there). `prepare_environment.sh` writes the MySQL line for MySQL only.
+- `SELECT (User, Host) ON mysql.user`: which accounts of the stack's names exist, on which hosts. Nothing else of `mysql.user`, not the passwords' hashes. On MySQL also its privilege columns and the privilege tables (`global_grants`, `role_edges`, `db`, `tables_priv`, `columns_priv`, `procs_priv`, which hold no secret): who is an administrator, and holds `SYSTEM_USER`. `prepare_environment.sh` writes those lines (the file's `-- MySQL:` lines) for MySQL only; the file has every column.
 - `ALL PRIVILEGES ... WITH GRANT OPTION` on each database creates it, and gives the stack's users their grants there: a user can only grant what it has, with `GRANT OPTION`. The SQL grants `CREATE ROUTINE`, `TRIGGER`, `EXECUTE` and more; `ALL PRIVILEGES` covers them, `EVENT` too.
 - Nothing more. The procedures, triggers and events are created later by the init container and `fxa-policy`, as the stack's own users. The server still needs `log_bin_trust_function_creators=ON` for them with binary logging, see [Server requirements](#server-requirements); `SUPER` is not needed.
 

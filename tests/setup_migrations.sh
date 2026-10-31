@@ -7,7 +7,8 @@
 #   - the names NNN-name.sql, numbered from 001 without a gap in each scope; the accounts' on
 #     MySQL and on MariaDB (fxa-mysql, fxa-mariadb) the same numbers and names;
 #   - the copies of the manifest (the init images', the admin UI's) identical to it;
-#   - the chart's copies of the files (charts/firefox-sync/files/db/) identical to them.
+#   - the chart's copies of the files (charts/firefox-sync/files/db/) and of db/db-setup.sh
+#     identical to them.
 #
 # Usage: tests/setup_migrations.sh            (bash 3.2, macOS, too; no server, seconds)
 #        tests/setup_migrations.sh --update   the lines of the files BASE does not have written
@@ -90,6 +91,8 @@ done
 for copy in ${COPIES}; do
   cmp -s "${MANIFEST}" "${CODE}/${copy}" || bad "${copy} is not db/setup-manifest (cp db/setup-manifest ${copy}, or --update)"
 done
+# (and the chart's db-setup.sh, which tests/helm_parity.py checks too)
+cmp -s "${DB}/db-setup.sh" "${CODE}/charts/firefox-sync/files/db-setup.sh" || bad "charts/firefox-sync/files/db-setup.sh is not db/db-setup.sh (cp db/db-setup.sh charts/firefox-sync/files/)"
 for f in $(files); do
   cmp -s "${DB}/${f}" "${CODE}/charts/firefox-sync/files/db/${f}" || bad "charts/firefox-sync/files/db/${f} is not db/${f} (the chart's copy)"
 done

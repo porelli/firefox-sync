@@ -208,15 +208,26 @@ for ENGINE in "$@"; do
     admin -e "REVOKE GRANT OPTION ON *.* FROM 'ffs_bootstrap'@'%'" < /dev/null
     if [ "${ENGINE}" = mysql ]; then
       # MySQL: CREATE USER reaches every account without SYSTEM_USER: every administrator of the
-      # server must hold it (root does), or the bootstrap is refused, naming them
-      printf '%s\n' "CREATE USER 'ffs_dba'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_dba'@'%';" | admin > /dev/null
+      # server (any privilege on the whole server or on the mysql schema, also through a role)
+      # must hold it (root does), or the bootstrap is refused, naming them; an application's
+      # account with everything on its own database is no administrator
+      admin_case() { # <what> <SQL that makes ffs_dba one>
+        printf '%s\n' "CREATE USER 'ffs_dba'@'%' IDENTIFIED BY '${THEIRS}';" "$2" | admin > /dev/null
+        db_setup sync -- "${BOOT[@]}"
+        check "$? $(saidF "lack SYSTEM_USER: 'ffs_dba'@'%'") $(as ffs_dba "${THEIRS}")" "1 1 1" \
+          "mysql: an account with $1 and without SYSTEM_USER: the bootstrap refused, naming it, the account untouched"
+        printf '%s\n' "DROP USER 'ffs_dba'@'%';" "DROP ROLE IF EXISTS ffs_super;" | admin > /dev/null
+      }
+      admin_case "CREATE USER on *.*" "GRANT CREATE USER ON *.* TO 'ffs_dba'@'%';"
+      admin_case "a dynamic privilege only (BACKUP_ADMIN)" "GRANT BACKUP_ADMIN ON *.* TO 'ffs_dba'@'%';"
+      admin_case "SELECT on mysql.user" "GRANT SELECT ON mysql.user TO 'ffs_dba'@'%';"
+      admin_case "a role with SUPER" "CREATE ROLE ffs_super; GRANT SUPER ON *.* TO ffs_super; GRANT ffs_super TO 'ffs_dba'@'%';"
+      printf '%s\n' "CREATE USER 'ffs_dba'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_dba'@'%';" "GRANT SYSTEM_USER ON *.* TO 'ffs_dba'@'%';" \
+        "CREATE DATABASE other_app;" "CREATE USER 'other_app'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT ALL PRIVILEGES ON other_app.* TO 'other_app'@'%';" | admin > /dev/null
       db_setup sync -- "${BOOT[@]}"
-      check "$? $(saidF "with administrator privileges (SUPER, CREATE USER or GRANT OPTION on the whole server, or root) lack SYSTEM_USER: 'ffs_dba'@'%'") $(as ffs_dba "${THEIRS}")" "1 1 1" \
-        "mysql: an administrator account without SYSTEM_USER: the bootstrap refused, naming it, the account untouched"
-      admin -e "GRANT SYSTEM_USER ON *.* TO 'ffs_dba'@'%'" < /dev/null
-      db_setup sync -- "${BOOT[@]}"
-      check "$? $(said 'lack SYSTEM_USER')" "0 0" "mysql: with SYSTEM_USER: the bootstrap goes on"
-      admin -e "DROP USER 'ffs_dba'@'%'" < /dev/null
+      check "$? $(said 'lack SYSTEM_USER') $(said 'WARNING: MySQL: ffs_bootstrap (CREATE USER) can change or drop the accounts without SYSTEM_USER')" "0 0 1" \
+        "mysql: the administrator with SYSTEM_USER, an application's account with ALL on its database: the bootstrap goes on, with a warning"
+      printf '%s\n' "DROP USER 'ffs_dba'@'%';" "DROP USER 'other_app'@'%';" "DROP DATABASE other_app;" | admin > /dev/null
       # (and back to an empty server for the normal path)
       printf '%s\n' "DROP DATABASE tokenserver;" "DROP DATABASE syncstorage;" "DROP DATABASE ffs_admin;" "DROP USER 'tokenserver'@'%', 'syncstorage'@'%', 'ffs_admin_ui'@'%', 'ffs_admin_sync'@'%';" | admin > /dev/null
     fi
