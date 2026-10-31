@@ -316,7 +316,7 @@ for engine in mariadb mysql postgres fxa; do
   (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_bootstrap_sql "${engine}")
   out=${WORK}/sql/database-bootstrap$([ "${engine}" = fxa ] && echo -fxa).sql
   check "$(grep -c '@[A-Z_]*@' "${out}") $(grep -v '^--' "${out}" | grep -c "ffs_$([ "${engine}" = fxa ] && echo fxa_)boot") $(grep -c "$([ "${engine}" = fxa ] && echo f00t || echo b00t)" "${out}") $(mode "${out}")" \
-    "0 $(case ${engine} in postgres) echo 3 ;; fxa) echo 9 ;; mysql) echo 15 ;; *) echo 7 ;; esac) $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
+    "0 $(case ${engine} in postgres) echo 3 ;; fxa) echo 17 ;; mysql) echo 15 ;; *) echo 7 ;; esac) $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
     "render_bootstrap_sql ${engine}: the account of .env and its password, every placeholder filled, this user's only"
 done
 (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mysql native) || echo "render_fxa_sql mysql native failed"
