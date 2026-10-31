@@ -3,6 +3,8 @@
 # is there too.
 
 services:
+  fxa-db-bootstrap:
+    networks: [default, extdb]
   fxa-migrations:
     networks: [default, extdb]
   fxa-policy:

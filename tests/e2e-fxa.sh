@@ -35,7 +35,12 @@
 #                    (FXA_MARIADB_IMAGE with FXA_DB=mariadb) (SYNC_DB_CONTAINERS=0, FXA_DB_CONTAINERS=0,
 #                    docs/databases.md#your-own-server), container EXTDB, created with only the grants of
 #                    db/mysql/; kept with KEEP, reused by RERUN. fxa: only the accounts
-#                    there, with one user for the accounts and the sign-up policy
+#                    there, with one user for the accounts and the sign-up policy. Its
+#                    fxa-db-bootstrap checks them: a grant revoked stops it, naming the statement
+#   DB_BOOTSTRAP     with EXTERNAL_DB, set to 1: the server has only the bootstrap accounts of
+#                    db/mysql/bootstrap.sql and fxa-bootstrap.sql (docs/databases.md#the-bootstrap-account),
+#                    SYNC_DB_BOOTSTRAP_USER and FXA_DB_BOOTSTRAP_USER in .env: db-bootstrap and
+#                    fxa-db-bootstrap create everything, and give a revoked grant back
 #   SLOT             runs next to each other on one host (tests/slot.sh): 0 (default) project
 #                    ffs-e2e-fxa, port 28653 and the other ports of .env-example; 1, 2...: -s<SLOT>
 #                    after the project, 1000 * SLOT added to 28653, the others at 28700-28706 + 1000 * SLOT
@@ -170,6 +175,14 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   fi
   # the server's administrator, for the checks below
   echo "EXTDB_ROOT=$(rnd)" >> "${ENV_FILE}"
+  # DB_BOOTSTRAP=1: the stack applies the SQL itself, as the bootstrap accounts
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    sed -i -e "s|^FXA_DB_BOOTSTRAP_USER=.*|FXA_DB_BOOTSTRAP_USER=ffs_fxa_bootstrap|" -e "s|^FXA_DB_BOOTSTRAP_PASSWORD=.*|FXA_DB_BOOTSTRAP_PASSWORD=$(rnd)|" "${ENV_FILE}"
+    [ "${EXTERNAL_DB}" = fxa ] || sed -i -e "s|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=ffs_bootstrap|" \
+      -e "s|^SYNC_DB_BOOTSTRAP_PASSWORD=.*|SYNC_DB_BOOTSTRAP_PASSWORD=$(rnd)|" "${ENV_FILE}"
+  fi
+elif [ -n "${DB_BOOTSTRAP:-}" ]; then
+  echo "DB_BOOTSTRAP=1 is for EXTERNAL_DB"; exit 2
 fi
 # the access control in front of the public hosts (docs/access-control.md), in Caddy:
 # tests/caddy/<FFS_ACCESS>/
@@ -330,7 +343,7 @@ SETUP_MYSQL="${SETUP_MYSQL_IMAGE} [${SETUP_MYSQL_ARGS}]"
 check "$(sed -n 's/^FXA_MYSQL_IMAGE=//p' "${SETUP}/.env") [$(sed -n 's/^FXA_MYSQL_ARGS=//p' "${SETUP}/.env")] $(grep -cE 'does not have mozilla/fxa#21554|could not read the labels of' "${WORK}/setup.log")" \
   "${SETUP_MYSQL} $([ -n "${SETUP_MYSQL2}" ] && echo 0 || echo 1)" "the accounts on ${SETUP_MYSQL_IMAGE} for ${setup_image} ($([ -n "${SETUP_MYSQL2}" ] && echo with || echo without) mozilla/fxa#21554)"
 check "$(sed -n '/SELF-HOSTED MOZILLA ACCOUNTS/,$p' "${SETUP}/.env" | grep -v '^#' | grep -c REPLACE)" 0 "no placeholders left for the accounts"
-check "$(cd "${SETUP}" && docker compose config --services 2> /dev/null | grep -c '^fxa-')" 11 "compose stack with the accounts services (and the optional pairing server)"
+check "$(cd "${SETUP}" && docker compose config --services 2> /dev/null | grep -c '^fxa-')" 12 "compose stack with the accounts services (and the optional pairing server, fxa-db-bootstrap)"
 check "$(grep -c '^COMPOSE_PROFILES=admin$' "${SETUP}/.env")" 1 "admin UI enabled"
 check "$(grep -c '^SYNC_MAX_USERS=initial:2$' "${SETUP}/.env")" 1 "max users managed in the admin UI (SYNC_MAX_USERS=initial:2)"
 check "$(grep -c '^FXA_SIGNUPS=allowlist$' "${SETUP}/.env") $(grep -c '^FXA_SIGNUP_ALLOWLIST=alice@example.org,@example.net$' "${SETUP}/.env")" "1 1" "sign-up allowlist"
@@ -524,6 +537,22 @@ printf '%s\n' "${external_answers[@]}" mariadb | (cd "${SETUP}" && ./prepare_env
 check "$?" 0 "prepare_environment.sh with your own MariaDB server for the accounts"
 check "$(grep -c "'fxa'@'%' IDENTIFIED VIA mysql_native_password USING PASSWORD('$(env_value FXA_MYSQL_PASSWORD)')" "${SETUP}/database-setup-fxa.sql") $(grep -c 'mariadb -h db.example.org -P 3307 -u root -p < database-setup-fxa.sql' "${WORK}/setup-external-mariadb.log")" \
   "2 1" "database-setup-fxa.sql for MariaDB"
+# the stack applies the SQL itself (docs/databases.md#let-the-stack-apply-them): the questions
+# after the last one of above (the accounts' server, max accounts, the security history, the
+# alerts, the backups, the pairing server), for Sync (the account's name by default, a new
+# password) and for the accounts (a name given)
+rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
+printf '%s\n' "${external_answers[@]}" "" "" "" "" "" "" y "" "" y fxa_boot "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap.log" 2>&1
+check "$?" 0 "prepare_environment.sh with your own servers, the stack applying their SQL"
+check "$(env_value SYNC_DB_BOOTSTRAP_USER) $(env_value SYNC_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$') $(env_value FXA_DB_BOOTSTRAP_USER) $(env_value FXA_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$')" \
+  "ffs_bootstrap 1 fxa_boot 1" "the bootstrap accounts and their generated passwords in .env"
+check "$(stat -c %a "${SETUP}/database-bootstrap.sql") $(grep -c '@[A-Z_]*@' "${SETUP}/database-bootstrap.sql") $(grep -c "^GRANT ALL PRIVILEGES ON \`\(tokenserver\|sync_storage\|ffs_admin\)\`\.\* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;$" "${SETUP}/database-bootstrap.sql") $(grep -c "IDENTIFIED BY '$(env_value FXA_DB_BOOTSTRAP_PASSWORD)'" "${SETUP}/database-bootstrap-fxa.sql")" \
+  "600 0 3 2" "database-bootstrap.sql (the Sync databases of .env) and database-bootstrap-fxa.sql, for this user only"
+check "$(grep -c 'mysql -h db.example.org -P 3306 -u root -p < database-bootstrap.sql' "${WORK}/setup-bootstrap.log") $(grep -c 'mysql -h db.example.org -P 3307 -u root -p < database-bootstrap-fxa.sql' "${WORK}/setup-bootstrap.log") $(grep -c 'then the stack applies database-setup' "${WORK}/setup-bootstrap.log")" \
+  "1 1 2" "prepare_environment.sh says to create the accounts once, then the stack applies the SQL"
+check "$(setup_compose config | sed -n '/^  db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +SYNC_DB_BOOTSTRAP_USER: ffs_bootstrap$') $(setup_compose config | sed -n '/^  fxa-db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +FXA_DB_BOOTSTRAP_USER: fxa_boot$')" \
+  "1 1" "db-bootstrap and fxa-db-bootstrap get their accounts"
+rm -f "${SETUP}"/database-bootstrap*.sql
 # Sync on your own PostgreSQL server (host, port, database, user), the accounts built in
 answers[4]=postgres
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql
@@ -532,9 +561,9 @@ check "$?" 0 "prepare_environment.sh with your own PostgreSQL server"
 check "$(env_value SYNC_DB_CONTAINERS) $(env_value SYNC_POSTGRES_HOST):$(env_value SYNC_POSTGRES_PORT) $(env_value SYNC_POSTGRES_NAME) $(env_value SYNC_POSTGRES_USER) $(env_value FXA_DB_CONTAINERS)" \
   "0 db.example.org:5432 syncserver syncserver 1" "Sync on your own PostgreSQL server in .env"
 check "$(stat -c %a "${SETUP}/database-setup.sql" 2> /dev/null) $(grep -c '@[A-Z_]*@' "${SETUP}/database-setup.sql") $(grep -c "ROLE syncserver .*PASSWORD '$(env_value SYNC_POSTGRES_PASSWORD)'" "${SETUP}/database-setup.sql") [$(ls "${SETUP}/database-setup-fxa.sql" 2> /dev/null)]" \
-  "600 0 2 []" "database-setup.sql for PostgreSQL with the generated password, none for the built-in accounts"
-check "$(grep -c "ROLE ffs_admin_\(ui\|sync\) .*PASSWORD '$(env_value ADMIN_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -cxE '(CREATE DATABASE ffs_admin OWNER ffs_admin_ui TEMPLATE template0 ALLOW_CONNECTIONS false|REVOKE ALL ON DATABASE ffs_admin FROM PUBLIC|ALTER DATABASE ffs_admin ALLOW_CONNECTIONS true|REVOKE CREATE ON SCHEMA public FROM PUBLIC);' "${SETUP}/database-setup.sql")" \
-  "4 4" "database-setup.sql for PostgreSQL with the admin UI's roles and its own database, from template0"
+  "600 0 1 []" "database-setup.sql for PostgreSQL with the generated password (set again at every run), none for the built-in accounts"
+check "$(grep -c "ROLE ffs_admin_\(ui\|sync\) .*PASSWORD '$(env_value ADMIN_DB_PASSWORD)'" "${SETUP}/database-setup.sql") $(grep -cE "^(SELECT 'CREATE DATABASE ffs_admin OWNER ffs_admin_ui TEMPLATE template0 ALLOW_CONNECTIONS false' WHERE NOT EXISTS |(REVOKE ALL ON DATABASE ffs_admin FROM PUBLIC|ALTER DATABASE ffs_admin ALLOW_CONNECTIONS true|REVOKE CREATE ON SCHEMA public FROM PUBLIC);$)" "${SETUP}/database-setup.sql")" \
+  "2 4" "database-setup.sql for PostgreSQL with the admin UI's roles and its own database, from template0 (created when missing)"
 check "$(grep -c 'psql -h db.example.org -p 5432 -U postgres -f database-setup.sql' "${WORK}/setup-external-postgres.log")" 1 "prepare_environment.sh says how to run the SQL (PostgreSQL)"
 check "$(setup_compose config | sed -n '/^  postgres_db:/,/^  [a-z]/p' | grep -cE '^ +replicas: 0$') $(setup_compose config | sed -n '/^  syncstorage:/,/^  [a-z]/p' | grep -cE '^ +SYNC_(SYNCSTORAGE|TOKENSERVER)__DATABASE_URL: postgres(ql)?://syncserver:[A-Za-z0-9]+@db\.example\.org:5432/syncserver$')" \
   "1 2" "no postgres_db container, the Sync server connects to your server"
@@ -709,8 +738,20 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
         -e "s|@FXA_POLICY_USER@|${FXA_MYSQL_POLICY_USER}|g" -e "s|@FXA_POLICY_PASSWORD@|${FXA_MYSQL_POLICY_PASSWORD}|g" \
         -e "s|@FXA_ADMIN_PASSWORD@|${FXA_ADMIN_DB_PASSWORD}|g"; } > "${WORK}/database-setup.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-setup.sql")" 0 "external database: SQL templates filled in"
-  extdb_admin < "${WORK}/database-setup.sql"
-  check "$?" 0 "external database server with the users of db/mysql/"
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    # only the accounts of docs/databases.md#the-bootstrap-account: the stack does the rest
+    { [ "${SYNC_DB_CONTAINERS:-1}" = 0 ] && sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
+          -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
+          -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" "${CODE}/db/mysql/bootstrap.sql"
+      sed -e "s|@BOOTSTRAP_USER@|${FXA_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${FXA_DB_BOOTSTRAP_PASSWORD}|g" "${CODE}/db/mysql/fxa-bootstrap.sql"; } \
+      > "${WORK}/database-bootstrap.sql"
+    check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap accounts' SQL filled in"
+    extdb_admin < "${WORK}/database-bootstrap.sql"
+    check "$?" 0 "external database server with only the bootstrap accounts of db/mysql/bootstrap.sql and fxa-bootstrap.sql"
+  else
+    extdb_admin < "${WORK}/database-setup.sql"
+    check "$?" 0 "external database server with the users of db/mysql/"
+  fi
 fi
 dc up -d > "${WORK}/up.log" 2>&1 || { echo "FAIL: compose up"; grep -iE "error|fail" "${WORK}/up.log" | tail -10; }
 echo "== waiting for FxA (slow under emulation)"
@@ -994,6 +1035,27 @@ if [ -z "${SKIP_BROWSER:-}" ] && runs browser; then
   docker cp "${browser}:/tmp/ffs-browser-artifacts/." "${pages}" > /dev/null 2>&1  # (none when it passed)
   docker rm -f "${browser}" > /dev/null 2>&1
   rmdir "${pages}" 2> /dev/null || echo "the failed pages: ${pages} ($(ls "${pages}" | tr '\n' ' '))"
+fi
+if [ "${FXA_DB_CONTAINERS:-1}" = 0 ] && [ -z "${RERUN:-}" ]; then
+  # a release that needs a grant your server lacks (docs/databases.md#when-a-release-needs-new-users-or-grants):
+  # one of the sign-up policy's, revoked; fxa-db-bootstrap run again, as at the next start
+  grantee=${FXA_MYSQL_POLICY_USER:-${FXA_MYSQL_USER}}
+  echo "== a release that needs a grant the server lacks (TRIGGER on fxa for ${grantee}): $([ -n "${DB_BOOTSTRAP:-}" ] && echo "fxa-db-bootstrap gives it back" || echo "fxa-db-bootstrap stops, naming it")"
+  extdb_admin -e "REVOKE TRIGGER ON \`fxa\`.* FROM '${grantee}'@'%';" < /dev/null
+  trigger_grant() { extdb_admin -e "SELECT COUNT(*) FROM mysql.db WHERE Db = 'fxa' AND User = '${grantee}' AND Trigger_priv = 'Y';" < /dev/null; }
+  check "$(trigger_grant)" 0 "TRIGGER on fxa revoked from ${grantee}"
+  dc up -d --no-deps --force-recreate fxa-db-bootstrap > /dev/null 2>&1
+  bootstrap_rc=$(timeout 600 docker wait "$(dc ps -a -q fxa-db-bootstrap)")
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    check "${bootstrap_rc} $(trigger_grant) $(dc logs fxa-db-bootstrap 2>&1 | grep -c "✓ database-setup-fxa.sql applied as ${FXA_DB_BOOTSTRAP_USER}")" "0 1 1" \
+      "fxa-db-bootstrap applied database-setup-fxa.sql as ${FXA_DB_BOOTSTRAP_USER} (the account of db/mysql/fxa-bootstrap.sql only): the grant back"
+  else
+    check "${bootstrap_rc} $(dc logs fxa-db-bootstrap 2>&1 | grep -c "'${grantee}' lacks TRIGGER on \`fxa\`: GRANT SELECT, UPDATE, DELETE, TRIGGER, EXECUTE ON \`fxa\`.\* TO '${grantee}'@'%' WITH GRANT OPTION;") $(dc logs fxa-db-bootstrap 2>&1 | grep -c 'Run database-setup-fxa.sql again')" \
+      "1 1 1" "fxa-db-bootstrap stops, naming the missing grant and database-setup-fxa.sql to run again"
+    extdb_admin < "${WORK}/database-setup.sql" > /dev/null
+    dc up -d --no-deps --force-recreate fxa-db-bootstrap > /dev/null 2>&1
+    check "$(timeout 600 docker wait "$(dc ps -a -q fxa-db-bootstrap)") $(trigger_grant)" "0 1" "the SQL run again: fxa-db-bootstrap passes"
+  fi
 fi
 echo "== admin UI"
 for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 1; done

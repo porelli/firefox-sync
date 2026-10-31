@@ -1,0 +1,41 @@
+# Your own server for the accounts (FXA_DB_CONTAINERS=0; with fxa-db this unit is not
+# installed): the users and grants of database-setup-fxa.sql at every start, before the
+# migrations, as compose's fxa-db-bootstrap. Applied as FXA_DB_BOOTSTRAP_USER when it is set,
+# otherwise checked (db/db-setup.sh, docs/databases.md#let-the-stack-apply-them). MySQL's client
+[Unit]
+Description=Firefox Sync - Mozilla accounts - Database users and grants
+After=firefox-sync-network.service
+
+[Container]
+Image=%FXA_MYSQL_IMAGE%
+ContainerName=firefox-sync-fxa-db-bootstrap
+Network=firefox-sync-network.network
+Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
+Volume=%SCRIPT_DIR%/db/mysql/fxa-mysql.sql:/ffs-db/fxa.sql:ro,z
+
+Environment=FFS_DB_ENGINE=mysql
+Environment=FXA_DB_CONTAINERS=%FXA_DB_CONTAINERS%
+Environment=FXA_DB_BOOTSTRAP_USER=%FXA_DB_BOOTSTRAP_USER%
+Environment=FXA_DB_BOOTSTRAP_PASSWORD=%FXA_DB_BOOTSTRAP_PASSWORD%
+Environment=FXA_MYSQL_HOST=%FXA_MYSQL_HOST%
+Environment=FXA_MYSQL_PORT=%FXA_MYSQL_PORT%
+Environment=FXA_MYSQL_USER=%FXA_MYSQL_USER%
+Environment=FXA_MYSQL_PASSWORD=%FXA_MYSQL_PASSWORD%
+Environment=FXA_MYSQL_POLICY_USER=%FXA_MYSQL_POLICY_USER%
+Environment=FXA_MYSQL_POLICY_PASSWORD=%FXA_MYSQL_POLICY_PASSWORD%
+Environment=FXA_ADMIN_DB_PASSWORD=%FXA_ADMIN_DB_PASSWORD%
+# MySQL with mysql_native_password: the "-- native:" lines of fxa-mysql.sql
+Environment="FXA_MYSQL_ARGS=%FXA_MYSQL_ARGS%"
+
+PodmanArgs=--entrypoint=bash
+Exec=/ffs-db/db-setup.sh fxa
+
+AutoUpdate=registry
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target default.target

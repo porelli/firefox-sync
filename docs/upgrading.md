@@ -78,7 +78,7 @@ Don't stay too far behind: Firefox refuses to sign in to accounts servers that a
     - the old file stays as `.env.before-upgrade-<UTC time>`, readable by you only, as `.env` (every run that changes it keeps one of its own);
     - then it renders the units from that `.env` into `~/.config/containers/systemd/` (the backup timer into `~/.config/systemd/user/`), writes only those that change, keeps all the units of before in `quadlets.before-<UTC time>/` of the checkout, and runs `systemctl --user daemon-reload`. Units of before with their passwords in them get them out, into their environment files ([Quadlets](install/podman.md#quadlets)), with the same values.
 
-    Run twice, the second run changes nothing. With your own database server (`SYNC_DB_CONTAINERS=0`) it also writes `database-setup.sql`: run it there as its administrator before the next start (`mariadb -h <host> -u root -p < database-setup.sql`, `mysql` for MySQL; its statements can run again). It creates the admin UI's database and users with `ADMIN_DB_PASSWORD`. The admin UI's unit has no Sync password to fall back to as compose has, so without those users it does not start.
+    Run twice, the second run changes nothing. With your own database server (`SYNC_DB_CONTAINERS=0`) it also writes `database-setup.sql`: run it there as its administrator before the next start (`mariadb -h <host> -u root -p < database-setup.sql`, `mysql` for MySQL; its statements can run again), unless the stack applies it itself ([Let the stack apply them](databases.md#let-the-stack-apply-them)). It creates the admin UI's database and users with `ADMIN_DB_PASSWORD`. The admin UI's unit has no Sync password to fall back to as compose has, so without those users it does not start.
 1. Pull the new images: `grep -h '^Image=' ~/.config/containers/systemd/firefox-sync-*.container | cut -d= -f2 | sort -u | xargs -n1 podman pull`.
 1. Start them again. The migrations and the init container run first:
 
@@ -233,7 +233,7 @@ Put back the old files and images, with the `.env.before-upgrade-<time>` of the 
 An install from before `ADMIN_DB_PASSWORD` (its `.env` has none) keeps working as it did: the admin UI connects as the Sync users and keeps its tables in the tokenserver database. Its setup check of the event log fails and says how to move it, and its log says so at every start. Why the move matters: [The admin UI's own database](reference/database-users.md#the-admin-uis-own-database).
 
 1. Run `./prepare_environment.sh --upgrade`. It adds `ADMIN_DB_PASSWORD` (32 letters and digits), `ADMIN_DB_NAME`, `ADMIN_DB_USER`, `ADMIN_DB_SYNC_USER`, and with the PostgreSQL container `SYNC_POSTGRES_APP_USER` and `SYNC_POSTGRES_APP_PASSWORD`. By hand: `ADMIN_DB_PASSWORD=$(tr -dc A-Za-z0-9 < /dev/urandom | head -c 32)` in `.env`, the same for `SYNC_POSTGRES_APP_PASSWORD`, with `SYNC_POSTGRES_APP_USER=syncserver_app`.
-1. Your own server only: run the new `database-setup.sql` there (`--upgrade` writes it again; its statements can run again), or the admin UI's statements of the SQL with that password.
+1. Your own server only: run the new `database-setup.sql` there (`--upgrade` writes it again; its statements can run again), or the admin UI's statements of the SQL with that password. With `SYNC_DB_BOOTSTRAP_USER` the stack does it at the next start ([Let the stack apply them](databases.md#let-the-stack-apply-them)).
 1. Run `docker compose pull && docker compose up -d`.
 
 At that start:

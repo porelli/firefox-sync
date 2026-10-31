@@ -1,7 +1,7 @@
 [Unit]
 Description=Firefox Sync - Mozilla accounts - Database migrations
-After=firefox-sync-network.service firefox-sync-fxa-db.service
-Requires=firefox-sync-fxa-db.service
+After=firefox-sync-network.service firefox-sync-fxa-db.service firefox-sync-fxa-db-bootstrap.service
+Requires=firefox-sync-fxa-db.service firefox-sync-fxa-db-bootstrap.service
 
 [Container]
 Image=%FXA_IMAGE%:%FXA_VERSION%

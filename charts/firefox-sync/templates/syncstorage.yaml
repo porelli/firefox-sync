@@ -45,7 +45,12 @@ spec:
     metadata:
       labels:
         {{- include "firefox-sync.selectorLabels" (dict "root" . "component" "syncstorage") | nindent 8 }}
-      {{- with include "firefox-sync.podAnnotations" (dict "root" .) }}{{ . | trim | nindent 6 }}{{ end }}
+      {{- $annotations := dict }}
+      {{- if not .Values.database.bundled }}
+      {{- /* a new db-setup.sh or SQL (a chart upgrade) restarts the pod: db-bootstrap runs it */}}
+      {{- $_ := set $annotations "checksum/db-setup" (include "firefox-sync.dbSetupData" . | sha256sum) }}
+      {{- end }}
+      {{- with include "firefox-sync.podAnnotations" (dict "root" . "annotations" $annotations) }}{{ . | trim | nindent 6 }}{{ end }}
     spec:
       {{- include "firefox-sync.podSpec" . | nindent 6 }}
       securityContext:
@@ -81,6 +86,74 @@ spec:
               {{- $d := dict "root" $ "db" . }}
               wait_db {{ include "firefox-sync.dbHost" $d | quote }} {{ include "firefox-sync.dbPort" $d | quote }}
               {{- end }}
+        {{- if not .Values.database.bundled }}
+        # compose's db-bootstrap: your own server's users, grants and databases (the SQL of
+        # db/mysql/sync.sql or db/postgres/sync.sql, filled in from the values and the Secret)
+        # applied as database.external.bootstrap.user, or checked as the stack's users: what
+        # is missing stops the pod here, named in its log (db/db-setup.sh,
+        # docs/databases.md#when-a-release-needs-new-users-or-grants)
+        - name: db-bootstrap
+          image: {{ include "firefox-sync.dbImage" . }}
+          imagePullPolicy: IfNotPresent
+          {{- include "firefox-sync.noEscalation" . | nindent 10 }}
+          {{- with include "firefox-sync.initResources" . }}{{ . | trim | nindent 10 }}{{ end }}
+          command: [bash, /ffs-db/db-setup.sh]
+          args: [sync]
+          env:
+            {{- $ts := dict "root" . "db" "tokenserver" }}
+            - name: SYNC_DB_CONTAINERS
+              value: "0"
+            {{- $boot := .Values.database.external.bootstrap.user }}
+            - name: SYNC_DB_BOOTSTRAP_USER
+              value: {{ $boot | quote }}
+            {{- if $boot }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "SYNC_DB_BOOTSTRAP_PASSWORD" "key" "SYNC_DB_BOOTSTRAP_PASSWORD") | nindent 12 }}
+            {{- else }}
+            - name: SYNC_DB_BOOTSTRAP_PASSWORD
+              value: ""
+            {{- end }}
+            {{- if eq $backend "postgres" }}
+            - name: FFS_DB_ENGINE
+              value: postgres
+            - name: SYNC_POSTGRES_HOST
+              value: {{ include "firefox-sync.dbHost" $ts | quote }}
+            - name: SYNC_POSTGRES_PORT
+              value: {{ $port | quote }}
+            - name: SYNC_POSTGRES_NAME
+              value: {{ include "firefox-sync.dbName" $ts | quote }}
+            - name: SYNC_POSTGRES_USER
+              value: {{ include "firefox-sync.dbUser" $ts | quote }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "SYNC_POSTGRES_PASSWORD" "key" "POSTGRES_PASSWORD") | nindent 12 }}
+            {{- else }}
+            {{- range $db, $part := dict "tokenserver" "TOKENSERVER" "storage" "STORAGE" }}
+            {{- $d := dict "root" $ "db" $db }}
+            - name: SYNC_{{ $part }}_DB_HOST
+              value: {{ include "firefox-sync.dbHost" $d | quote }}
+            - name: SYNC_{{ $part }}_DB_PORT
+              value: {{ include "firefox-sync.dbPort" $d | quote }}
+            - name: SYNC_{{ $part }}_DB_NAME
+              value: {{ include "firefox-sync.dbName" $d | quote }}
+            - name: SYNC_{{ $part }}_DB_USER
+              value: {{ include "firefox-sync.dbUser" $d | quote }}
+            {{- include "firefox-sync.secretEnv" (dict "root" $ "name" (printf "SYNC_%s_DB_PASSWORD" $part) "key" (include "firefox-sync.dbPasswordKey" $d)) | nindent 12 }}
+            {{- end }}
+            - name: SYNC_DB_TLS_VERIFY
+              value: {{ include "firefox-sync.tlsVerify" . | quote }}
+            {{- end }}
+            - name: ADMIN_DB_USER
+              value: {{ include "firefox-sync.adminDbUser" . }}
+            - name: ADMIN_DB_SYNC_USER
+              value: {{ include "firefox-sync.adminDbSyncUser" . }}
+            {{- /* (optional: MariaDB and MySQL without the admin UI and the backups may have none, the
+            Sync part of the SQL only then) */}}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "ADMIN_DB_PASSWORD" "key" "ADMIN_DB_PASSWORD" "optional" true) | nindent 12 }}
+            - name: ADMIN_DB_NAME
+              value: {{ include "firefox-sync.adminDbName" . }}
+          volumeMounts:
+            - name: db-setup
+              mountPath: /ffs-db
+              readOnly: true
+        {{- end }}
         {{- if eq $backend "postgres" }}
         # compose's sync_role_init: the Sync server's own role (no superuser), before the
         # migrations, which run as it; no superuser session touches what that role owns
@@ -234,3 +307,7 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if not .Values.database.bundled }}
+      volumes:
+        {{- include "firefox-sync.dbSetupVolume" (dict "root" . "scope" "sync") | nindent 8 }}
+      {{- end }}

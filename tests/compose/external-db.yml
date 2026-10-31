@@ -3,6 +3,8 @@
 # Used with SYNC_DB_CONTAINERS=0: the containers that connect to the database join that network.
 
 services:
+  db-bootstrap:
+    networks: [default, extdb]
   syncstorage_migrate:
     networks: [default, extdb]
   syncstorage:

@@ -70,6 +70,8 @@ How to set it up: [Your own database server](../databases.md#your-own-server). T
 |---|---|---|---|---|
 | `SYNC_DB_CONTAINERS` | `database.bundled` | `1` (Helm `true`) | `0` (Helm `false`): no Sync database containers, use your own server | `DB_CONTAINERS` |
 | `SYNC_DB_TLS_VERIFY` | `database.external.tlsVerify` | `true` (Helm `false`) | whether the init container's client (and the chart's backups) checks the server's certificate. `false` for your own MySQL, whose certificate is self-signed. The Sync server itself connects without TLS | `MARIADB_TLS_VERIFY` |
+| `SYNC_DB_BOOTSTRAP_USER` | `database.external.bootstrap.user` | empty | an account that can create users, as which the stack applies `database-setup.sql` itself at every start; empty: it only checks the users and grants. See [Let the stack apply them](../databases.md#let-the-stack-apply-them) | |
+| `SYNC_DB_BOOTSTRAP_PASSWORD` | Secret: `SYNC_DB_BOOTSTRAP_PASSWORD` | empty | its password | |
 | `SYNC_TOKENSERVER_DB_HOST` | `database.external.host` | `tokenserver_db` | the tokenserver's server: a host name or IPv4 address the containers reach (Helm: required) | `MARIADB_TOKENSERVER_SERVER` |
 | `SYNC_TOKENSERVER_DB_PORT` | `database.external.port` | `3306` (Helm empty: `3306`, or `5432` for `postgres`) | its port | `MARIADB_TOKENSERVER_SERVER_PORT` |
 | `SYNC_TOKENSERVER_DB_NAME` | `database.external.tokenserverDatabase` | `tokenserver` | the tokenserver database | `MARIADB_TOKENSERVER_DATABASE` |
@@ -190,6 +192,8 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `FXA_MYSQL_PASSWORD` | Secret: `FXA_MYSQL_PASSWORD` | generated | its password | |
 | `FXA_MYSQL_POLICY_USER` | `fxa.database.external.policyUser` | empty: `FXA_MYSQL_USER` (Helm `ffs_policy`) | the user that installs the sign-up policy and grants the admin UI's user | |
 | `FXA_MYSQL_POLICY_PASSWORD` | Secret: `FXA_MYSQL_POLICY_PASSWORD` | empty (Helm: never generated) | its password (not used while `FXA_MYSQL_POLICY_USER` is empty) | |
+| `FXA_DB_BOOTSTRAP_USER` | `fxa.database.external.bootstrap.user` | empty | as `SYNC_DB_BOOTSTRAP_USER`, for `database-setup-fxa.sql` on your own accounts server | |
+| `FXA_DB_BOOTSTRAP_PASSWORD` | Secret: `FXA_DB_BOOTSTRAP_PASSWORD` | empty | its password | |
 | `FXA_ADMIN_DB_PASSWORD` | Secret: `FXA_ADMIN_DB_PASSWORD` | generated | the password of the admin UI's user `ffs_admin` of the accounts database (a user, not the database `ADMIN_DB_NAME`) | |
 | `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | Secret: the same names | generated | the accounts services' secrets | |
 | `FXA_SIGNUPS` | `fxa.signups` | `open` | who can create an account: `open`, `allowlist` or `closed`: [Who can sign up](../accounts.md#who-can-sign-up) | |

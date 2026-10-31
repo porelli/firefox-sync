@@ -1,0 +1,40 @@
+# Installed instead of ../firefox-sync-db-bootstrap.container with the Sync server on your own
+# PostgreSQL server: database-setup.sql applied or checked before the Sync server's role and the
+# migrations, with PostgreSQL's client (db/db-setup.sh)
+[Unit]
+Description=Firefox Sync - Database users and grants
+After=firefox-sync-network.service
+
+[Container]
+Image=%SYNC_POSTGRES_IMAGE%
+ContainerName=firefox-sync-db-bootstrap
+Network=firefox-sync-network.network
+Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
+Volume=%SCRIPT_DIR%/db/postgres/sync.sql:/ffs-db/sync.sql:ro,z
+
+Environment=FFS_DB_ENGINE=postgres
+Environment=SYNC_DB_CONTAINERS=%SYNC_DB_CONTAINERS%
+Environment=SYNC_DB_BOOTSTRAP_USER=%SYNC_DB_BOOTSTRAP_USER%
+Environment=SYNC_DB_BOOTSTRAP_PASSWORD=%SYNC_DB_BOOTSTRAP_PASSWORD%
+Environment=SYNC_POSTGRES_HOST=%SYNC_POSTGRES_HOST%
+Environment=SYNC_POSTGRES_PORT=%SYNC_POSTGRES_PORT%
+Environment=SYNC_POSTGRES_NAME=%SYNC_POSTGRES_NAME%
+Environment=SYNC_POSTGRES_USER=%SYNC_POSTGRES_USER%
+Environment=SYNC_POSTGRES_PASSWORD=%SYNC_POSTGRES_PASSWORD%
+Environment=ADMIN_DB_USER=%ADMIN_DB_USER%
+Environment=ADMIN_DB_SYNC_USER=%ADMIN_DB_SYNC_USER%
+Environment=ADMIN_DB_PASSWORD=%ADMIN_DB_PASSWORD%
+Environment=ADMIN_DB_NAME=%ADMIN_DB_NAME%
+
+PodmanArgs=--entrypoint=bash
+Exec=/ffs-db/db-setup.sh sync
+
+AutoUpdate=registry
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target default.target

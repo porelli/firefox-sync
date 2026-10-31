@@ -57,12 +57,19 @@ ALLOWED_DIFFERENCES = {
     "*:admin/ADMIN_INSECURE_COOKIE": "compose passes it empty when .env does not set it; the chart only when admin.insecureCookie "
     "is set (empty: off, as compose's), so that the default render stays that of 0.1.0",
     "*:admin/SMTP_INSECURE_AUTH": "as ADMIN_INSECURE_COOKIE: the chart only when smtp.insecureAuth is set",
+    f"{BUNDLED}:admin/SYNC_DB_CONTAINERS": "compose passes it always; the chart only with database.bundled false (its "
+    "setup check of database-setup.sql), so that the default render stays that of 0.1.0: unset, the admin UI takes 1",
+    f"{BUNDLED}:admin/SYNC_DB_BOOTSTRAP_USER": "as SYNC_DB_CONTAINERS: with your own server only",
     # the old names of .env (docs/upgrading.md#renamed-settings): compose tells its containers which
     # are still set, or set with their new ones; the chart has no .env
     "*:migrate/FFS_BOTH_ENV_NAMES": "compose-only: the old .env names set with their new ones; the chart has no .env",
     "*:syncstorage/FFS_BOTH_ENV_NAMES": "as migrate's",
     "*:db-init/FFS_BOTH_ENV_NAMES": "as migrate's",
     f"{SYNC_POSTGRES},external-postgres:sync-role/FFS_BOTH_ENV_NAMES": "as migrate's",
+    "external-mariadb,external-mysql,external-postgres:db-bootstrap/FFS_BOTH_ENV_NAMES": "as migrate's",
+    "fxa-external:fxa-db-bootstrap/FXA_MYSQL_ARGS": "compose-only: FXA_MYSQL_ARGS of .env says mysql_native_password for an "
+    "accounts image without mozilla/fxa#21554 (the \"-- native:\" lines of fxa-mysql.sql); the chart's own server takes the "
+    "server's default authentication, as docs/databases.md#with-helm says",
     "*:db-init/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the init container's warning; no .env here",
     "*:admin/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the admin UI's setup check; no .env here",
     # the Sync server
@@ -238,6 +245,9 @@ CHART_ONLY_CONTAINERS = {
 
 # compose services the chart has none for, by design: "<cases>:<service>" -> why
 COMPOSE_ONLY_SERVICES = {
+    f"{BUNDLED}:db-bootstrap": "with the stack's database containers compose's db-bootstrap does nothing (db/db-setup.sh "
+    "exits 0); the chart renders it with your own server only",
+    f"{FXA_BUNDLED}:fxa-db-bootstrap": "as db-bootstrap, with the bundled accounts database",
     "fxa-external:backup-fxa": "with your own accounts server compose's backup-fxa is not used "
     "(docs/backups.md#your-own-database-server; e2e-fxa.sh runs no backup profile there): the stack's accounts user "
     "cannot read ffs; the chart renders no backup-accounts then",
@@ -287,6 +297,11 @@ IDENTICAL_FILES = {
     "charts/firefox-sync/files/backup.sh": "config/backup/backup.sh",
     "charts/firefox-sync/files/admin-user.sh": "db/mysql/admin-user.sh",
     "charts/firefox-sync/files/postgres-keep-major.sh": "db/postgres/keep-major.sh",
+    "charts/firefox-sync/files/db-setup.sh": "db/db-setup.sh",
+    "charts/firefox-sync/files/sync-mysql.sql": "db/mysql/sync.sql",
+    "charts/firefox-sync/files/sync-postgres.sql": "db/postgres/sync.sql",
+    "charts/firefox-sync/files/fxa-mysql.sql": "db/mysql/fxa-mysql.sql",
+    "charts/firefox-sync/files/fxa-mariadb.sql": "db/mysql/fxa-mariadb.sql",
     "charts/firefox-sync/files/fxa/content-server.js": "config/fxa/content-server.js",
     "charts/firefox-sync/files/fxa/oauth-clients.js": "config/fxa/oauth-clients.js",
 }
@@ -294,6 +309,7 @@ IDENTICAL_FILES = {
 # compose service -> chart (workload kind, workload name, container, key prefix, init or one-shot);
 # a compose service of the case missing here fails
 PAIRS = [
+    ("db-bootstrap", "Deployment", f"{FULLNAME}-syncstorage", "db-bootstrap", "db-bootstrap", True),
     ("sync_role_init", "Deployment", f"{FULLNAME}-syncstorage", "sync-role", "sync-role", True),
     ("syncstorage_migrate", "Deployment", f"{FULLNAME}-syncstorage", "migrate", "migrate", True),
     ("tokenserver_db_init", "Deployment", f"{FULLNAME}-syncstorage", "db-init", "db-init", True),
@@ -308,6 +324,7 @@ PAIRS = [
     ("fxa-db", "StatefulSet", f"{FULLNAME}-fxa-db", "db", "fxa-db", False),
     ("fxa-redis", "Deployment", f"{FULLNAME}-fxa-redis", "redis", "redis", False),
     ("fxa-keys-owner", "Deployment", f"{FULLNAME}-fxa-auth", "keys-owner", "keys-owner", True),
+    ("fxa-db-bootstrap", "Deployment", f"{FULLNAME}-fxa-auth", "db-bootstrap", "fxa-db-bootstrap", True),
     ("fxa-migrations", "Deployment", f"{FULLNAME}-fxa-auth", "migrations", "migrations", True),
     ("fxa-policy", "Deployment", f"{FULLNAME}-fxa-auth", "policy", "policy", True),
     ("fxa-auth", "Deployment", f"{FULLNAME}-fxa-auth", "auth", "auth", False),
@@ -345,17 +362,19 @@ CASES = {
     "postgres": (SYNC_FILES["postgres"], {"SYNC_POSTGRES_APP_USER": "syncserver_app"}, ["--set", "database.backend=postgres"]),
     # your own server (docs/databases.md#your-own-server, prepare_environment.sh): no database containers, no TLS
     # check (MySQL's self-signed certificate); PostgreSQL without the Sync role
+    # (the bootstrap account on: its password from the Secret, docs/databases.md#let-the-stack-apply-them)
     "external-mariadb": (SYNC_FILES["mariadb"],
                          {"SYNC_DB_CONTAINERS": "0", "SYNC_DB_TLS_VERIFY": "false", "SYNC_TOKENSERVER_DB_HOST": EXTDB,
-                          "SYNC_STORAGE_DB_HOST": EXTDB},
-                         ["--set", "database.backend=mariadb"]),
+                          "SYNC_STORAGE_DB_HOST": EXTDB, "SYNC_DB_BOOTSTRAP_USER": "ffs_bootstrap"},
+                         ["--set", "database.backend=mariadb", "--set", "database.external.bootstrap.user=ffs_bootstrap"]),
     # (sync-mariadb.yml, as prepare_environment.sh writes for your own MySQL server: its client)
     "external-mysql": (SYNC_FILES["mariadb"],
                        {"SYNC_DB": "mysql", "SYNC_DB_CONTAINERS": "0", "SYNC_DB_TLS_VERIFY": "false",
-                        "SYNC_TOKENSERVER_DB_HOST": EXTDB, "SYNC_STORAGE_DB_HOST": EXTDB},
+                        "SYNC_TOKENSERVER_DB_HOST": EXTDB, "SYNC_STORAGE_DB_HOST": EXTDB, "SYNC_DB_BOOTSTRAP_PASSWORD": ""},
                        ["--set", "database.backend=mysql"]),
     "external-postgres": (SYNC_FILES["postgres"],
-                          {"SYNC_DB_CONTAINERS": "0", "SYNC_POSTGRES_HOST": EXTDB, "SYNC_POSTGRES_APP_PASSWORD": ""},
+                          {"SYNC_DB_CONTAINERS": "0", "SYNC_POSTGRES_HOST": EXTDB, "SYNC_POSTGRES_APP_PASSWORD": "",
+                           "SYNC_DB_BOOTSTRAP_PASSWORD": ""},
                           ["--set", "database.backend=postgres"]),
 }
 EXTERNAL_HELM = ["--set", "database.bundled=false", "--set", f"database.external.host={EXTDB}", "--set", "existingSecret=mine"]
@@ -398,8 +417,9 @@ CASES.update({
                      "--set", "fxa.extraCaCerts.configMap=ffs-test-ca"] + FXA_PAIRING_HELM),
     # your own accounts server, its users fxa and ffs_policy; a pairing server of your own elsewhere
     "fxa-external": (FXA_FILES, {**FXA_ENV, "FXA_DB_CONTAINERS": "0", "FXA_MYSQL_HOST": EXTDB, "FXA_MYSQL_USER": "fxa",
-                                 "FXA_MYSQL_POLICY_USER": "ffs_policy"},
+                                 "FXA_MYSQL_POLICY_USER": "ffs_policy", "FXA_DB_BOOTSTRAP_USER": "ffs_bootstrap"},
                      ["--set", "database.backend=mariadb", "--set", "fxa.database.bundled=false",
+                      "--set", "fxa.database.external.bootstrap.user=ffs_bootstrap",
                       "--set", f"fxa.database.external.host={EXTDB}", "--set", "existingSecret=mine"] + FXA_HELM),
     "fxa-postgres": (SYNC_FILES["postgres"] + ["compose/fxa.yml", "compose/fxa-mysql.yml"],
                      {**FXA_BUNDLED_ENV, "SYNC_POSTGRES_APP_USER": "syncserver_app"},

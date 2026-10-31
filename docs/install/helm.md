@@ -152,6 +152,7 @@ Its keys:
 | `TOKENSERVER_DB_PASSWORD`, `STORAGE_DB_PASSWORD` | `mariadb`, `mysql` | the tokenserver and storage users |
 | `POSTGRES_PASSWORD` | `postgres` | the superuser of the bundled server; on your own server the owner, `database.external.postgresUser` |
 | `POSTGRES_SYNC_PASSWORD` | `postgres`, bundled | the Sync server's own role `syncserver_app` (`database.postgresSyncUser`), no superuser |
+| `SYNC_DB_BOOTSTRAP_PASSWORD` | your own server, a non-empty `database.external.bootstrap.user` | that account's password, which applies the SQL at every start ([Let the stack apply them](../databases.md#let-the-stack-apply-them)) |
 | `ADMIN_PASSWORD` | optional | the admin UI's password. Missing or empty: no password form ([Signing in](../admin/signing-in.md)) |
 | `FXA_SMTP_PASS`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `ADMIN_NOTIFY` | optional | the admin UI's. Missing or empty: that feature is off |
 | `FXA_MYSQL_PASSWORD` | `fxa.enabled` | the accounts database's user: `root` of the bundled server, or `fxa.database.external.user` on your own |
@@ -159,6 +160,7 @@ Its keys:
 | `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | `fxa.enabled` | the accounts services' secrets, as in `.env` |
 | `FXA_REDIS_PASSWORD` | `fxa.enabled` | the password of the accounts' Redis. The chart's own: `.env` has none |
 | `FXA_MYSQL_POLICY_PASSWORD` | `fxa.enabled`, your own accounts database server, a non-empty `fxa.database.external.policyUser` | that user's password. The chart never generates it |
+| `FXA_DB_BOOTSTRAP_PASSWORD` | `fxa.enabled`, your own accounts database server, a non-empty `fxa.database.external.bootstrap.user` | that account's password, as `SYNC_DB_BOOTSTRAP_PASSWORD` |
 | `ADMIN_FXA_CLIENT_SECRET` | optional | leave it out: see [Sign in with the accounts](#sign-in-with-the-accounts) |
 
 With `existingSecret`, the chart does not read the values of those optional secrets (`smtp.password`, `admin.oidc.clientSecret`, `admin.metricsToken`, `admin.notify`, `fxa.adminClientSecret`), nor `admin.password`. With `fxa.enabled`, an install or upgrade whose `existingSecret` lacks one of the accounts' keys is refused, with the missing keys named.

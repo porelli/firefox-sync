@@ -14,21 +14,52 @@ render_sql() {
     rm -f "${out}"
     (umask 077; sed_script "${script}" "${template}" > "${out}")
 }
+# the placeholders of a template (mysql, postgres: sync.sql; fxa: fxa-*.sql) filled from .env,
+# PLACEHOLDER=value per line: the settings of db/db-setup.sh, which fills them in the same way
+# at every start of the stack (db-bootstrap)
+sql_pairs() {
+    local placeholder setting
+    while read -r placeholder setting; do
+        printf '%s=%s\n' "${placeholder}" "$(env_value "${setting}")"
+    done < <(bash "${SCRIPT_DIR}/db/db-setup.sh" settings "${1}")
+}
+# render_with <template> <out> <kind> [PLACEHOLDER=value...]: render_sql with the values of sql_pairs
+render_with() {
+    local template=${1} out=${2} pair pairs=()
+    while IFS= read -r pair; do pairs+=("${pair}"); done < <(sql_pairs "${3}")
+    shift 3
+    render_sql "${template}" "${out}" "${pairs[@]}" "$@"
+}
 # database-setup.sql of the Sync databases and the admin UI's (postgres, or mariadb and mysql)
 render_sync_sql() {
-    if [ "${1}" = "postgres" ]; then
-        render_sql "${SCRIPT_DIR}/db/postgres/sync.sql" "${SCRIPT_DIR}/database-setup.sql" \
-            SYNC_POSTGRES_DATABASE="$(env_value SYNC_POSTGRES_NAME)" SYNC_POSTGRES_USER="$(env_value SYNC_POSTGRES_USER)" \
-            SYNC_POSTGRES_PASSWORD="$(env_value SYNC_POSTGRES_PASSWORD)" ADMIN_DATABASE="$(env_value ADMIN_DB_NAME)" \
-            ADMIN_USER="$(env_value ADMIN_DB_USER)" ADMIN_SYNC_USER="$(env_value ADMIN_DB_SYNC_USER)" ADMIN_PASSWORD="$(env_value ADMIN_DB_PASSWORD)"
-    else
-        render_sql "${SCRIPT_DIR}/db/mysql/sync.sql" "${SCRIPT_DIR}/database-setup.sql" \
-            SYNC_TOKENSERVER_DATABASE="$(env_value SYNC_TOKENSERVER_DB_NAME)" SYNC_TOKENSERVER_USER="$(env_value SYNC_TOKENSERVER_DB_USER)" \
-            SYNC_TOKENSERVER_PASSWORD="$(env_value SYNC_TOKENSERVER_DB_PASSWORD)" \
-            SYNC_STORAGE_DATABASE="$(env_value SYNC_STORAGE_DB_NAME)" SYNC_STORAGE_USER="$(env_value SYNC_STORAGE_DB_USER)" \
-            SYNC_STORAGE_PASSWORD="$(env_value SYNC_STORAGE_DB_PASSWORD)" ADMIN_DATABASE="$(env_value ADMIN_DB_NAME)" \
-            ADMIN_USER="$(env_value ADMIN_DB_USER)" ADMIN_SYNC_USER="$(env_value ADMIN_DB_SYNC_USER)" ADMIN_PASSWORD="$(env_value ADMIN_DB_PASSWORD)"
+    local kind=mysql
+    [ "${1}" = "postgres" ] && kind=postgres
+    render_with "${SCRIPT_DIR}/db/${kind}/sync.sql" "${SCRIPT_DIR}/database-setup.sql" "${kind}"
+}
+# database-setup-fxa.sql: render_fxa_sql <mysql|mariadb> [native]; native: the accounts' user
+# on mysql_native_password (MySQL, an accounts image without mozilla/fxa#21554), the commented
+# lines of fxa-mysql.sql instead of those after them, as db/db-setup.sh takes them with
+# mysql_native_password in FXA_MYSQL_ARGS
+render_fxa_sql() {
+    local template=${SCRIPT_DIR}/db/mysql/fxa-${1}.sql
+    if [ "${2:-}" = native ]; then
+        template=${SCRIPT_DIR}/database-setup-fxa.native
+        sed -e "/^-- native: /{s/^-- native: //;n;d;}" "${SCRIPT_DIR}/db/mysql/fxa-mysql.sql" > "${template}"
     fi
+    render_with "${template}" "${SCRIPT_DIR}/database-setup-fxa.sql" fxa
+    [ "${2:-}" != native ] || rm -f "${template}"
+}
+# database-bootstrap.sql (database-bootstrap-fxa.sql: fxa): the account that applies the SQL
+# above at every start (SYNC_DB_BOOTSTRAP_USER, FXA_DB_BOOTSTRAP_USER of .env), docs/databases.md#the-bootstrap-account
+render_bootstrap_sql() {
+    local kind=${1} template out=${SCRIPT_DIR}/database-bootstrap.sql prefix=SYNC
+    case "${kind}" in
+        postgres) template=${SCRIPT_DIR}/db/postgres/bootstrap.sql ;;
+        fxa) template=${SCRIPT_DIR}/db/mysql/fxa-bootstrap.sql out=${SCRIPT_DIR}/database-bootstrap-fxa.sql prefix=FXA ;;
+        *) template=${SCRIPT_DIR}/db/mysql/bootstrap.sql kind=mysql ;;
+    esac
+    render_with "${template}" "${out}" "${kind}" BOOTSTRAP_USER="$(env_value "${prefix}_DB_BOOTSTRAP_USER")" \
+        BOOTSTRAP_PASSWORD="$(env_value "${prefix}_DB_BOOTSTRAP_PASSWORD")"
 }
 
 # a database volume of an earlier install (the .env gone, or for another database):

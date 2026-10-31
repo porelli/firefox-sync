@@ -151,6 +151,6 @@ Who creates them:
 
 - **The stack's MariaDB and MySQL containers**: [db/mysql/admin-user.sh](/db/mysql/admin-user.sh) runs before the image's entrypoint. At every start it has the server run its statements with all privileges (`--init-file`): the database, the two users and their grants. That works on the first start and on the volumes of an existing install alike, whose root password is random: no administrator password is needed anywhere. The storage container gets only `ffs_admin_sync` and its `SELECT, DELETE`.
 - **The stack's PostgreSQL container**: the init container, as the superuser, as described in [PostgreSQL](#postgresql).
-- **Your own server**: `database-setup.sql`, as its administrator. Without the roles (PostgreSQL), the init container says so, and the admin UI cannot connect.
+- **Your own server**: `database-setup.sql`, as its administrator, or the stack itself at every start ([Let the stack apply them](../databases.md#let-the-stack-apply-them)). Without them the start stops in `db-bootstrap`, which names them.
 
 An install from before `ADMIN_DB_PASSWORD` keeps its admin UI tables in the tokenserver database. Moving them: [The admin UI's own database](../upgrading.md#the-admin-uis-own-database).

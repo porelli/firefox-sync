@@ -376,7 +376,8 @@ returns nothing (helm template, a GitOps render, the Secret not created yet)
 {{/*
 The keys the accounts need in a Secret's data, missing or empty ones refused: the generated
 ones, and with your own accounts server its policy user's password (FXA_MYSQL_POLICY_PASSWORD,
-when fxa.database.external.policyUser is set). Accepts a dict with "root", "name" (the
+when fxa.database.external.policyUser is set) and the bootstrap account's
+(FXA_DB_BOOTSTRAP_PASSWORD, with fxa.database.external.bootstrap.user). Accepts a dict with "root", "name" (the
 Secret) and "data" (its data)
 */}}
 {{- define "firefox-sync.checkSecretKeys" -}}
@@ -385,6 +386,9 @@ Secret) and "data" (its data)
 {{- $required := splitList " " (include "firefox-sync.fxaGeneratedKeys" .root) }}
 {{- if and (not $v.fxa.database.bundled) $v.fxa.database.external.policyUser }}
 {{- $required = append $required "FXA_MYSQL_POLICY_PASSWORD" }}
+{{- end }}
+{{- if and (not $v.fxa.database.bundled) $v.fxa.database.external.bootstrap.user }}
+{{- $required = append $required "FXA_DB_BOOTSTRAP_PASSWORD" }}
 {{- end }}
 {{- $missing := list }}
 {{- range $required }}

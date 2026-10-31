@@ -101,7 +101,8 @@ You can use a MariaDB, MySQL or PostgreSQL server you already run instead of the
 What changes:
 
 - `SYNC_DB_CONTAINERS=0` in `.env`, and `FXA_DB_CONTAINERS=0` for the accounts. Those containers are not started; everything else is the same. With Helm: `database.bundled: false`, see [With Helm](#with-helm).
-- You create the databases and users once, as an administrator of your server. The stack never needs an administrator account there.
+- You create the databases and users once, as an administrator of your server. The stack needs no administrator account there, unless you [let it apply them](#let-the-stack-apply-them) itself.
+- At every start, before the migrations, the stack checks that those users, grants and databases are there, and stops naming what is missing: see [When a release needs new users or grants](#when-a-release-needs-new-users-or-grants).
 - The migrations and the init container still run at every start, as those users. The stack creates and updates the tables, the max users trigger and the sign-up policy.
 - The admin UI has a database and two users of its own on that server, out of the Sync server's reach. See [Database users](reference/database-users.md#the-admin-uis-own-database).
 - Backups are yours: the backup service dumps the stack's containers only. Your backup job can record its runs for the admin UI, see [Backups](backups.md#your-own-database-server). The Helm chart's backups do run against your server, as its users.
@@ -162,6 +163,75 @@ Rules for names and passwords:
 
 Running `prepare_environment.sh` again makes new passwords and new secrets for everything else (`SYNC_MASTER_SECRET`, the accounts' keys). The SQL sets the passwords of existing users again, so a new setup matches its new `.env`. For an install that already runs, don't: see [Move an existing install](#move-an-existing-install).
 
+### When a release needs new users or grants
+
+At every start, before the migrations, a one-shot step checks your server against the SQL of this release: `db-bootstrap` for `database-setup.sql`, `fxa-db-bootstrap` for `database-setup-fxa.sql`. Each user of the SQL must sign in, with its grants, and its databases must exist. A release that needs a new user or grant, or a grant revoked since, stops the start there, before anything else runs. Its log names each statement that is missing, with `<SETTING>` for the passwords, for example:
+
+```text
+✗ ERROR: the Sync databases on your server lack what this release needs:
+  - 'ffs_admin_sync' cannot sign in on db.example.com:3306 (ERROR 1045 (28000): Access denied ...): CREATE USER IF NOT EXISTS 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>'; ALTER USER 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>';
+```
+
+Read it with `docker compose logs db-bootstrap` (`fxa-db-bootstrap`), `journalctl --user -u firefox-sync-db-bootstrap` (`firefox-sync-fxa-db-bootstrap`) with the Quadlets, or `kubectl logs deploy/<release>-firefox-sync-syncstorage -c db-bootstrap` (the accounts: `deploy/<release>-firefox-sync-fxa-auth`). The admin UI's setup checks show its own users' grants too.
+
+To fix it:
+
+1. `./prepare_environment.sh --upgrade` writes `database-setup.sql` (and `database-setup-fxa.sql`) of this release again, with the names and passwords of `.env`. Helm: fill in [db/mysql/sync.sql](/db/mysql/sync.sql) or [db/postgres/sync.sql](/db/postgres/sync.sql) of the new chart again, as in [With Helm](#with-helm).
+1. Run it as in [Create the databases and users](#create-the-databases-and-users). Its statements can run again: they create what is missing and set the passwords.
+1. Start the stack again.
+
+#### Let the stack apply them
+
+With an account that can create users, the same step applies the SQL itself at every start, as that account, then checks it. A release that needs more then needs nothing from you. If the SQL fails, the start stops there, with the server's error in the log.
+
+- docker compose and the Quadlets: `SYNC_DB_BOOTSTRAP_USER` and `SYNC_DB_BOOTSTRAP_PASSWORD` in `.env` (`FXA_DB_BOOTSTRAP_USER` and `FXA_DB_BOOTSTRAP_PASSWORD` for the accounts). `prepare_environment.sh` asks "Let the stack apply database changes itself at start?", default no, and writes the account's SQL to `database-bootstrap.sql` (`database-bootstrap-fxa.sql`). `--upgrade` keeps your choice, and asks nothing.
+- Helm: `database.external.bootstrap.user` (`fxa.database.external.bootstrap.user`), and its password in your `existingSecret` as `SYNC_DB_BOOTSTRAP_PASSWORD` (`FXA_DB_BOOTSTRAP_PASSWORD`). The SQL is filled in from the values and the Secret.
+
+It runs the SQL as `prepare_environment.sh` writes it: users with the host part `'%'`, and both Sync databases on one server (with `SYNC_STORAGE_DB_HOST` on another server it refuses: run the SQL by hand there). For other host parts, run your edited file by hand instead.
+
+**The trade-off.** The stack then holds the password of an account that can create users. Its rights on databases are limited to the stack's own, but its rights on users are not:
+
+- MariaDB: `CREATE USER` can also change the password of any account of the server, `root`'s too. Whoever gets this password can make themselves the server's administrator.
+- MySQL 8.0.16 and later: the same, except for the accounts with `SYSTEM_USER`, such as `root`.
+- PostgreSQL 16 and later: `CREATEROLE` reaches only the roles it created, or was given `ADMIN OPTION` on. Before 16 it reaches every role but the superusers, also the predefined ones such as `pg_read_server_files`: close to a superuser.
+
+So use it with a database server, or an instance, that the stack has to itself. Otherwise keep the default, and run the SQL after an upgrade yourself.
+
+#### The bootstrap account
+
+Create it once, as an administrator of your server, with the names of your databases. `prepare_environment.sh` fills these in from `.env` into `database-bootstrap.sql`; the files are [db/mysql/bootstrap.sql](/db/mysql/bootstrap.sql), [db/mysql/fxa-bootstrap.sql](/db/mysql/fxa-bootstrap.sql) and [db/postgres/bootstrap.sql](/db/postgres/bootstrap.sql).
+
+MariaDB and MySQL, for Sync:
+
+```sql
+CREATE USER 'ffs_bootstrap'@'%' IDENTIFIED BY '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+GRANT CREATE USER ON *.* TO 'ffs_bootstrap'@'%';
+GRANT ALL PRIVILEGES ON `tokenserver`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON `ffs_admin`.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION;
+```
+
+For the accounts, the same with `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa_oauth`, `fxa_profile`, `pushbox` and `ffs` instead of the three above.
+
+- `CREATE USER` creates the stack's users, and sets their passwords again (`ALTER USER`).
+- `ALL PRIVILEGES ... WITH GRANT OPTION` on each database creates it, and gives the stack's users their grants there: a user can only grant what it has, with `GRANT OPTION`. The SQL grants `CREATE ROUTINE`, `TRIGGER`, `EXECUTE` and more; `ALL PRIVILEGES` covers them, `EVENT` too.
+- Nothing more. The procedures, triggers and events are created later by the init container and `fxa-policy`, as the stack's own users. The server still needs `log_bin_trust_function_creators=ON` for them with binary logging, see [Server requirements](#server-requirements); `SUPER` is not needed.
+
+PostgreSQL, a role that is no superuser, run as a superuser:
+
+```sql
+CREATE ROLE ffs_bootstrap LOGIN CREATEROLE CREATEDB PASSWORD '<SYNC_DB_BOOTSTRAP_PASSWORD>';
+-- only for the roles that exist already (database-setup.sql run before by another role):
+GRANT syncserver TO ffs_bootstrap WITH ADMIN OPTION;
+GRANT ffs_admin_ui TO ffs_bootstrap WITH ADMIN OPTION;
+GRANT ffs_admin_sync TO ffs_bootstrap WITH ADMIN OPTION;
+```
+
+- `CREATEROLE` creates the roles and sets their passwords; on PostgreSQL 16 and later only of the roles it created or administers, hence `ADMIN OPTION` on those that exist.
+- `CREATEDB` creates the databases. The SQL makes the account a member of their owners, so that it may create them for those owners and close them to the other roles.
+
+The stack's tests run the bootstrap with exactly these accounts, on MariaDB, MySQL and PostgreSQL ([Testing](development/testing.md)).
+
 ### With docker compose
 
 1. Create the databases and users, and check the [server requirements](#server-requirements).
@@ -174,11 +244,11 @@ Running `prepare_environment.sh` again makes new passwords and new secrets for e
 
    `deploy.replicas` of the database services is `0`, so compose starts the migrations without waiting for them.
 
-`docker compose ps` then shows no database container. To go back, set `SYNC_DB_CONTAINERS=1` and the default server names.
+`docker compose ps` then shows no database container. `db-bootstrap` (and `fxa-db-bootstrap`) runs first and exits: see [When a release needs new users or grants](#when-a-release-needs-new-users-or-grants). To go back, set `SYNC_DB_CONTAINERS=1` and the default server names.
 
 ### With Quadlets
 
-With `SYNC_DB_CONTAINERS=0`, `prepare_environment.sh` installs no `firefox-sync-syncstorage-db` or `firefox-sync-tokenserver-db` unit (with PostgreSQL, no `firefox-sync-postgres-db`). With `FXA_DB_CONTAINERS=0`, no `firefox-sync-fxa-db` unit. It removes them from the other units' `After=` and `Requires=`.
+With `SYNC_DB_CONTAINERS=0`, `prepare_environment.sh` installs no `firefox-sync-syncstorage-db` or `firefox-sync-tokenserver-db` unit (with PostgreSQL, no `firefox-sync-postgres-db`). With `FXA_DB_CONTAINERS=0`, no `firefox-sync-fxa-db` unit. It removes them from the other units' `After=` and `Requires=`. It installs `firefox-sync-db-bootstrap` (`firefox-sync-fxa-db-bootstrap`) instead, which the migrations require: see [When a release needs new users or grants](#when-a-release-needs-new-users-or-grants).
 
 The migrations retry until your server answers. A server on the same host is `host.containers.internal`, see [Server requirements](#server-requirements).
 
@@ -216,10 +286,10 @@ Each value and its `.env` name: [Settings](reference/settings.md#your-own-databa
 
 `database.external.tlsVerify` (MariaDB, MySQL) says whether the init container and the backups check the server's certificate. It is `false` by default: MySQL's own certificate is self-signed, and a managed service's CA is not in the images (`ERROR 2026`). Set `true` only with a certificate from a CA the images trust, for that host name.
 
-The chart then has no database pods, volumes or Secret of its own. The Sync server's pod waits for your server in its `wait-db` init container, and stops in `migrate` while a login is refused:
+The chart then has no database pods, volumes or Secret of its own. The Sync server's pod waits for your server in its `wait-db` init container. Its `db-bootstrap` init container then checks the users, grants and databases of the SQL, or applies it with `database.external.bootstrap.user` ([Let the stack apply them](#let-the-stack-apply-them)), and stops the pod while one is missing or a login is refused:
 
 ```bash
-kubectl logs deploy/<release>-firefox-sync-syncstorage -c migrate
+kubectl logs deploy/<release>-firefox-sync-syncstorage -c db-bootstrap
 ```
 
 The self-hosted accounts on your own MySQL or MariaDB server ([Self-hosted accounts](install/helm.md#self-hosted-accounts)):
@@ -240,7 +310,7 @@ The self-hosted accounts on your own MySQL or MariaDB server ([Self-hosted accou
           policyUser: ffs_policy   # empty: user, with its password
     ```
 
-The chart then runs no accounts database. `fxa.database.image.*` is only the client of the backups and of the auth pod's `wait-db`. The auth pod waits for your server there, and stops in `migrations` while a login is refused: `kubectl logs deploy/<release>-firefox-sync-fxa-auth -c migrations`.
+The chart then runs no accounts database. `fxa.database.image.*` is only the client of the backups and of the auth pod's `wait-db` and `db-bootstrap`. The auth pod waits for your server there, and stops in `db-bootstrap` while a user or grant of the SQL is missing or a login is refused: `kubectl logs deploy/<release>-firefox-sync-fxa-auth -c db-bootstrap`.
 
 To move a chart install with bundled databases to your server: dump it as in [Restore on Kubernetes](backups.md#restore-on-kubernetes), load the dumps as in [Move an existing install](#move-an-existing-install), and use the passwords of the chart's Secret in your SQL and your `existingSecret`.
 

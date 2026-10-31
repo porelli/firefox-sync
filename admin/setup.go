@@ -96,6 +96,10 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		}
 		checks = append(checks, ownDBCheck(a.sync, st, a.deployment))
 	}
+	// your own database server: the grants of database-setup.sql (dbsetup.go)
+	if c, ok := a.dbSetupCheck(ctx); ok {
+		checks = append(checks, c)
+	}
 	if a.syncDomain != "" && status != nil {
 		checks = append(checks, nodeCheck(a.deployment, a.syncDomain, status.Nodes))
 	}

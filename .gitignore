@@ -32,6 +32,7 @@
 /config/systemd/syncstorage-rs.service
 # SQL for your own database server, with passwords (docs/databases.md#create-the-databases-and-users)
 /database-setup*.sql
+/database-bootstrap*.sql
 # go build output of admin/
 admin/admin
 # mkdocs build (mkdocs.yml)

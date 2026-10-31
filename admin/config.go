@@ -48,6 +48,8 @@ var configVars = map[string]bool{
 	"FXA_OAUTH_SERVER_URL": false, "FXA_EMAIL_DOMAIN": false,
 	// the admin UI's own users and database (owndb.go)
 	"ADMIN_DB_USER": false, "ADMIN_DB_SYNC_USER": false, "ADMIN_DB_NAME": false,
+	// your own database server, the account that applies its SQL (its name, the password is not given)
+	"SYNC_DB_CONTAINERS": false, "SYNC_DB_BOOTSTRAP_USER": false,
 	// the self-hosted accounts
 	"FXA_DB": false, "FXA_DB_HOST": false, "FXA_DB_PORT": false, "FXA_DB_USER": false, "FXA_REDIS": false,
 	"FXA_CONTENT_URL": false, "FXA_AUTH_URL": false, "FXA_PROFILE_URL": false, "FXA_PAIRING_URL": false,

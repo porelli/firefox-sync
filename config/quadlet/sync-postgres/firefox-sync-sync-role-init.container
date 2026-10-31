@@ -4,8 +4,8 @@
 # Without SYNC_POSTGRES_APP_USER (your own server) it does nothing.
 [Unit]
 Description=Firefox Sync - The Sync server's PostgreSQL role
-After=firefox-sync-network.service firefox-sync-postgres-db.service
-Requires=firefox-sync-postgres-db.service
+After=firefox-sync-network.service firefox-sync-postgres-db.service firefox-sync-db-bootstrap.service
+Requires=firefox-sync-postgres-db.service firefox-sync-db-bootstrap.service
 
 [Container]
 Image=%IMAGE_REPOSITORY%:%SYNC_INIT_IMAGE%-%SYNC_INIT_IMAGE_TAG%

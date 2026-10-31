@@ -2,8 +2,8 @@
 # PostgreSQL: as the Sync server's own role (SYNC_POSTGRES_APP_USER, firefox-sync-sync-role-init), like the Sync server
 [Unit]
 Description=Firefox Sync - Syncstorage Database Migrations
-After=firefox-sync-network.service firefox-sync-postgres-db.service firefox-sync-sync-role-init.service
-Requires=firefox-sync-postgres-db.service firefox-sync-sync-role-init.service
+After=firefox-sync-network.service firefox-sync-postgres-db.service firefox-sync-sync-role-init.service firefox-sync-db-bootstrap.service
+Requires=firefox-sync-postgres-db.service firefox-sync-sync-role-init.service firefox-sync-db-bootstrap.service
 
 [Container]
 # Runs the database migrations (and creates the sync node) without exposing

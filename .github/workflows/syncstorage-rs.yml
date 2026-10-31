@@ -454,6 +454,9 @@ jobs:
           REPOSITORY: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
           TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
           EXTERNAL_DB: ${{ matrix.external_db }}
+          # your own MySQL lts server: the stack applies its SQL itself (MySQL 8 and PostgreSQL:
+          # checked only; admin.yml has PostgreSQL the other way round), docs/databases.md#let-the-stack-apply-them
+          DB_BOOTSTRAP: ${{ matrix.external_db == '1' && matrix.database_backend == 'mysql' && !matrix.mysql_image && '1' || '' }}
           SYNC_DB: ${{ matrix.sync_db }}
           SYNC_MYSQL_IMAGE: ${{ matrix.mysql_image }}
           PG_MAJOR_MOVE: ${{ matrix.pg_major_move }}
@@ -493,9 +496,11 @@ jobs:
             sync_db: postgres
             external_db: "1"
             skip_fxa: "1"
+          # (the stack applying the SQL of your own server itself, docs/databases.md#let-the-stack-apply-them)
           - variant: external-mariadb
             sync_db: mariadb
             external_db: "1"
+            db_bootstrap: "1"
             skip_fxa: "1"
           - variant: fxa-mariadb
             sync_db: mariadb
@@ -540,6 +545,7 @@ jobs:
           SYNC_DB: ${{ matrix.sync_db }}
           FXA_DB: ${{ matrix.fxa_db }}
           EXTERNAL_DB: ${{ matrix.external_db }}
+          DB_BOOTSTRAP: ${{ matrix.db_bootstrap }}
           SYNC_MYSQL_FROM: ${{ matrix.sync_mysql_from }}
           FXA_MYSQL_FROM: ${{ matrix.fxa_mysql_from }}
           FXA_MARIADB_FROM: ${{ matrix.fxa_mariadb_from }}

@@ -39,6 +39,31 @@ services:
   # Every service that keeps running has a healthcheck (`docker compose ps` shows it); the
   # one-shot ones (restart: "no": migrations, inits) have none, they are judged by their exit
   # status (service_completed_successfully)
+
+  # your own database server (SYNC_DB_CONTAINERS=0): the users, grants and databases of
+  # database-setup.sql at every start, before the migrations. Applied as SYNC_DB_BOOTSTRAP_USER
+  # when it is set (an account that can create users, docs/databases.md#let-the-stack-apply-them),
+  # otherwise checked: what is missing stops the start here, named in its log
+  # (docs/databases.md#when-a-release-needs-new-users-or-grants). With the database containers:
+  # nothing (db/db-setup.sh)
+  db-bootstrap:
+    # (its image, the client of the databases, the SQL and where the databases are: the database's file)
+    entrypoint: [bash, /ffs-db/db-setup.sh]
+    command: [sync]
+    restart: "no"
+    environment:
+      # set under both names: it refuses to start (x-both-env-names)
+      FFS_BOTH_ENV_NAMES: *both-env-names
+      SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
+      SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
+      SYNC_DB_BOOTSTRAP_PASSWORD: ${SYNC_DB_BOOTSTRAP_PASSWORD:-}
+      ADMIN_DB_USER: ${ADMIN_DB_USER:-ffs_admin_ui}
+      ADMIN_DB_SYNC_USER: ${ADMIN_DB_SYNC_USER:-ffs_admin_sync}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
+      ADMIN_DB_NAME: ${ADMIN_DB_NAME:-ffs_admin}
+    volumes:
+      - ../db/db-setup.sh:/ffs-db/db-setup.sh:ro
+
   syncstorage_migrate:
     <<: *syncstorage
     # Runs the database migrations (and creates the sync node) without exposing
@@ -80,6 +105,9 @@ services:
         exit 1
     restart: "no"
     # (and the databases: the database's file)
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
 
   syncstorage:
     <<: *syncstorage
@@ -143,6 +171,10 @@ services:
       ADMIN_DB_SYNC_USER: ${ADMIN_DB_SYNC_USER:-ffs_admin_sync}
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
       ADMIN_DB_NAME: ${ADMIN_DB_NAME:-ffs_admin}
+      # your own database server: the setup check of database-setup.sql, and whether the stack
+      # applies it (the account's name, not its password)
+      SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
+      SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
       SYNCSTORAGE_URL: http://syncstorage:8000
       # the setup checks: the Sync node, the keys of the sign-ins, the accounts' email domain
       SYNCSTORAGE_DOMAIN: ${SYNC_PUBLIC_URL:-${SYNCSTORAGE_DOMAIN:-}}

@@ -73,6 +73,9 @@ spec:
       {{- if not .Values.existingSecret }}
       {{- $_ := set $annotations "checksum/secrets" (include "firefox-sync.secretData" . | sha256sum) }}
       {{- end }}
+      {{- if not $f.database.bundled }}
+      {{- $_ := set $annotations "checksum/db-setup" (include "firefox-sync.dbSetupData" . | sha256sum) }}
+      {{- end }}
       {{- with include "firefox-sync.podAnnotations" (dict "root" . "annotations" $annotations) }}{{ . | trim | nindent 6 }}{{ end }}
     spec:
       {{- include "firefox-sync.podSpec" . | nindent 6 }}
@@ -148,6 +151,53 @@ spec:
                 sleep 2
               done
               echo "{{ $dbHost }}:{{ $dbPort }} answers"
+        {{- if not $f.database.bundled }}
+        # compose's fxa-db-bootstrap: your own server's users and grants of the accounts (the SQL
+        # of db/mysql/fxa-mysql.sql or fxa-mariadb.sql) applied as
+        # fxa.database.external.bootstrap.user, or checked as the stack's users (db/db-setup.sh)
+        - name: db-bootstrap
+          image: {{ include "firefox-sync.fxaDbImage" . }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "firefox-sync.fxaSecurityContext" . | nindent 12 }}
+          {{- with include "firefox-sync.fxaInitResources" . }}{{ . | trim | nindent 10 }}{{ end }}
+          command: [bash, /ffs-db/db-setup.sh]
+          args: [fxa]
+          env:
+            - name: FFS_DB_ENGINE
+              value: {{ $f.database.backend }}
+            - name: FXA_DB_CONTAINERS
+              value: "0"
+            {{- $boot := $f.database.external.bootstrap.user }}
+            - name: FXA_DB_BOOTSTRAP_USER
+              value: {{ $boot | quote }}
+            {{- if $boot }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_DB_BOOTSTRAP_PASSWORD" "key" "FXA_DB_BOOTSTRAP_PASSWORD") | nindent 12 }}
+            {{- else }}
+            - name: FXA_DB_BOOTSTRAP_PASSWORD
+              value: ""
+            {{- end }}
+            - name: FXA_MYSQL_HOST
+              value: {{ $dbHost | quote }}
+            - name: FXA_MYSQL_PORT
+              value: {{ $dbPort | quote }}
+            - name: FXA_MYSQL_USER
+              value: {{ include "firefox-sync.fxaDbUser" . | quote }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_MYSQL_PASSWORD" "key" "FXA_MYSQL_PASSWORD") | nindent 12 }}
+            - name: FXA_MYSQL_POLICY_USER
+              value: {{ $f.database.external.policyUser | quote }}
+            {{- if $f.database.external.policyUser }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_MYSQL_POLICY_PASSWORD" "key" "FXA_MYSQL_POLICY_PASSWORD") | nindent 12 }}
+            {{- else }}
+            - name: FXA_MYSQL_POLICY_PASSWORD
+              value: ""
+            {{- end }}
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_ADMIN_DB_PASSWORD" "key" "FXA_ADMIN_DB_PASSWORD") | nindent 12 }}
+          volumeMounts:
+            - name: db-setup
+              mountPath: /ffs-db
+              readOnly: true
+        {{- end }}
         # compose's fxa-migrations
         - name: migrations
           image: {{ include "firefox-sync.fxaImage" (dict "root" . "name" "fxa") }}
@@ -415,4 +465,7 @@ spec:
           configMap:
             name: {{ $fullname }}-fxa-config
         {{- with include "firefox-sync.fxaCaVolume" . }}{{ . | nindent 8 }}{{ end }}
+        {{- if not $f.database.bundled }}
+        {{- include "firefox-sync.dbSetupVolume" (dict "root" . "scope" "fxa") | nindent 8 }}
+        {{- end }}
 {{- end }}

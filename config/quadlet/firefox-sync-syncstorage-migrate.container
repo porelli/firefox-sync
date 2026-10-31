@@ -1,7 +1,7 @@
 [Unit]
 Description=Firefox Sync - Syncstorage Database Migrations
-After=firefox-sync-network.service firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
-Requires=firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service
+After=firefox-sync-network.service firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service firefox-sync-db-bootstrap.service
+Requires=firefox-sync-syncstorage-db.service firefox-sync-tokenserver-db.service firefox-sync-db-bootstrap.service
 
 [Container]
 # Runs the database migrations (and creates the sync node) without exposing

@@ -290,6 +290,33 @@ for engine in mariadb postgres; do
   check "$(grep -c '@[A-Z_]*@' "${WORK}/sql/database-setup.sql") $([ "$(grep -c 'pw&ord' "${WORK}/sql/database-setup.sql")" -gt 0 ] && echo values) $(mode "${WORK}/sql/database-setup.sql")" \
     "0 values 600" "render_sync_sql ${engine}: every placeholder filled from .env, as written (& too), this user's only"
 done
+# the bootstrap account's SQL (docs/databases.md#the-bootstrap-account), and the accounts' SQL
+sed -i.bak -e 's|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=ffs_boot|' -e 's|^SYNC_DB_BOOTSTRAP_PASSWORD=.*|SYNC_DB_BOOTSTRAP_PASSWORD=b00t|' \
+  -e 's|^FXA_DB_BOOTSTRAP_USER=.*|FXA_DB_BOOTSTRAP_USER=ffs_fxa_boot|' -e 's|^FXA_DB_BOOTSTRAP_PASSWORD=.*|FXA_DB_BOOTSTRAP_PASSWORD=f00t|' \
+  -e 's|^FXA_MYSQL_POLICY_USER=.*|FXA_MYSQL_POLICY_USER=ffs_policy|' "${WORK}/sql/.env" && rm -f "${WORK}/sql/.env.bak"
+for engine in mariadb postgres fxa; do
+  (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_bootstrap_sql "${engine}")
+  out=${WORK}/sql/database-bootstrap$([ "${engine}" = fxa ] && echo -fxa).sql
+  check "$(grep -c '@[A-Z_]*@' "${out}") $(grep -c "ffs_$([ "${engine}" = fxa ] && echo fxa_)boot" "${out}") $(grep -c "$([ "${engine}" = fxa ] && echo f00t || echo b00t)" "${out}") $(mode "${out}")" \
+    "0 $(case ${engine} in postgres) echo 3 ;; fxa) echo 8 ;; *) echo 6 ;; esac) $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
+    "render_bootstrap_sql ${engine}: the account of .env and its password, every placeholder filled, this user's only"
+done
+(SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mysql native)
+check "$(grep -c '@[A-Z_]*@' "${WORK}/sql/database-setup-fxa.sql") $(grep -c 'IDENTIFIED WITH mysql_native_password' "${WORK}/sql/database-setup-fxa.sql") $(grep -c '^-- native:' "${WORK}/sql/database-setup-fxa.sql") $(ls "${WORK}/sql/database-setup-fxa.native" 2> /dev/null)" \
+  "0 2 0 " "render_fxa_sql mysql native: the accounts' user on mysql_native_password, the template of it removed"
+# db/db-setup.sh fills the templates with the same settings: every placeholder of each one is in them
+for pair in mysql:db/mysql/sync.sql postgres:db/postgres/sync.sql fxa:db/mysql/fxa-mysql.sql fxa:db/mysql/fxa-mariadb.sql; do
+  check "$(grep -o '@[A-Z_]*@' "${CODE}/${pair#*:}" | tr -d @ | sort -u | grep -vxF -f <(bash "${CODE}/db/db-setup.sh" settings "${pair%%:*}" | cut -d' ' -f1) | paste -sd' ' -)" "" \
+    "db/db-setup.sh settings ${pair%%:*}: every placeholder of ${pair#*:}"
+done
+# its early exits, before any connection: the stack's containers, half an account, both names
+dbsetup() { env -i PATH="${PATH}" FFS_DB_DIR="${WORK}/sql/db/mysql" "$@" bash "${CODE}/db/db-setup.sh" sync 2>&1; }
+check "$(dbsetup SYNC_DB_CONTAINERS=1 | grep -c 'nothing to do'; echo "${PIPESTATUS[0]}")" "1
+0" "db/db-setup.sh with the stack's database containers: nothing, exit 0"
+check "$(dbsetup SYNC_DB_CONTAINERS=0 SYNC_DB_BOOTSTRAP_USER=x > /dev/null; echo $?) $(dbsetup SYNC_DB_CONTAINERS=0 SYNC_DB_BOOTSTRAP_USER=x | grep -c 'set both, or neither')" \
+  "1 1" "db/db-setup.sh: a bootstrap user without its password refused"
+check "$(dbsetup SYNC_DB_CONTAINERS=0 FFS_BOTH_ENV_NAMES=SYNC_TOKENSERVER_DB_HOST/MARIADB_TOKENSERVER_SERVER | grep -c 'are both set'; echo "${PIPESTATUS[0]}")" "1
+1" "db/db-setup.sh: a setting under both names refused, as the migrations refuse it"
 
 echo "== setup/quadlets.sh: the checkout the installed units are of (units_installed, units_dir, units_of_here, units_without_dir)"
 QUADLET_DIR=${WORK}/units && mkdir -p "${QUADLET_DIR}" "${WORK}/here"

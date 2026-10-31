@@ -1,0 +1,37 @@
+# Installed instead of ../firefox-sync-fxa-db-bootstrap.container with the accounts on your own
+# MariaDB server (FXA_DB=mariadb): database-setup-fxa.sql applied or checked, with MariaDB's client
+[Unit]
+Description=Firefox Sync - Mozilla accounts - Database users and grants
+After=firefox-sync-network.service
+
+[Container]
+Image=%FXA_MARIADB_IMAGE%
+ContainerName=firefox-sync-fxa-db-bootstrap
+Network=firefox-sync-network.network
+Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
+Volume=%SCRIPT_DIR%/db/mysql/fxa-mariadb.sql:/ffs-db/fxa.sql:ro,z
+
+Environment=FFS_DB_ENGINE=mariadb
+Environment=FXA_DB_CONTAINERS=%FXA_DB_CONTAINERS%
+Environment=FXA_DB_BOOTSTRAP_USER=%FXA_DB_BOOTSTRAP_USER%
+Environment=FXA_DB_BOOTSTRAP_PASSWORD=%FXA_DB_BOOTSTRAP_PASSWORD%
+Environment=FXA_MYSQL_HOST=%FXA_MYSQL_HOST%
+Environment=FXA_MYSQL_PORT=%FXA_MYSQL_PORT%
+Environment=FXA_MYSQL_USER=%FXA_MYSQL_USER%
+Environment=FXA_MYSQL_PASSWORD=%FXA_MYSQL_PASSWORD%
+Environment=FXA_MYSQL_POLICY_USER=%FXA_MYSQL_POLICY_USER%
+Environment=FXA_MYSQL_POLICY_PASSWORD=%FXA_MYSQL_POLICY_PASSWORD%
+Environment=FXA_ADMIN_DB_PASSWORD=%FXA_ADMIN_DB_PASSWORD%
+
+PodmanArgs=--entrypoint=bash
+Exec=/ffs-db/db-setup.sh fxa
+
+AutoUpdate=registry
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target default.target

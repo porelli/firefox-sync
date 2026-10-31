@@ -896,3 +896,41 @@ StatefulSet), "claim" (its template's name), "setting" and "persistence"
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+The data of the db-setup ConfigMap (db-setup.yaml): db-setup.sh, with your own Sync server
+sync.sql (db/mysql/sync.sql, db/postgres/sync.sql), with your own accounts server fxa.sql
+(db/mysql/fxa-<backend>.sql); empty with the bundled servers. Also the checksum of the pods
+that mount it
+*/}}
+{{- define "firefox-sync.dbSetupData" -}}
+{{- $sync := not .Values.database.bundled }}
+{{- $fxa := and .Values.fxa.enabled (not .Values.fxa.database.bundled) }}
+{{- if or $sync $fxa }}
+db-setup.sh: |
+  {{- .Files.Get "files/db-setup.sh" | trimSuffix "\n" | nindent 2 }}
+{{- if $sync }}
+sync.sql: |
+  {{- .Files.Get (printf "files/sync-%s.sql" (ternary "postgres" "mysql" (eq .Values.database.backend "postgres"))) | trimSuffix "\n" | nindent 2 }}
+{{- end }}
+{{- if $fxa }}
+fxa.sql: |
+  {{- .Files.Get (printf "files/fxa-%s.sql" .Values.fxa.database.backend) | trimSuffix "\n" | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The volume of the db-setup ConfigMap for a db-bootstrap init container: db-setup.sh and the
+SQL of the scope ("root", "scope": sync or fxa) at /ffs-db, as compose mounts them
+*/}}
+{{- define "firefox-sync.dbSetupVolume" -}}
+- name: db-setup
+  configMap:
+    name: {{ include "firefox-sync.fullname" .root }}-db-setup
+    items:
+      - key: db-setup.sh
+        path: db-setup.sh
+      - key: {{ .scope }}.sql
+        path: {{ .scope }}.sql
+{{- end }}

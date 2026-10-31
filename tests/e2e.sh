@@ -34,7 +34,13 @@
 #   EXTERNAL_DB     set to 1 for a database server outside the stack (SYNC_DB_CONTAINERS=0, docs/databases.md#your-own-server),
 #                   created with only the grants of db/<engine>/sync.sql: MySQL with binary logging
 #                   for mysql, a PostgreSQL (postgres:latest) owner that is no superuser for postgres; on its own
-#                   network (EXTDB_SUBNET, default: 10.232.1.0/24 mysql, 10.232.2.0/24 postgres)
+#                   network (EXTDB_SUBNET, default: 10.232.1.0/24 mysql, 10.232.2.0/24 postgres). Its
+#                   db-bootstrap checks them at every start; a release that needs a user they lack (the
+#                   admin UI's reader dropped) stops the start, naming it, until db/<engine>/sync.sql runs again
+#   DB_BOOTSTRAP    with EXTERNAL_DB=1, set to 1: the server has only the bootstrap account of
+#                   db/<engine>/bootstrap.sql (docs/databases.md#the-bootstrap-account, nothing more),
+#                   SYNC_DB_BOOTSTRAP_USER in .env: db-bootstrap creates the stack's databases and users
+#                   at every start, and creates the dropped reader again at the next one
 #   UPGRADE_FROM    a checkout of an earlier release (e.g. git worktree add /tmp/ffs-from <tag>):
 #                   the install from before below runs its compose files, its admin UI and its
 #                   init image (built from it), then upgrades to this tree. Default: this tree
@@ -81,6 +87,7 @@ PROJECT=${PROJECT}${SLOT_SUFFIX}
 if [ "${SYNC_DB}" = mysql ] && [ -n "${EXTERNAL_DB:-}" ]; then
   echo "SYNC_DB=mysql is for the database containers, EXTERNAL_DB=1 is already MySQL (SYNC_MYSQL_IMAGE)"; exit 2
 fi
+[ -z "${DB_BOOTSTRAP:-}" ] || [ -n "${EXTERNAL_DB:-}" ] || { echo "DB_BOOTSTRAP=1 is for EXTERNAL_DB=1"; exit 2; }
 SYNC_MYSQL_IMAGE=${SYNC_MYSQL_IMAGE:-mysql:lts} MYSQL_TESTED=${SYNC_MYSQL_IMAGE:-mysql:lts}
 case "${SYNC_MYSQL_IMAGE##*:}" in 8|8.*) MYSQL_PINNED=8 ;; *) MYSQL_PINNED="" ;; esac
 # the admin UI trusts the X-Test-Email header of the containers (tests/compose/sync.yml),
@@ -149,6 +156,9 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
       -e "s|^SYNC_TOKENSERVER_DB_HOST=.*|SYNC_TOKENSERVER_DB_HOST=${EXTDB}|" \
       -e "s|^SYNC_STORAGE_DB_HOST=.*|SYNC_STORAGE_DB_HOST=${EXTDB}|" \
       -e "s|^SYNC_POSTGRES_HOST=.*|SYNC_POSTGRES_HOST=${EXTDB}|" "${ENV_FILE}"
+  # the stack applies database-setup.sql itself, as the bootstrap account (start_extdb creates it)
+  [ -z "${DB_BOOTSTRAP:-}" ] || sed -i -e "s|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=ffs_bootstrap|" \
+    -e "s|^SYNC_DB_BOOTSTRAP_PASSWORD=.*|SYNC_DB_BOOTSTRAP_PASSWORD=$(rnd)|" "${ENV_FILE}"
 fi
 # PG_MAJOR_MOVE=1: the install on the major before that of postgres:latest (read from the image,
 # pulled first), moved to it at the end with the steps of docs/upgrading.md#postgresql
@@ -430,6 +440,11 @@ start_extdb() {
         -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" -e "s|@ADMIN_PASSWORD@|${ADMIN_DB_SECRET}|g" "${CODE}/db/postgres/sync.sql"
   fi > "${WORK}/database-setup.sql"
   check "$(grep -c '@[A-Z_]*@' "${WORK}/database-setup.sql")" 0 "external database: SQL template filled in"
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    # only the account of docs/databases.md#the-bootstrap-account: the stack does the rest
+    extdb_bootstrap_account || return 1
+    return 0
+  fi
   # run twice, first with other passwords: prepare_environment.sh run again makes new ones
   local real
   for real in "" 1; do
@@ -445,10 +460,24 @@ start_extdb() {
         sed "s|PASSWORD '[^']*'|PASSWORD 'stale'|" "${WORK}/database-setup.sql" \
           | docker exec -i -e PGPASSWORD="${EXTDB_PG_ADMIN}" "${EXTDB}" psql -h 127.0.0.1 -U dbadmin -d postgres -v ON_ERROR_STOP=1 -q > /dev/null || return 1
       else
-        docker exec -i -e PGPASSWORD="${EXTDB_PG_ADMIN}" "${EXTDB}" psql -h 127.0.0.1 -U dbadmin -d postgres -q < "${WORK}/database-setup.sql" > /dev/null 2>&1 || return 1
+        # (and run again: the statements of a database that exists already change nothing, no error)
+        docker exec -i -e PGPASSWORD="${EXTDB_PG_ADMIN}" "${EXTDB}" psql -h 127.0.0.1 -U dbadmin -d postgres -v ON_ERROR_STOP=1 -q < "${WORK}/database-setup.sql" > /dev/null 2>&1 || return 1
       fi
     fi
   done
+}
+
+# DB_BOOTSTRAP=1: the account of db/<engine>/bootstrap.sql on the external server, as its
+# administrator (PostgreSQL: the superuser), and nothing else (docs/databases.md#the-bootstrap-account)
+extdb_bootstrap_account() {
+  local template=${CODE}/db/mysql/bootstrap.sql
+  [ "${BACKEND}" = postgres ] && template=${CODE}/db/postgres/bootstrap.sql
+  sed -e "s|@BOOTSTRAP_USER@|${SYNC_DB_BOOTSTRAP_USER}|g" -e "s|@BOOTSTRAP_PASSWORD@|${SYNC_DB_BOOTSTRAP_PASSWORD}|g" \
+      -e "s|@SYNC_TOKENSERVER_DATABASE@|${SYNC_TOKENSERVER_DB_NAME}|g" -e "s|@SYNC_STORAGE_DATABASE@|${SYNC_STORAGE_DB_NAME}|g" \
+      -e "s|@ADMIN_DATABASE@|${ADMIN_DB_NAME}|g" -e "s|@SYNC_POSTGRES_USER@|${SYNC_POSTGRES_USER}|g" \
+      -e "s|@ADMIN_USER@|${ADMIN_DB_USER}|g" -e "s|@ADMIN_SYNC_USER@|${ADMIN_DB_SYNC_USER}|g" "${template}" > "${WORK}/database-bootstrap.sql"
+  check "$(grep -c '@[A-Z_]*@' "${WORK}/database-bootstrap.sql")" 0 "the bootstrap account's SQL filled in" || return 1
+  extdb_admin < "${WORK}/database-bootstrap.sql" > /dev/null || return 1
 }
 
 teardown() {
@@ -482,7 +511,7 @@ echo "== ${PROJECT}: pulling ${REPOSITORY} ${TAG}"
 if [ -n "${EXTDB}" ]; then
   echo "== external database server ${EXTDB} ($([ "${BACKEND}" = mysql ] && echo "${SYNC_MYSQL_IMAGE}" || echo postgres:latest))"
   start_extdb
-  check "$?" 0 "external database server with the databases and users of db/${BACKEND}/sync.sql"
+  check "$?" 0 "external database server with $([ -n "${DB_BOOTSTRAP:-}" ] && echo "only the bootstrap account of db/${BACKEND}/bootstrap.sql" || echo "the databases and users of db/${BACKEND}/sync.sql")"
 fi
 
 # a stack of an earlier KEEP=1 run of this project would make the fail-closed check pass
@@ -610,6 +639,16 @@ mkdir -p "${UP}" && cp -r "${CODE}/prepare_environment.sh" "${CODE}/setup" "${CO
 # (the compose project of this test, as a user running docker compose -p would set it)
 (cd "${UP}" && COMPOSE_PROJECT_NAME=${PROJECT} ./prepare_environment.sh --upgrade) > "${WORK}/upgrade.log" 2>&1
 check "$?" 0 "./prepare_environment.sh --upgrade" || cat "${WORK}/upgrade.log"
+# your own server: --upgrade keeps the choice of the bootstrap, asks nothing, and says what happens with the SQL
+if [ -n "${EXTDB}" ]; then
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    check "$(grep -c "^SYNC_DB_BOOTSTRAP_USER=${SYNC_DB_BOOTSTRAP_USER}$" "${UP}/.env") $(grep -c 'the stack applies database-setup.sql itself at the next start' "${WORK}/upgrade.log")" "1 1" \
+      "--upgrade keeps SYNC_DB_BOOTSTRAP_USER: the stack applies database-setup.sql at the next start"
+  else
+    check "$(grep -c '^SYNC_DB_BOOTSTRAP_USER=.' "${UP}/.env") $(grep -c 'run database-setup.sql there first' "${WORK}/upgrade.log")" "0 1" \
+      "--upgrade without the bootstrap: database-setup.sql to run there first"
+  fi
+fi
 check "$(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-${SYNC_FILE}.yml" "${UP}/.env") $(grep -cx "COMPOSE_PROJECT_NAME=${PROJECT}" "${UP}/.env") $(grep -c '^COMPOSE_FILE: the compose files moved to compose/' "${WORK}/upgrade.log")" \
   "1 1 1" "--upgrade: COMPOSE_FILE with the files of compose/ (sync-${SYNC_FILE}.yml), the project's name next to it, and says so"
 # the Sync MariaDB containers of an install from before SYNC_MARIADB_IMAGE (mariadb:lts): pinned
@@ -685,6 +724,44 @@ RC=$? SECS=$(($(date +%s) - T0))
 check "${RC} $(grep -c 'still running 30 s after SIGTERM, killed' <<< "${OUT}") $(grep -c 'Migrations completed' <<< "${OUT}")" "0 1 1" \
   "a syncstorage-rs that ignores SIGTERM is killed, the migrations step exits 0"
 check "$([ "${SECS}" -lt 60 ] && echo yes)" yes "within a minute (${SECS} s)"
+
+if [ -n "${EXTDB}" ]; then
+  # a release that needs a user your server lacks (docs/databases.md#when-a-release-needs-new-users-or-grants):
+  # here the admin UI's reader, dropped
+  echo "== a release that needs a user the server lacks (${ADMIN_DB_SYNC_USER} dropped): $([ -n "${DB_BOOTSTRAP:-}" ] && echo "db-bootstrap creates it again" || echo "the start stops, naming it")"
+  if [ "${BACKEND}" = mysql ]; then
+    extdb_admin -e "DROP USER '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
+    missing="CREATE USER IF NOT EXISTS '${ADMIN_DB_SYNC_USER}'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>';"
+  else
+    printf '%s\n' "\\connect ${SYNC_POSTGRES_NAME}" "DROP OWNED BY ${ADMIN_DB_SYNC_USER};" "DROP ROLE ${ADMIN_DB_SYNC_USER};" | extdb_admin > /dev/null
+    missing="no role ${ADMIN_DB_SYNC_USER} that can sign in: CREATE ROLE ${ADMIN_DB_SYNC_USER} LOGIN PASSWORD '<ADMIN_DB_PASSWORD>';"
+  fi
+  check "$(admin_sync_sql 'SELECT 1;' 2> /dev/null)" "" "the admin UI's reader ${ADMIN_DB_SYNC_USER} is gone from the server"
+  dc stop > /dev/null 2>&1
+  dc up -d > "${WORK}/release.log" 2>&1
+  release_rc=$?
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    check "${release_rc} $(wait_init) $(admin_healthy) $(admin_sync_sql 'SELECT 1;')" "0 0 healthy 1" \
+      "the next start: db-bootstrap created ${ADMIN_DB_SYNC_USER} again, the stack and the admin UI up, the reader signs in"
+    check "$([ "$(dc logs db-bootstrap 2>&1 | grep -c "✓ database-setup.sql applied as ${SYNC_DB_BOOTSTRAP_USER}")" -ge 2 ] && echo yes)" yes \
+      "db-bootstrap applied database-setup.sql as ${SYNC_DB_BOOTSTRAP_USER} (the account of db/${BACKEND}/bootstrap.sql only) at every start"
+  else
+    check "$([ "${release_rc}" != 0 ] && echo failed) $(state db-bootstrap ExitCode) $(state syncstorage Running || echo false) $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/__heartbeat__")" \
+      "failed 1 false 000" "the next start stops in db-bootstrap, the Sync server down"
+    check "$(dc logs db-bootstrap 2>&1 | grep -cF -- "${missing}") $(dc logs db-bootstrap 2>&1 | grep -c 'Run database-setup.sql again .*docs/databases.md#when-a-release-needs-new-users-or-grants')" "1 1" \
+      "db-bootstrap names the missing statement (${missing}), database-setup.sql to run again and the doc"
+    # what docs/databases.md#when-a-release-needs-new-users-or-grants says: the SQL again, a new start
+    if [ "${BACKEND}" = mysql ]; then
+      extdb_admin < "${WORK}/database-setup.sql" > /dev/null
+    else
+      docker exec -i -e PGPASSWORD="${EXTDB_PG_ADMIN}" "${EXTDB}" psql -h 127.0.0.1 -U dbadmin -d postgres -v ON_ERROR_STOP=1 -q < "${WORK}/database-setup.sql" > /dev/null
+    fi
+    check "$?" 0 "database-setup.sql run again on the server, as its administrator"
+    dc up -d > /dev/null 2>&1
+    check "$(wait_init) $(admin_healthy) $(admin_sync_sql 'SELECT 1;')" "0 healthy 1" "then the next start: the stack and the admin UI up, the reader signs in"
+  fi
+  check "$(hb)" 200 "/__heartbeat__ after the start"
+fi
 
 echo "== the Sync server's users cannot read or change the event log"
 denied() { if grep -qiE 'denied|permission' <<< "$1"; then echo denied; else echo "allowed: $1"; fi; }
@@ -828,8 +905,10 @@ if [ -n "${EXTDB}" ]; then
   else
     check "$(echo "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname = '${SYNC_POSTGRES_USER}';" | extdb_admin)" "f|f|f" \
       "the database owner is no superuser"
-    check "$(echo "SELECT has_database_privilege('dbadmin', '${SYNC_POSTGRES_NAME}', 'TEMP'), has_database_privilege('public', '${SYNC_POSTGRES_NAME}', 'CONNECT');" | extdb_admin)" "t|f" \
-      "database created by a CREATEROLE CREATEDB role, closed to PUBLIC"
+    # (by dbadmin, or by the bootstrap account: both CREATEROLE CREATEDB, no superuser)
+    creator=$([ -n "${DB_BOOTSTRAP:-}" ] && echo "${SYNC_DB_BOOTSTRAP_USER}" || echo dbadmin)
+    check "$(echo "SELECT has_database_privilege('${creator}', '${SYNC_POSTGRES_NAME}', 'TEMP'), has_database_privilege('public', '${SYNC_POSTGRES_NAME}', 'CONNECT'), rolsuper FROM pg_roles WHERE rolname = '${creator}';" | extdb_admin)" "t|f|f" \
+      "database created by a CREATEROLE CREATEDB role (${creator}, no superuser), closed to PUBLIC"
   fi
 fi
 

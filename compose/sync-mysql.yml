@@ -46,6 +46,26 @@ services:
   syncstorage:
     environment: *sync-mysql-env
 
+  # your own server: database-setup.sql applied or checked before the migrations (sync.yml);
+  # with this file's database containers it does nothing (your own MySQL server: sync-mariadb.yml)
+  db-bootstrap:
+    image: ${SYNC_MYSQL_IMAGE:-mysql:lts}
+    environment:
+      SYNC_TOKENSERVER_DB_HOST: ${SYNC_TOKENSERVER_DB_HOST:-${MARIADB_TOKENSERVER_SERVER:-}}
+      SYNC_TOKENSERVER_DB_PORT: ${SYNC_TOKENSERVER_DB_PORT:-${MARIADB_TOKENSERVER_SERVER_PORT:-}}
+      SYNC_TOKENSERVER_DB_NAME: ${SYNC_TOKENSERVER_DB_NAME:-${MARIADB_TOKENSERVER_DATABASE:-}}
+      SYNC_TOKENSERVER_DB_USER: ${SYNC_TOKENSERVER_DB_USER:-${MARIADB_TOKENSERVER_USER:-}}
+      SYNC_TOKENSERVER_DB_PASSWORD: ${SYNC_TOKENSERVER_DB_PASSWORD:-${MARIADB_TOKENSERVER_PASSWORD:-}}
+      SYNC_STORAGE_DB_HOST: ${SYNC_STORAGE_DB_HOST:-${MARIADB_SYNCSTORAGE_SERVER:-}}
+      SYNC_STORAGE_DB_PORT: ${SYNC_STORAGE_DB_PORT:-${MARIADB_SYNCSTORAGE_SERVER_PORT:-}}
+      SYNC_STORAGE_DB_NAME: ${SYNC_STORAGE_DB_NAME:-${MARIADB_SYNCSTORAGE_DATABASE:-}}
+      SYNC_STORAGE_DB_USER: ${SYNC_STORAGE_DB_USER:-${MARIADB_SYNCSTORAGE_USER:-}}
+      SYNC_STORAGE_DB_PASSWORD: ${SYNC_STORAGE_DB_PASSWORD:-${MARIADB_SYNCSTORAGE_PASSWORD:-}}
+      # false with your own MySQL server: its certificate is self-signed
+      SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+    volumes:
+      - ../db/mysql/sync.sql:/ffs-db/sync.sql:ro
+
   syncstorage_db:
     <<: *sync-mysql
     environment:

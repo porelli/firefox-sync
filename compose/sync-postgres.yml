@@ -16,6 +16,20 @@ x-sync-postgres-env: &sync-postgres-env
   SYNC_TOKENSERVER__DATABASE_URL: postgres://${SYNC_POSTGRES_APP_USER:-${POSTGRES_SYNC_USER:-${SYNC_POSTGRES_USER:-${POSTGRES_USER:-}}}}:${SYNC_POSTGRES_APP_PASSWORD:-${POSTGRES_SYNC_PASSWORD:-${SYNC_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-}}}}@${SYNC_POSTGRES_HOST:-${POSTGRES_SERVER:-}}:${SYNC_POSTGRES_PORT:-${POSTGRES_SERVER_PORT:-}}/${SYNC_POSTGRES_NAME:-${POSTGRES_DATABASE:-}}
 
 services:
+  # your own server: database-setup.sql applied or checked before the Sync server's role and the
+  # migrations (sync.yml), with PostgreSQL's client
+  db-bootstrap:
+    image: ${SYNC_POSTGRES_IMAGE:-${POSTGRES_IMAGE:-postgres:latest}}
+    environment:
+      FFS_DB_ENGINE: postgres
+      SYNC_POSTGRES_HOST: ${SYNC_POSTGRES_HOST:-${POSTGRES_SERVER:-}}
+      SYNC_POSTGRES_PORT: ${SYNC_POSTGRES_PORT:-${POSTGRES_SERVER_PORT:-}}
+      SYNC_POSTGRES_NAME: ${SYNC_POSTGRES_NAME:-${POSTGRES_DATABASE:-}}
+      SYNC_POSTGRES_USER: ${SYNC_POSTGRES_USER:-${POSTGRES_USER:-}}
+      SYNC_POSTGRES_PASSWORD: ${SYNC_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-}}
+    volumes:
+      - ../db/postgres/sync.sql:/ffs-db/sync.sql:ro
+
   # the Sync server's own role (SYNC_POSTGRES_APP_USER), before the migrations: created, given
   # the Sync tables (those of a database from before it) and the right to create them. Then
   # no superuser session reads or writes a table that role owns (its triggers, rules, views
@@ -27,6 +41,8 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
     restart: "no"
     environment:
       POSTGRES_SERVER: ${SYNC_POSTGRES_HOST:-${POSTGRES_SERVER:-}}

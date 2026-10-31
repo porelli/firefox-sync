@@ -1,0 +1,18 @@
+{{- /*
+Your own database servers (database.bundled false, fxa.database.bundled false): db/db-setup.sh
+and the SQL of db/ (copies in files/, kept identical), for the db-bootstrap init containers of
+the Sync server and of the accounts' auth pod, as compose's db-bootstrap and fxa-db-bootstrap:
+the users, grants and databases of that SQL applied as database.external.bootstrap.user
+(fxa.database.external.bootstrap.user), or checked (docs/databases.md#let-the-stack-apply-them)
+*/ -}}
+{{- $data := include "firefox-sync.dbSetupData" . }}
+{{- if $data }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "firefox-sync.fullname" . }}-db-setup
+  labels:
+    {{- include "firefox-sync.labels" (dict "root" . "component" "db-setup") | nindent 4 }}
+data:
+  {{- $data | nindent 2 }}
+{{- end }}

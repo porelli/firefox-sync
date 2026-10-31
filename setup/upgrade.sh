@@ -13,7 +13,8 @@
 # FXA_MYSQL_IMAGE=mysql:8 and FXA_MYSQL_ARGS with mysql_native_password, Sync on MySQL
 # SYNC_MYSQL_IMAGE=mysql:8 (the default is now mysql:lts, 9; docs/upgrading.md#mysql-8-to-9). A value already set is kept; the
 # old file is kept as .env.before-upgrade-<UTC time>. With your own database server database-setup.sql
-# is written again, to run there first. First the settings of RENAMED_SETTINGS get their new
+# (and database-setup-fxa.sql) is written again, to run there first, or applied by the stack itself
+# at the next start (SYNC_DB_BOOTSTRAP_USER, the choice of the setup). First the settings of RENAMED_SETTINGS get their new
 # names, their values as they are.
 # The Quadlets (their units installed from this directory, or --render-units): the same, then
 # the settings of .env-example that .env lacks added with their defaults (a new secret only
@@ -296,9 +297,25 @@ upgrade_env() {
     unset ENV_READ
     # the passwords: this user only
     chmod 600 "${dot_env}"
+    # your own database server: the SQL of this release, which the stack applies itself at the
+    # next start with SYNC_DB_BOOTSTRAP_USER (FXA_DB_BOOTSTRAP_USER), or checks (the choice of
+    # the setup, kept: nothing asked)
     if [ "$(env_value SYNC_DB_CONTAINERS)" = 0 ]; then
         if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ]; then render_sync_sql postgres; else render_sync_sql mariadb; fi
-        echo "Your own database server: run database-setup.sql there first, as its administrator (docs/databases.md#create-the-databases-and-users)."
+        if [ -n "$(env_value SYNC_DB_BOOTSTRAP_USER)" ]; then
+            echo "Your own database server: the stack applies database-setup.sql itself at the next start, as $(env_value SYNC_DB_BOOTSTRAP_USER) (SYNC_DB_BOOTSTRAP_USER, docs/databases.md#let-the-stack-apply-them)."
+        else
+            echo "Your own database server: run database-setup.sql there first, as its administrator (docs/databases.md#create-the-databases-and-users)."
+        fi
+    fi
+    if fxa_installed && [ "$(env_value FXA_DB_CONTAINERS)" = 0 ]; then
+        render_fxa_sql "$([ "$(env_value FXA_DB)" = mariadb ] && echo mariadb || echo mysql)" \
+            "$([ "$(env_value FXA_DB)" != mariadb ] && [[ "$(env_value FXA_MYSQL_ARGS)" == *mysql_native_password* ]] && echo native)"
+        if [ -n "$(env_value FXA_DB_BOOTSTRAP_USER)" ]; then
+            echo "The accounts on your own database server: the stack applies database-setup-fxa.sql itself at the next start, as $(env_value FXA_DB_BOOTSTRAP_USER) (FXA_DB_BOOTSTRAP_USER)."
+        else
+            echo "The accounts on your own database server: run database-setup-fxa.sql there first, as its administrator (docs/databases.md#create-the-databases-and-users)."
+        fi
     fi
     fxa_mariadb_image_check
     fxa_installed && UPGRADING=yes fxa_mysql_image_check

@@ -327,6 +327,29 @@ if [ "${SELF_HOST_FXA}" = "yes" ] && [ "${DEPLOY_METHOD:-}" != quadlets ]; then
         case "${PAIRING}" in y|Y|yes) PAIRING=yes ;; *) PAIRING=no ;; esac
     fi
 fi
+# your own database server: the stack applies database-setup.sql (database-setup-fxa.sql) itself at
+# every start, as an account that can create users (docs/databases.md#let-the-stack-apply-them);
+# default no: it then only checks that they are there. Asked last, so that scripted answers for
+# the questions above still line up
+SYNC_DB_BOOTSTRAP_USER="" SYNC_DB_BOOTSTRAP_PASSWORD="" FXA_DB_BOOTSTRAP_USER="" FXA_DB_BOOTSTRAP_PASSWORD=""
+ask_bootstrap() { # <prefix: SYNC or FXA> <what>
+    local answer user password
+    read -r -e -p "Let the stack apply database changes itself at start${2} (needs a database account that can create users, see docs/databases.md#let-the-stack-apply-them)? (y/N): " answer
+    case "${answer}" in y|Y|yes) ;; *) return 0 ;; esac
+    read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [ffs_bootstrap]: " user
+    user=${user:-ffs_bootstrap}
+    [[ "${user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "ERROR: not a valid user name (A-Z, a-z, 0-9, _): '${user}'"; exit 1; }
+    read -r -e -s -p "Its password (empty: a new one): " password
+    echo ""
+    [ -n "${password}" ] || password=$(generate_random_string 32)
+    # (in database-bootstrap.sql, and in the database URLs' rules)
+    [[ "${password}" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "ERROR: the password: only A-Z a-z 0-9 . _ ~ -"; exit 1; }
+    printf -v "${1}_DB_BOOTSTRAP_USER" '%s' "${user}"
+    printf -v "${1}_DB_BOOTSTRAP_PASSWORD" '%s' "${password}"
+}
+[ "${EXTERNAL_DB}" = "yes" ] && ask_bootstrap SYNC "$([ "${EXTERNAL_FXA_DB}" = "yes" ] && echo " for Sync")"
+[ "${EXTERNAL_FXA_DB}" = "yes" ] && ask_bootstrap FXA " for the accounts"
+
 # COMPOSE_PROFILES: the whole list of what was chosen (the Quadlets read admin there too)
 COMPOSE_PROFILES_CHOSEN=""
 for profile in admin:${ADMIN_UI} backup:${BACKUPS} pairing:${PAIRING}; do
@@ -458,6 +481,11 @@ if [ "${SYNC_COMPOSE_MYSQL}" = "yes" ]; then
 fi
 if [ "${EXTERNAL_DB}" = "yes" ]; then
     apply_sed "${NEW_ENV}" "s|^SYNC_DB_CONTAINERS=.*|SYNC_DB_CONTAINERS=0|"
+    # the account that applies database-setup.sql at every start, when asked for
+    if [ -n "${SYNC_DB_BOOTSTRAP_USER}" ]; then
+        apply_sed "${NEW_ENV}" "s|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=${SYNC_DB_BOOTSTRAP_USER}|"
+        apply_sed "${NEW_ENV}" "s|^SYNC_DB_BOOTSTRAP_PASSWORD=.*|SYNC_DB_BOOTSTRAP_PASSWORD=${SYNC_DB_BOOTSTRAP_PASSWORD}|"
+    fi
     if [ "${DATABASE_BACKEND}" = "postgres" ]; then
         for name in SYNC_POSTGRES_NAME SYNC_POSTGRES_USER; do
             apply_sed "${NEW_ENV}" "s|^${name}=.*|${name}=${!name}|"
@@ -509,6 +537,10 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
             apply_sed "${NEW_ENV}" "s|^${name}=.*|${name}=${!name}|"
         done
         apply_sed "${NEW_ENV}" "s|^FXA_MYSQL_POLICY_PASSWORD=.*|FXA_MYSQL_POLICY_PASSWORD=$(generate_random_string 32)|"
+        if [ -n "${FXA_DB_BOOTSTRAP_USER}" ]; then
+            apply_sed "${NEW_ENV}" "s|^FXA_DB_BOOTSTRAP_USER=.*|FXA_DB_BOOTSTRAP_USER=${FXA_DB_BOOTSTRAP_USER}|"
+            apply_sed "${NEW_ENV}" "s|^FXA_DB_BOOTSTRAP_PASSWORD=.*|FXA_DB_BOOTSTRAP_PASSWORD=${FXA_DB_BOOTSTRAP_PASSWORD}|"
+        fi
     fi
     apply_sed "${NEW_ENV}" "s|^FXA_DB=.*|FXA_DB=${FXA_DB}|"
     # MariaDB lts for new installs (12 today, with the patched migrations), written out (also
@@ -633,19 +665,14 @@ unset ENV_READ
 
 # the SQL for your own database server, with the names and passwords of .env (docs/databases.md#create-the-databases-and-users)
 [ "${EXTERNAL_DB}" = "yes" ] && render_sync_sql "${DATABASE_BACKEND}"
+# and the account that applies it at every start (docs/databases.md#the-bootstrap-account); an
+# earlier one removed: it holds that account's password
+rm -f "${SCRIPT_DIR}/database-bootstrap.sql" "${SCRIPT_DIR}/database-bootstrap-fxa.sql"
+[ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && render_bootstrap_sql "${DATABASE_BACKEND}"
+[ -n "${FXA_DB_BOOTSTRAP_USER}" ] && render_bootstrap_sql fxa
 if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
-    fxa_template=${SCRIPT_DIR}/db/mysql/fxa-${FXA_DB}.sql
     # MySQL and an accounts image without mozilla/fxa#21554: their user on mysql_native_password
-    # (the commented lines of fxa-mysql.sql instead of those after them)
-    if [ "${FXA_DB}" = mysql ] && [ "${FXA_MYSQL2}" != 0 ]; then
-        fxa_template=${SCRIPT_DIR}/database-setup-fxa.native
-        sed -e "/^-- native: /{s/^-- native: //;n;d;}" "${SCRIPT_DIR}/db/mysql/fxa-mysql.sql" > "${fxa_template}"
-    fi
-    render_sql "${fxa_template}" "${SCRIPT_DIR}/database-setup-fxa.sql" \
-        FXA_USER="$(env_value FXA_MYSQL_USER)" FXA_PASSWORD="$(env_value FXA_MYSQL_PASSWORD)" \
-        FXA_POLICY_USER="$(env_value FXA_MYSQL_POLICY_USER)" FXA_POLICY_PASSWORD="$(env_value FXA_MYSQL_POLICY_PASSWORD)" \
-        FXA_ADMIN_PASSWORD="$(env_value FXA_ADMIN_DB_PASSWORD)"
-    [ "${fxa_template}" = "${SCRIPT_DIR}/db/mysql/fxa-${FXA_DB}.sql" ] || rm -f "${fxa_template}"
+    render_fxa_sql "${FXA_DB}" "$([ "${FXA_DB}" = mysql ] && [ "${FXA_MYSQL2}" != 0 ] && echo native)"
 fi
 
 # prepare nginx example
@@ -693,7 +720,9 @@ echo "Database Backend: ${DATABASE_BACKEND}"
 echo "Configuration files created:"
 echo "  - .env"
 [ "${EXTERNAL_DB}" = "yes" ] && echo "  - database-setup.sql (the databases and users for your server)"
+[ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && echo "  - database-bootstrap.sql (the account ${SYNC_DB_BOOTSTRAP_USER}, which applies database-setup.sql at every start)"
 [ "${EXTERNAL_FXA_DB}" = "yes" ] && echo "  - database-setup-fxa.sql (the accounts users for your $([ "${FXA_DB}" = "mariadb" ] && echo MariaDB || echo MySQL) server)"
+[ -n "${FXA_DB_BOOTSTRAP_USER}" ] && echo "  - database-bootstrap-fxa.sql (the account ${FXA_DB_BOOTSTRAP_USER}, which applies database-setup-fxa.sql at every start)"
 echo "  - config/nginx/syncstorage-rs.conf"
 echo "  - config/systemd/syncstorage-rs.service"
 [ "${SELF_HOST_FXA}" = "yes" ] && echo "  - config/nginx/fxa.conf (accounts.${FXA_DOMAIN}, api.${FXA_DOMAIN}, profile.${FXA_DOMAIN}${ADMIN_HOST:+, ${ADMIN_HOST}}$([ "${PAIRING}" = yes ] && echo ", pairing.${FXA_DOMAIN}"))"
@@ -711,25 +740,31 @@ fi
 echo ""
 
 # your own database server: what to run there first
+# (with the bootstrap: the file of its account, once; the stack runs database-setup.sql itself)
+SYNC_SQL_FILE=database-setup.sql FXA_SQL_FILE=database-setup-fxa.sql
+[ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && SYNC_SQL_FILE=database-bootstrap.sql
+[ -n "${FXA_DB_BOOTSTRAP_USER}" ] && FXA_SQL_FILE=database-bootstrap-fxa.sql
 if [ "${EXTERNAL_DB}" = "yes" ]; then
     echo "First, on your database server (see docs/databases.md#create-the-databases-and-users):"
+    [ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && echo "  once, the account ${SYNC_DB_BOOTSTRAP_USER} (it creates it; an account you have: its grants), then the stack applies database-setup.sql at every start:"
     if [ "${DATABASE_BACKEND}" = "postgres" ]; then
-        echo "  psql -h ${DB_HOST} -p ${DB_PORT} -U postgres -f database-setup.sql"
+        echo "  psql -h ${DB_HOST} -p ${DB_PORT} -U postgres -f ${SYNC_SQL_FILE}"
         echo "  pg_hba.conf: a host line (not hostssl) for the containers' addresses, scram-sha-256"
     else
-        echo "  MySQL:   mysql -h ${DB_HOST} -P ${DB_PORT} -u root -p < database-setup.sql"
-        echo "  MariaDB: mariadb -h ${DB_HOST} -P ${DB_PORT} -u root -p < database-setup.sql"
+        echo "  MySQL:   mysql -h ${DB_HOST} -P ${DB_PORT} -u root -p < ${SYNC_SQL_FILE}"
+        echo "  MariaDB: mariadb -h ${DB_HOST} -P ${DB_PORT} -u root -p < ${SYNC_SQL_FILE}"
         echo "  with binary logging (MySQL's default): log_bin_trust_function_creators=ON"
         echo "  plain connections allowed (require_secure_transport=OFF): the Sync server has no TLS"
     fi
 fi
 if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
     [ "${EXTERNAL_DB}" = "yes" ] || echo "First, on your database server (see docs/databases.md#create-the-databases-and-users):"
+    [ -n "${FXA_DB_BOOTSTRAP_USER}" ] && echo "  once, the account ${FXA_DB_BOOTSTRAP_USER} for the accounts, then the stack applies database-setup-fxa.sql at every start:"
     if [ "${FXA_DB}" = "mariadb" ]; then
-        echo "  mariadb -h ${FXA_MYSQL_HOST} -P ${FXA_MYSQL_PORT} -u root -p < database-setup-fxa.sql"
+        echo "  mariadb -h ${FXA_MYSQL_HOST} -P ${FXA_MYSQL_PORT} -u root -p < ${FXA_SQL_FILE}"
         echo "  MariaDB 11.4 or later (12: with our accounts images, docs/accounts.md#mariadb-12), with binary logging: log_bin_trust_function_creators=ON"
     else
-        echo "  mysql -h ${FXA_MYSQL_HOST} -P ${FXA_MYSQL_PORT} -u root -p < database-setup-fxa.sql"
+        echo "  mysql -h ${FXA_MYSQL_HOST} -P ${FXA_MYSQL_PORT} -u root -p < ${FXA_SQL_FILE}"
         if [ "${FXA_MYSQL2}" = 0 ]; then
             echo "  MySQL 8.4 or 9 with log_bin_trust_function_creators=ON"
         else

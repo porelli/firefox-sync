@@ -1,0 +1,49 @@
+# Your own database server (SYNC_DB_CONTAINERS=0; with the database containers this unit is not
+# installed): the users, grants and databases of database-setup.sql at every start, before the
+# migrations, as compose's db-bootstrap. Applied as SYNC_DB_BOOTSTRAP_USER when it is set (an
+# account that can create users, docs/databases.md#let-the-stack-apply-them), otherwise checked:
+# what is missing stops the start here, in its journal (db/db-setup.sh). MariaDB's client, also
+# for your own MySQL server
+[Unit]
+Description=Firefox Sync - Database users and grants
+After=firefox-sync-network.service
+
+[Container]
+Image=%SYNC_MARIADB_IMAGE%
+ContainerName=firefox-sync-db-bootstrap
+Network=firefox-sync-network.network
+Volume=%SCRIPT_DIR%/db/db-setup.sh:/ffs-db/db-setup.sh:ro,z
+Volume=%SCRIPT_DIR%/db/mysql/sync.sql:/ffs-db/sync.sql:ro,z
+
+Environment=SYNC_DB_CONTAINERS=%SYNC_DB_CONTAINERS%
+Environment=SYNC_DB_BOOTSTRAP_USER=%SYNC_DB_BOOTSTRAP_USER%
+Environment=SYNC_DB_BOOTSTRAP_PASSWORD=%SYNC_DB_BOOTSTRAP_PASSWORD%
+Environment=SYNC_TOKENSERVER_DB_HOST=%SYNC_TOKENSERVER_DB_HOST%
+Environment=SYNC_TOKENSERVER_DB_PORT=%SYNC_TOKENSERVER_DB_PORT%
+Environment=SYNC_TOKENSERVER_DB_NAME=%SYNC_TOKENSERVER_DB_NAME%
+Environment=SYNC_TOKENSERVER_DB_USER=%SYNC_TOKENSERVER_DB_USER%
+Environment=SYNC_TOKENSERVER_DB_PASSWORD=%SYNC_TOKENSERVER_DB_PASSWORD%
+Environment=SYNC_STORAGE_DB_HOST=%SYNC_STORAGE_DB_HOST%
+Environment=SYNC_STORAGE_DB_PORT=%SYNC_STORAGE_DB_PORT%
+Environment=SYNC_STORAGE_DB_NAME=%SYNC_STORAGE_DB_NAME%
+Environment=SYNC_STORAGE_DB_USER=%SYNC_STORAGE_DB_USER%
+Environment=SYNC_STORAGE_DB_PASSWORD=%SYNC_STORAGE_DB_PASSWORD%
+# false with your own MySQL server: its certificate is self-signed
+Environment=SYNC_DB_TLS_VERIFY=%SYNC_DB_TLS_VERIFY%
+Environment=ADMIN_DB_USER=%ADMIN_DB_USER%
+Environment=ADMIN_DB_SYNC_USER=%ADMIN_DB_SYNC_USER%
+Environment=ADMIN_DB_PASSWORD=%ADMIN_DB_PASSWORD%
+Environment=ADMIN_DB_NAME=%ADMIN_DB_NAME%
+
+PodmanArgs=--entrypoint=bash
+Exec=/ffs-db/db-setup.sh sync
+
+AutoUpdate=registry
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target default.target

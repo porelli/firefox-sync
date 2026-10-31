@@ -140,6 +140,14 @@ spec:
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "ADMIN_DB_PASSWORD" "key" "ADMIN_DB_PASSWORD") | nindent 12 }}
             - name: ADMIN_DB_NAME
               value: {{ include "firefox-sync.adminDbName" . }}
+            {{- if not .Values.database.bundled }}
+            # your own database server: the setup check of its SQL, and whether the stack applies
+            # it (only then: the bundled render stays that of 0.1.0, unset is 1)
+            - name: SYNC_DB_CONTAINERS
+              value: "0"
+            - name: SYNC_DB_BOOTSTRAP_USER
+              value: {{ .Values.database.external.bootstrap.user | quote }}
+            {{- end }}
             - name: TOKENSERVER_DB_TYPE
               value: {{ ternary "postgres" "mysql" (eq $backend "postgres") }}
             - name: TOKENSERVER_DB_HOST

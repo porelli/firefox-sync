@@ -161,12 +161,20 @@ render_units() {
             render_set SYNC_DB_TLS_VERIFY false
         fi
     fi
+    # the users and grants of database-setup.sql applied or checked at every start
+    # (db/db-setup.sh): for your own server only
+    if [ "${sync_containers:-1}" != 0 ]; then
+        SKIP_UNITS="${SKIP_UNITS:+${SKIP_UNITS}|}^firefox-sync-db-bootstrap\.container$"
+        DROP_DEPS="${DROP_DEPS:+${DROP_DEPS}|}firefox-sync-db-bootstrap\.service"
+    fi
     if [ "${fxa_containers:-1}" = 0 ]; then
         SKIP_UNITS="${SKIP_UNITS:+${SKIP_UNITS}|}^firefox-sync-fxa-db(-mariadb)?\.(container|volume)$"
         DROP_DEPS="${DROP_DEPS:+${DROP_DEPS}|}firefox-sync-fxa-db\.service"
-    elif [ "${fxa_db:-mysql}" = "mariadb" ]; then
+    else
+        SKIP_UNITS="${SKIP_UNITS:+${SKIP_UNITS}|}^firefox-sync-fxa-db-bootstrap\.container$"
+        DROP_DEPS="${DROP_DEPS:+${DROP_DEPS}|}firefox-sync-fxa-db-bootstrap\.service"
         # MySQL's volume, unused (the volume itself is kept)
-        SKIP_UNITS="${SKIP_UNITS:+${SKIP_UNITS}|}^firefox-sync-fxa-db\.volume$"
+        [ "${fxa_db:-mysql}" = "mariadb" ] && SKIP_UNITS="${SKIP_UNITS}|^firefox-sync-fxa-db\.volume$"
     fi
     # Requires= on a unit that is not installed fails the start: drop those dependencies
     drop_deps() {

@@ -162,6 +162,13 @@ fxa:
       # FXA_MYSQL_POLICY_USER: installs the sign-up policy and grants the admin UI's user
       # (empty: user above, with its password)
       policyUser: ffs_policy
+      # FXA_DB_BOOTSTRAP_USER: an account that can create users, with which the auth pod's
+      # db-bootstrap init container applies the accounts' SQL (db/mysql/fxa-mysql.sql or
+      # fxa-mariadb.sql, filled in from these values) at every start; its password in
+      # existingSecret, key FXA_DB_BOOTSTRAP_PASSWORD. Empty: db-bootstrap only checks that
+      # the users and grants are there (docs/databases.md#let-the-stack-apply-them)
+      bootstrap:
+        user: ""
     # the StatefulSet's volumeClaimTemplate, as database.persistence: set before the first install
     persistence:
       size: 8Gi
@@ -324,6 +331,14 @@ database:
     # not in the images: ERROR 2026). true only with a certificate from a CA the images
     # trust (their system CAs) for this host name. The Sync server itself connects without TLS
     tlsVerify: false
+    # SYNC_DB_BOOTSTRAP_USER: an account that can create users, with which the Sync server's
+    # db-bootstrap init container applies the SQL of db/mysql/sync.sql or db/postgres/sync.sql
+    # (filled in from these values and the Secret) at every start; its password in
+    # existingSecret, key SYNC_DB_BOOTSTRAP_PASSWORD. Empty: db-bootstrap only checks that the
+    # users, grants and databases are there, and stops the start naming what is missing
+    # (docs/databases.md#let-the-stack-apply-them)
+    bootstrap:
+      user: ""
 
   # Persistence configuration for bundled databases: the StatefulSets' volumeClaimTemplates,
   # which Kubernetes never changes. Set them before the first install: helm upgrade refuses

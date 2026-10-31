@@ -1087,15 +1087,22 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # answers as above, no accounts, then: your own server? host, port, the databases and users
   # (MariaDB, MySQL: tokenserver database and user, storage database and user; PostgreSQL: the
   # database and its user), the alerts' destination, the nightly backups: yes
-  rm -f .env database-setup.sql
+  rm -f .env database-setup.sql database-bootstrap.sql
   if [ "${SYNC_DB}" = postgres ]; then ext_names=("" ""); else ext_names=("" "" "" ""); fi
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n y "${EXTDB}" "" "${ext_names[@]}" "" y \
+  # DB_BOOTSTRAP=1: then the stack applies database-setup.sql itself (the last question: yes,
+  # the account ffs_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
+  ext_bootstrap=()
+  [ -n "${DB_BOOTSTRAP:-}" ] && ext_bootstrap=(y "" "")
+  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n y "${EXTDB}" "" "${ext_names[@]}" "" y "${ext_bootstrap[@]}" \
     | ./prepare_environment.sh > setup-external.log 2>&1
   check "$?" 0 "prepare_environment.sh (quadlets, your own ${SYNC_DB} server)"
   check "$(env_of SYNC_DB_CONTAINERS) $(ls "${QUADLET_DIR}"/firefox-sync-*-db.* 2> /dev/null | wc -l)" "0 0" "SYNC_DB_CONTAINERS=0, no database quadlets"
   check "$(units_secret_free)" none "no secret of .env in the units of your own server, the secrets in their environment files, 0600"
   check "$(grep -hE '^(After|Requires)=.*-db\.service' "${QUADLET_DIR}"/firefox-sync-* | wc -l) $(grep -c '^Requires=firefox-sync-syncstorage-migrate.service$' "${QUADLET_DIR}/firefox-sync-tokenserver-db-init.container")" "0 1" \
     "no dependencies on database units, the init still needs the migrations"
+  # db-bootstrap before the migrations (and the Sync role), its account's password in its environment file
+  check "$(grep -c '^Requires=.*firefox-sync-db-bootstrap\.service' "${QUADLET_DIR}"/firefox-sync-syncstorage-migrate.container) $(grep -c "^Environment=SYNC_DB_BOOTSTRAP_USER=$([ -n "${DB_BOOTSTRAP:-}" ] && echo ffs_bootstrap)$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.container) $(grep -c "^SYNC_DB_BOOTSTRAP_PASSWORD=$([ -n "${DB_BOOTSTRAP:-}" ] && echo '[A-Za-z0-9]\{32\}')$" "${QUADLET_DIR}"/firefox-sync-db-bootstrap.env)" \
+    "1 1 1" "firefox-sync-db-bootstrap, required by the migrations: $([ -n "${DB_BOOTSTRAP:-}" ] && echo "ffs_bootstrap applies the SQL, its password in the unit's environment file" || echo "no account, it checks the SQL")"
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(unit_count "^Environment=\"?(SYNC_SYNCSTORAGE__DATABASE_URL=postgres://syncserver:[A-Za-z0-9]+@${EXTDB}:5432/syncserver|POSTGRES_SERVER=${EXTDB}|TOKENSERVER_DB_HOST=${EXTDB})\"?$" \
       "${QUADLET_DIR}"/firefox-sync-{syncstorage,tokenserver-db-init,admin}.container)" "1 1 1" "quadlets connect to your server"
@@ -1126,14 +1133,30 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
     sleep 2
   done
   check "$(stat -c %a database-setup.sql)" 600 "database-setup.sql for this user only"
-  # as prepare_environment.sh says to run it (psql -f, mysql or mariadb <), here in the server's container
-  if [ "${SYNC_DB}" = postgres ]; then said='psql -h ffs-podman-extdb -p 5432 -U postgres -f database-setup.sql'; else said="$([ "${SYNC_DB}" = mysql ] && echo MySQL || echo MariaDB): * $([ "${SYNC_DB}" = mysql ] && echo mysql || echo mariadb) -h ffs-podman-extdb -P 3306 -u root -p < database-setup.sql"; fi
-  check "$(grep -c -- "${said}" setup-external.log)" 1 "prepare_environment.sh says how to run database-setup.sql (${SYNC_DB})"
-  extdb_setup > /dev/null
-  check "$?" 0 "database-setup.sql runs on the server"
+  # as prepare_environment.sh says to run it (psql -f, mysql or mariadb <), here in the server's
+  # container; DB_BOOTSTRAP=1: database-bootstrap.sql, the account alone (the stack does the rest)
+  sql_file=database-setup.sql
+  [ -n "${DB_BOOTSTRAP:-}" ] && sql_file=database-bootstrap.sql
+  if [ "${SYNC_DB}" = postgres ]; then said="psql -h ffs-podman-extdb -p 5432 -U postgres -f ${sql_file}"; else said="$([ "${SYNC_DB}" = mysql ] && echo MySQL || echo MariaDB): * $([ "${SYNC_DB}" = mysql ] && echo mysql || echo mariadb) -h ffs-podman-extdb -P 3306 -u root -p < ${sql_file}"; fi
+  check "$(grep -c -- "${said}" setup-external.log)" 1 "prepare_environment.sh says how to run ${sql_file} (${SYNC_DB})"
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then
+    check "$(stat -c %a database-bootstrap.sql)" 600 "database-bootstrap.sql for this user only"
+    if [ "${SYNC_DB}" = postgres ]; then
+      podman exec -i -e PGPASSWORD="${EXTDB_ROOT}" "${EXTDB}" psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -q -f - < database-bootstrap.sql > /dev/null
+    else
+      extdb_admin < database-bootstrap.sql > /dev/null
+    fi
+    check "$?" 0 "database-bootstrap.sql runs on the server: the bootstrap account alone"
+  else
+    extdb_setup > /dev/null
+    check "$?" 0 "database-setup.sql runs on the server"
+  fi
   timeout 900 systemctl --user start firefox-sync-admin.service firefox-sync-syncstorage.service
   check "$?" 0 "systemctl --user start firefox-sync-syncstorage.service (your own server)"
   check "$(hb)" 200 "/__heartbeat__ (quadlets, your own server)"
+  # (each line twice in the journal: the unit's and the container's)
+  check "$([ "$(journalctl --user -u firefox-sync-db-bootstrap.service --no-pager | grep -c "$([ -n "${DB_BOOTSTRAP:-}" ] && echo '✓ database-setup.sql applied as ffs_bootstrap' || echo '✓ the Sync databases on .*: every user, grant and database of database-setup.sql is there')")" -ge 1 ] && echo 1)" 1 \
+    "firefox-sync-db-bootstrap $([ -n "${DB_BOOTSTRAP:-}" ] && echo "applied database-setup.sql as ffs_bootstrap" || echo "found every user and grant of database-setup.sql")"
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(extdb_admin -d syncserver -c "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'before_insert_user'" < /dev/null) $(extdb_admin -d syncserver -c "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'users' AND relnamespace = 'public'::regnamespace" < /dev/null)" \
       "1 syncserver" "SYNC_MAX_USERS trigger on your server, the tables of SYNC_POSTGRES_USER (no superuser)"
@@ -1157,33 +1180,40 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # again, run there first), a setting changed and rendered again, every unit started again
   cp -p .env "${WORK}/external.env"
   ./prepare_environment.sh --upgrade < /dev/null > upgrade-external.log 2>&1
-  check "$? $(grep -c '^Your own database server: run database-setup.sql there first' upgrade-external.log) $(grep -c 'nothing changed$' upgrade-external.log) $(cmp -s .env "${WORK}/external.env" && echo same)" "0 1 1 same" \
-    "--upgrade on your own server: database-setup.sql written again, nothing else to change (quadlets)"
-  extdb_setup > /dev/null 2> setup-sql-again.log
-  check "$?" 0 "database-setup.sql runs again on the server"
+  if [ -n "${DB_BOOTSTRAP:-}" ]; then upgrade_said='^Your own database server: the stack applies database-setup.sql itself at the next start, as ffs_bootstrap'
+  else upgrade_said='^Your own database server: run database-setup.sql there first'; fi
+  check "$? $(grep -c "${upgrade_said}" upgrade-external.log) $(grep -c 'nothing changed$' upgrade-external.log) $(cmp -s .env "${WORK}/external.env" && echo same)" "0 1 1 same" \
+    "--upgrade on your own server: database-setup.sql written again$([ -n "${DB_BOOTSTRAP:-}" ] && echo ", the bootstrap kept"), nothing else to change (quadlets)"
+  if [ -z "${DB_BOOTSTRAP:-}" ]; then
+    extdb_setup > /dev/null 2> setup-sql-again.log
+    check "$?" 0 "database-setup.sql runs again on the server"
+  fi
   sed -i 's|^ADMIN_STALE_DAYS=.*|ADMIN_STALE_DAYS=45|' .env
   ./prepare_environment.sh --render-units < /dev/null > render-units-external.log 2>&1
   check "$? $(sed -n 's/^  ✓ //p' render-units-external.log | paste -sd' ')" "0 firefox-sync-admin.container" "--render-units on your own server: the admin UI's unit alone"
   timeout 300 systemctl --user stop firefox-sync-syncstorage.service firefox-sync-admin.service firefox-sync-syncstorage-migrate.service \
-    firefox-sync-tokenserver-db-init.service $([ "${SYNC_DB}" = postgres ] && echo firefox-sync-sync-role-init.service)
+    firefox-sync-tokenserver-db-init.service firefox-sync-db-bootstrap.service $([ "${SYNC_DB}" = postgres ] && echo firefox-sync-sync-role-init.service)
   timeout 900 systemctl --user start firefox-sync-admin.service firefox-sync-syncstorage.service
   check "$? $(hb) $(admin_up /login)" "0 200 200" "the units started again, rendered again (your own server)"
   [ "${FAILED}" = 0 ] || { journalctl --user -u 'firefox-sync-*' --no-pager | tail -40; podman logs --tail 20 "${EXTDB}"; }
   stop_quadlets
   podman rm -f "${EXTDB}" > /dev/null 2>&1
   podman network rm -f firefox-sync > /dev/null 2>&1
-  rm -f .env database-setup.sql
+  rm -f .env database-setup.sql database-bootstrap.sql
 
   # the accounts on your own MySQL server: only what is installed (no MySQL here)
   # answers: ..., admin host, your own server for Sync? the accounts? host, port, user, policy user
   printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 mariadb 1 "" "${TAG}" "" y fxa.invalid mail.invalid 587 test pw "" "" "" \
     n y fxa-mysql.invalid "" "" "" | ./prepare_environment.sh > setup-fxa-external.log 2>&1
   check "$?" 0 "prepare_environment.sh (quadlets, accounts on your own server)"
-  check "$(ls "${QUADLET_DIR}"/firefox-sync-fxa-*.{container,volume} 2> /dev/null | wc -l)" 11 "accounts quadlet files without the database"
+  # (and firefox-sync-fxa-db-bootstrap: its users and grants checked before the migrations)
+  check "$(ls "${QUADLET_DIR}"/firefox-sync-fxa-*.{container,volume} 2> /dev/null | wc -l) $(ls "${QUADLET_DIR}"/firefox-sync-fxa-db-bootstrap.container | wc -l)" "12 1" \
+    "accounts quadlet files without the database, with fxa-db-bootstrap"
   check "$(grep -hoE '^Environment="(((AUTH|OAUTH|PROFILE|PUSHBOX)_)?MYSQL|FXA_DB)_HOST=[^"]*"' "${QUADLET_DIR}"/firefox-sync-{fxa-*,admin}.container | sed 's/.*=//' | sort | uniq -c | sed 's/^ *//')" \
     '10 fxa-mysql.invalid"' "the accounts connect to your server"
   check "$(grep -hcE '^Environment="(FXA_DB_ROOT_USER=ffs_policy|FXA_MYSQL_USER=fxa)"$' "${QUADLET_DIR}/firefox-sync-fxa-policy.container")" 2 "sign-up policy installed by ffs_policy"
-  check "$(grep -c '^Requires=' "${QUADLET_DIR}/firefox-sync-fxa-migrations.container")" 0 "accounts migrations without the database unit"
+  check "$(grep '^Requires=' "${QUADLET_DIR}/firefox-sync-fxa-migrations.container")" "Requires=firefox-sync-fxa-db-bootstrap.service" \
+    "accounts migrations without the database unit, after fxa-db-bootstrap"
   "${QUADLET}" -dryrun -user > quadlet-fxa-external-dryrun.log 2>&1
   check "$?" 0 "quadlet generator accepts the accounts files without the database"
   stop_quadlets

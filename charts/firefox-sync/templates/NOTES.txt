@@ -17,9 +17,15 @@ as identity.sync.tokenserver.uri in about:config, see
 https://github.com/porelli/firefox-sync/blob/main/docs/firefox.md
 {{- if not .Values.database.bundled }}
 
-Your own database server {{ .Values.database.external.host }}: the databases and users of docs/databases.md#create-the-databases-and-users
+Your own database server {{ .Values.database.external.host }}: {{ if .Values.database.external.bootstrap.user -}}
+the db-bootstrap init container applies the SQL of docs/databases.md#create-the-databases-and-users
+at every start, as {{ .Values.database.external.bootstrap.user }} (SYNC_DB_BOOTSTRAP_PASSWORD of the Secret {{ include "firefox-sync.secretName" . }});
+the pods stop there while it fails.
+{{- else -}}
+the databases and users of docs/databases.md#create-the-databases-and-users
 must be there, with the passwords of the Secret {{ include "firefox-sync.secretName" . }}; the pods wait for it, and
-stop in their init containers while a login is refused.
+stop in their db-bootstrap init container while one is missing or a login is refused.
+{{- end }}
 {{- if ne .Values.database.backend "postgres" }} The init container{{ if .Values.backup.enabled }} and the backups{{ end }}
 {{- if .Values.database.external.tlsVerify }} check the server's certificate (tlsVerify): it must come
 from a CA the images trust, for {{ .Values.database.external.host }}.
