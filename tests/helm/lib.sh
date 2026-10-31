@@ -166,16 +166,21 @@ load_images() {
 }
 
 # bg_start <name> <command>...: the command (a function of these scripts too) in the
-# background, its output kept for bg_wait; bg_wait <name>...: each one's end, its output shown
-# and the run failed when it failed (BG_DIR: a temporary folder of the caller's)
+# background, its output kept for bg_wait, its duration at its end; bg_wait <name>...: each
+# one's end, its output shown and the run failed when it failed (BG_DIR: a temporary folder of
+# the caller's). bg_marker <name>: the command of a bg_start waits for bg_mark <name>
 declare -A BG_PIDS=()
 bg_start() {
   local name=$1
   shift
   : "${BG_DIR:?bg_start needs BG_DIR}"
-  ( "$@" ) > "${BG_DIR}/${name}.log" 2>&1 &
+  # shellcheck disable=SC2064 # (the start now)
+  ( trap "echo \"  (${name}: \$((SECONDS - ${SECONDS})) s)\"" EXIT; "$@" ) > "${BG_DIR}/${name}.log" 2>&1 &
   BG_PIDS[${name}]=$!
 }
+bg_mark() { touch "${BG_DIR}/$1.mark"; }
+# (in a subshell $$ is the script's: its end ends the wait)
+bg_marker() { until [[ -e "${BG_DIR}/$1.mark" ]]; do kill -0 $$ 2> /dev/null || exit 1; sleep 1; done; }
 bg_wait() {
   local name rc
   for name in "$@"; do

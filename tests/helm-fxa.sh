@@ -979,23 +979,34 @@ fxa_e2e() {
     || fail "docker $(docker version -f '{{.Server.Version}}' 2> /dev/null) has no docker save --platform: Docker 27 or later is needed"
 
   echo "=== e2e of the accounts on kind (${backend}${external:+, your own server}, Sync on ${SYNC_BACKEND}${PART:+, part ${PART}}) ==="
-  # what does not wait for anything runs at once (bg_start): the cluster's creation, the pulls
-  # of the images missing in the host's docker, the builds of the init image, the admin UI and
-  # Firefox's test image; then the images into the node, at once too
+  # what does not wait for anything runs at once (bg_start): the cluster's creation; each image
+  # of the host's docker pulled when missing there, then into the node as soon as the cluster
+  # and the free space allow (the "go" mark); the builds of the init image, the admin UI and
+  # Firefox's test image, loaded once built
   local t0=${SECONDS}
   BG_DIR=$(mktemp -d)
   kind delete cluster --name "${CLUSTER}" > /dev/null 2>&1 || true
   trap 'rc=$?; bg_kill; if ((rc)); then diagnostics; fi; kind_teardown; rm -rf "${BG_DIR}"' EXIT
   bg_start cluster kind create cluster --name "${CLUSTER}" --wait 120s
-  pull_missing() { docker image inspect "$1" > /dev/null 2>&1 || docker pull -q "$1" > /dev/null || fail "$1 not pulled"; }
-  # (the database image of the chart, or the one given: the fallback below, if any, after the
-  # accounts image's labels)
-  local image images=("${fxa_image}" "${SYNC_IMAGE}" "${PAIRING_IMAGE}" "${db_image}" "${redis_image}") n
-  [[ -z "${given}" ]] || images[3]=${given}
-  [[ ${sync_db_image} == "${images[3]}" ]] || images+=("${sync_db_image}")
-  # (and the test fixtures': the Ingress controller, the mail catcher)
-  images+=("${TRAEFIK_IMAGE}" "${MAILPIT_IMAGE}")
-  for n in "${!images[@]}"; do bg_start "pull-${n}" pull_missing "${images[n]}"; done
+  # the images into the node, as tests/helm.sh loads the Sync server's: the node's platform
+  # alone (a pulled image's export lacks the others), the import's layers dropped once
+  # unpacked (disk); each in its own import, at once
+  local platform
+  platform=$(docker version -f 'linux/{{.Server.Arch}}')
+  pull_import() {
+    local s=${SECONDS}
+    docker image inspect "$1" > /dev/null 2>&1 || docker pull -q "$1" > /dev/null || fail "$1 not pulled"
+    echo "  $1 pulled: $((SECONDS - s)) s"
+    bg_marker go
+    s=${SECONDS}
+    docker save --platform "${platform}" "$1" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import --digests \
+      --snapshotter=overlayfs --local --discard-unpacked-layers - > /dev/null || fail "$1 not loaded"
+    echo "  $1 into the node: $((SECONDS - s)) s"
+  }
+  # (the accounts' database image once the accounts image's labels chose it, below; and the
+  # test fixtures': the Ingress controller, the mail catcher)
+  local image images=("${fxa_image}" "${SYNC_IMAGE}" "${PAIRING_IMAGE}" "${redis_image}" "${sync_db_image}" "${TRAEFIK_IMAGE}" "${MAILPIT_IMAGE}") n
+  for n in "${!images[@]}"; do bg_start "image-${n}" pull_import "${images[n]}"; done
   image_tags
   bg_start build build_images "${repository}" "${flavor}" "${init_dir}"
   # the tests in Firefox's image (tests/browser), tagged by its files as tests/e2e-fxa.sh does
@@ -1008,53 +1019,43 @@ fxa_e2e() {
   if [[ -n "${given}" ]]; then
     db_image=${given}
   else
-    bg_wait pull-0
+    # (the accounts image's labels: its pull)
+    until grep -qF ' pulled: ' "${BG_DIR}/image-0.log" 2> /dev/null || ! kill -0 "${BG_PIDS[image-0]}" 2> /dev/null; do sleep 1; done
+    grep -qF ' pulled: ' "${BG_DIR}/image-0.log" || bg_wait image-0
     # shellcheck source=tests/fxa_fix.sh
     source "${REPO_ROOT}/tests/fxa_fix.sh"
     if ! fxa_image_fixed "mozilla/fxa#${pr}" "${fxa_image}"; then
       db_image=${fallback}
       echo "== ${fxa_image} without mozilla/fxa#${pr} (its labels, config/fxa/fixed-in): the accounts on ${db_image}"
-      # (the Sync server's database on the chart's image: kept)
-      if [[ ${sync_db_image} == "${images[3]}" ]]; then images+=("${db_image}"); else images[3]=${db_image}; fi
-      pull_missing "${db_image}"
     fi
   fi
   db_args=(--set fxa.database.image."${backend}"="${db_image}")
+  if [[ ${db_image} != "${sync_db_image}" ]]; then
+    images+=("${db_image}")
+    bg_start "image-$((${#images[@]} - 1))" pull_import "${db_image}"
+  fi
   if [[ -n "${browser}" ]]; then
     bg_wait browser
     # (Mozilla's latest release, tests/browser/Dockerfile: the first suspect when only it fails)
     echo "Firefox test image ${BROWSER_IMAGE}: $(docker run --rm "${BROWSER_IMAGE}" firefox --version 2> /dev/null)"
   fi
-  for n in "${!images[@]}"; do bg_wait "pull-${n}"; done
-  bg_wait build
   # the accounts image is about 5 GB in the node, on top of the Sync server's images; and the
-  # Firefox image's copy there (kind load)
+  # Firefox image's copy there (kind load): before anything goes into the node
   local free need
   free=$(df -BG --output=avail "$(docker info -f '{{.DockerRootDir}}')" | tail -1 | tr -dc 0-9)
   need=15
   [[ -z "${browser}" ]] || need=$(( need + ($(docker image inspect -f '{{.Size}}' "${BROWSER_IMAGE}") + 999999999) / 1000000000 ))
   [[ "${free}" -ge "${need}" ]] || fail "${free} GB free for docker, the accounts' kind cluster needs ${need} GB (15, and ${BROWSER_IMAGE} in the node; vm.sh prune, docker system prune)"
-  echo "(the images pulled and built: $((SECONDS - t0)) s)"
   bg_wait cluster
   kubectl config use-context "kind-${CLUSTER}" > /dev/null
   # PodSecurity baseline, enforced, as tests/helm.sh
   kubectl label ns default pod-security.kubernetes.io/enforce=baseline pod-security.kubernetes.io/enforce-version=latest > /dev/null
-  # the images of the host's docker into the node, as tests/helm.sh loads the Sync server's:
-  # the node's platform alone (a pulled image's export lacks the others), the import's layers
-  # dropped once unpacked (disk); each in its own import, at once
-  local platform
-  platform=$(docker version -f 'linux/{{.Server.Arch}}')
-  import_image() {
-    local s=${SECONDS}
-    docker save --platform "${platform}" "$1" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace=k8s.io images import --digests \
-      --snapshotter=overlayfs --local --discard-unpacked-layers - > /dev/null || fail "$1 not loaded"
-    echo "  $1: $((SECONDS - s)) s"
-  }
-  for n in "${!images[@]}"; do bg_start "import-${n}" import_image "${images[n]}"; done
-  bg_start load-built kind_load_built "${repository}" "${flavor}" "${init_dir}"
+  bg_mark go
   # (Firefox's, built above)
   [[ -z "${browser}" ]] || bg_start load-browser sh -c 'kind load docker-image --name "$1" "$2" > /dev/null || { echo "$2 not loaded"; exit 1; }' sh "${CLUSTER}" "${BROWSER_IMAGE}"
-  for n in "${!images[@]}"; do bg_wait "import-${n}"; done
+  bg_wait build
+  bg_start load-built kind_load_built "${repository}" "${flavor}" "${init_dir}"
+  for n in "${!images[@]}"; do bg_wait "image-${n}"; done
   bg_wait load-built load-browser
   check "loaded from the host's docker: ${images[*]}${browser:+ ${BROWSER_IMAGE}} ($((SECONDS - t0)) s since the cluster's creation began)"
   fxa_fixtures
