@@ -401,6 +401,7 @@ redact() {
 #   T <object> <privileges>  on a table or its columns
 #   R <role>                 a role
 #   P <line>                 a proxy grant
+#   U <line>                 a GRANT or REVOKE line not understood
 # with the privileges of the roles a session has at sign-in (the default ones); all: of every
 # role granted (any of them a SET ROLE away)
 grants_of() {
@@ -459,6 +460,9 @@ grants_of() {
       done <<< "${privs//,/$'\n'}"
     elif [[ "${line}" =~ ^GRANT\ (\`[^\`]+\`(@\`[^\`]*\`)?(,\ \`[^\`]+\`(@\`[^\`]*\`)?)*)\ TO\  ]]; then
       echo "R ${BASH_REMATCH[1]}"
+    elif [[ "${line}" =~ ^(GRANT|REVOKE)\  ]]; then
+      # (not understood: the bootstrap's check counts it as too much; the password's hash cut off)
+      echo "U ${line%% IDENTIFIED *}"
     fi
   done
 }
@@ -869,20 +873,27 @@ elif [ -n "${BOOT_USER}" ]; then
   out=$(grants_of "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" all 2>&1) \
     || { printf '%s\n' "${out}" | grep -E '^ERROR' | redact; fail "${BOOT_USER} cannot sign in on ${MAIN_HOST}:${MAIN_PORT}, or read its grants"; }
   BOOT_GRANTS=${out}
-  # on the whole server only CREATE USER (and USAGE, no privilege), and the names and hosts of
-  # mysql.user; nothing on the mysql schema, no proxy: not an administrator (SYSTEM_USER, SUPER,
-  # ALL PRIVILEGES...), also through its roles (docs/databases.md#the-bootstrap-account)
+  # what it may hold, nothing else (deny by default: a line of SHOW GRANTS not of these forms is
+  # too much): on the whole server only CREATE USER (and USAGE, no privilege), the names and
+  # hosts of mysql.user, privileges on databases but the mysql schema, its roles (expanded
+  # above). Not an administrator (SYSTEM_USER, SUPER, ALL PRIVILEGES, a table of the mysql
+  # schema, a proxy...), also through its roles (docs/databases.md#the-bootstrap-account)
   wide=""
   while IFS= read -r line; do
     case "${line}" in
-      "G USAGE "[YN]|"G CREATE USER N") ;;
-      "G "*" Y") p=${line#G } wide="${wide} ${p% Y} WITH GRANT OPTION," ;;
-      "G "*) p=${line#G } wide="${wide} ${p% [YN]}," ;;
-      "D "*) d=${line#D } a=${d%% *}; matches mysql "${a}" && { d=${d#* }; wide="${wide} ${d% [YN]} on the mysql schema (\`${a}\`.*),"; } ;;
+      "") ;;
+      "G USAGE N"|"G CREATE USER N") ;;
+      "G "*" Y") p=${line#G } wide="${wide} ${p% Y} WITH GRANT OPTION on the whole server," ;;
+      "G "*) p=${line#G } wide="${wide} ${p% [YN]} on the whole server," ;;
+      "D "*)
+        d=${line#D } a=${d%% *}
+        if matches mysql "${a}"; then d=${d#* }; wide="${wide} ${d% [YN]} on the mysql schema (\`${a}\`.*),"; fi ;;
       "T \`mysql\`.\`user\` SELECT (\`Host\`, \`User\`)"|"T \`mysql\`.\`user\` SELECT (\`User\`, \`Host\`)") ;;
-      "T \`mysql\`.\`global_priv\` SELECT (\`Host\`, \`User\`)") ;;
-      "T \`mysql\`.*") wide="${wide} ${line#T } (a table of the mysql schema)," ;;
-      "P "*) [[ "${line}" == *"''@''"* ]] || wide="${wide} ${line#P }," ;;
+      "T \`mysql\`.\`global_priv\` SELECT (\`Host\`, \`User\`)"|"T \`mysql\`.\`global_priv\` SELECT (\`User\`, \`Host\`)") ;;
+      "R "*|"X "*) ;;
+      "T "*) p=${line#T } wide="${wide} ${p#* } on ${p%% *}," ;;
+      # (a proxy, a line not understood)
+      *) wide="${wide} ${line#[A-Z] }," ;;
     esac
   done <<< "${BOOT_GRANTS}"
   [ -z "${wide}" ] || fail "${BOOT_USER} holds${wide%,} (itself or through its roles): the bootstrap account must have only CREATE USER on the whole server, SELECT of the names and hosts of mysql.user, and ALL PRIVILEGES on the stack's databases (${DOC_BOOT})"
