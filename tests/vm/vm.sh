@@ -77,6 +77,9 @@
 #                   checked against FFS_VM_DIR/known_hosts; a VM created without one has its key
 #                   recorded on the first connection (trust on first use)
 #   CPUS, MEM       at start: CPUs and MB of memory (default 3/4 of the host's CPUs, half its memory)
+#   HOST_MIN_FREE_GB  GB the host's filesystem of FFS_VM_DIR keeps free (default 20): a run starts
+#                   only with that plus what its slot may write in the VM (8 GB, 10 for kind),
+#                   and is stopped (its teardown runs in the VM) when the host goes under it
 #   CLOCK_SLACK     seconds the VM's clock may be off the host's before a command sets it to the
 #                   host's (default 5): the guest's clock stops while the host sleeps
 #   ACCEL           qemu's accelerator (default hvf on macOS, kvm on Linux)
@@ -154,6 +157,8 @@ SLOTS=${SLOTS:-3}
 number() { [[ "$2" =~ ^[0-9]+$ ]] || die "$1: a number, not '$2'"; }
 number SLOTS "${SLOTS}"
 number CLOCK_SLACK "${CLOCK_SLACK:-5}"
+HOST_MIN_FREE_GB=${HOST_MIN_FREE_GB:-20}
+number HOST_MIN_FREE_GB "${HOST_MIN_FREE_GB}"
 [ -z "${CPUS:-}" ] || number CPUS "${CPUS}"
 [ -z "${MEM:-}" ] || number MEM "${MEM}"
 # the slots of this VM, in its private folder (before: a shared /tmp/ffs-vm-slots, read while
@@ -814,10 +819,37 @@ trap 'exit 143' TERM HUP
 
 # slot_vssh <needs> <command>: the command in the slot through ffs_run, ended in the VM when
 # this ends (its stdin: a pipe open as long as this script runs)
+# host_free_gb: GB free on the host's filesystem of the VM's disk (its qcow2 grows with what the
+# VM writes)
+host_free_gb() { df -Pk "${VM_DIR}" 2> /dev/null | awk 'NR == 2 { print int($4 / 1048576) }'; }
 slot_vssh() {
-  local needs=$1 cmd=$2 me; set_mypid; me=${MYPID}
+  local needs=$1 cmd=$2 me want free; set_mypid; me=${MYPID}
+  # the host's disk: HOST_MIN_FREE_GB left after what the slot may write in the VM (10 GB for
+  # kind, else 8), or the run does not start; while it runs, under HOST_MIN_FREE_GB stops it
+  # (its stdin closed: in the VM its traps tear down, the kind cluster deleted)
+  want=$(( HOST_MIN_FREE_GB + 8 ))
+  case ",${needs}," in *,kind,*) want=$(( HOST_MIN_FREE_GB + 10 )) ;; esac
+  free=$(host_free_gb)
+  if [ -n "${free}" ] && [ "${free}" -lt "${want}" ]; then
+    say "the host has ${free} GB free on ${VM_DIR}, this run needs ${want} (HOST_MIN_FREE_GB ${HOST_MIN_FREE_GB} and the slot's): not started"
+    return 1
+  fi
+  local stop
+  stop=$(mktemp)
   vssh "source ~/.ffs/lib.sh && FFS_STAMP_ALL=${STAMP_ALL:-} ffs_run ${SLOT_HELD} ${needs:--} $(printf '%q' "${cmd}")" \
-    < <(while kill -0 "${me}" 2> /dev/null; do sleep 2; done)
+    < <(n=0; while kill -0 "${me}" 2> /dev/null; do
+          sleep 2; n=$((n + 1))
+          [ $((n % 15)) = 0 ] || continue
+          free=$(host_free_gb)
+          if [ -n "${free}" ] && [ "${free}" -lt "${HOST_MIN_FREE_GB}" ]; then
+            say "the host is down to ${free} GB free on ${VM_DIR} (HOST_MIN_FREE_GB ${HOST_MIN_FREE_GB}): stopping the run of slot ${SLOT_HELD}"
+            echo stopped > "${stop}"; break
+          fi
+        done)
+  local rc=$?
+  [ -s "${stop}" ] && rc=1
+  rm -f "${stop}"
+  return "${rc}"
 }
 slot_dir() { echo "firefox-sync-slot${SLOT_HELD}"; }
 
