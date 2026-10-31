@@ -18,13 +18,15 @@ https://github.com/porelli/firefox-sync/blob/main/docs/firefox.md
 {{- if not .Values.database.bundled }}
 
 Your own database server {{ .Values.database.external.host }}: {{ if .Values.database.external.bootstrap.user -}}
-the db-bootstrap init container applies the SQL of docs/databases.md#create-the-databases-and-users
-at every start, as {{ .Values.database.external.bootstrap.user }} (SYNC_DB_BOOTSTRAP_PASSWORD of the Secret {{ include "firefox-sync.secretName" . }});
-the pods stop there while it fails.
+the db-bootstrap init container applies the setup migrations your server lacks
+(docs/databases.md#setup-migrations) at every start, as {{ .Values.database.external.bootstrap.user }} (SYNC_DB_BOOTSTRAP_PASSWORD of the
+Secret {{ include "firefox-sync.secretName" . }}); the pods stop there while it fails. That account can manage other
+database accounts: keep it for upgrades only (docs/databases.md#the-bootstrap-account).
 {{- else -}}
 the databases and users of docs/databases.md#create-the-databases-and-users
 must be there, with the passwords of the Secret {{ include "firefox-sync.secretName" . }}; the pods wait for it, and
-stop in their db-bootstrap init container while one is missing or a login is refused.
+stop in their db-bootstrap init container while a setup migration of this release, a user or a grant is missing,
+or a login is refused, with the SQL to run in its log.
 {{- end }}
 {{- if ne .Values.database.backend "postgres" }} The init container{{ if .Values.backup.enabled }} and the backups{{ end }}
 {{- if .Values.database.external.tlsVerify }} check the server's certificate (tlsVerify): it must come
