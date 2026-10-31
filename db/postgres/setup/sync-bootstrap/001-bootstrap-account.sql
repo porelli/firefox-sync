@@ -3,7 +3,9 @@
 -- docs/databases.md#the-bootstrap-account).
 -- Why: no superuser, it creates roles and databases (CREATEROLE, CREATEDB); the stack's roles
 -- are those it administers (ADMIN OPTION: the ones it creates, and below those that exist
--- already), never one of that name it does not.
+-- already), never one of that name it does not. PostgreSQL 16 or later: before 16 CREATEROLE
+-- reaches every role but the superusers (pg_* too), close to a superuser, and db-setup.sh
+-- refuses the bootstrap there (run the setup by hand, check-only).
 -- Released: with the setup migrations, the first file of the scope.
 -- By hand: once, with psql as a superuser; prepare_environment.sh fills in the placeholders
 -- and writes the result to database-bootstrap.sql.

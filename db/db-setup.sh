@@ -193,7 +193,8 @@ done < <(placeholders)
 # mysql_native_password (FXA_MYSQL_ARGS, an accounts image without mozilla/fxa#21554) the
 # "-- native:" lines instead of those after them; without a policy user (FXA_MYSQL_POLICY_USER)
 # its grants to FXA_MYSQL_USER, as docs/reference/database-users.md#the-accounts says; without
-# FXA_ADMIN_DB_PASSWORD (optional, fxa-policy then creates no ffs_admin) its lines
+# FXA_ADMIN_DB_PASSWORD (optional, fxa-policy then creates no ffs_admin) its lines; the bootstrap
+# accounts' "-- MySQL: " lines on MySQL only
 render() {
   local file=$1 run=$2 shown=$3 source=${WORK}/source.sql step=${WORK}/step.sql missing setting
   cp "${file}" "${source}" || exit 1
@@ -218,6 +219,10 @@ s/@FXA_POLICY_USER@/@FXA_USER@/g' "${source}" > "${step}" && mv "${step}" "${sou
       sed_file '/@FXA_ADMIN_PASSWORD@/d' "${source}" > "${step}" && mv "${step}" "${source}"
     fi
   fi
+  # the bootstrap accounts on MySQL: the "-- MySQL: " lines (mysql.global_grants, which MariaDB has not)
+  case "${SCOPE}" in *-bootstrap)
+    [ "${ENGINE}" != mysql ] || { sed_file 's/^-- MySQL: //' "${source}" > "${step}" && mv "${step}" "${source}"; } ;;
+  esac
   # a placeholder whose setting is empty
   missing=$(grep -o '@[A-Z_]*@' "${source}" | sort -u | tr -d '@' | while read -r placeholder; do
     setting=$(placeholders | while read -r p s; do [ "${p}" = "${placeholder}" ] && echo "${s}"; done)
@@ -435,6 +440,7 @@ grants_of() {
           [ -n "${r}" ] || continue
           out=$(my_q "${user}" "${password}" "${host}" "${port}" "SET ROLE ${r}; SHOW GRANTS FOR CURRENT_ROLE") || { printf '%s\n' "${out}" >&2; return 1; }
           mapfile -t -O "${#lines[@]}" lines <<< "${out}"
+        # shellcheck disable=SC2016 # (backticks of the role names, not commands)
         done < <(grep -o '`[^`]*`' <<< "${roles//, /$'\n'}" | grep -v '^``$')
       done
     fi
@@ -816,6 +822,11 @@ failed() {
 if [ -n "${BOOT_USER}" ] && [ "${ENGINE}" = postgres ]; then
   boot_q() { pg_q "${BOOT_USER}" "${BOOT_PASSWORD}" postgres "$1"; }
   out=$(pg_sql "${BOOT_USER}" "${BOOT_PASSWORD}" postgres -c "SELECT 1") || { printf '%s\n' "${out}" | redact; fail "${BOOT_USER} cannot sign in on ${MAIN_HOST}:${MAIN_PORT}"; }
+  # PostgreSQL 16 or later: before 16 CREATEROLE reaches every role but the superusers, the
+  # predefined ones (pg_read_server_files...) too: close to a superuser
+  version=$(boot_q "SHOW server_version_num")
+  [[ "${version}" =~ ^[0-9]+$ ]] && [ "${version}" -ge 160000 ] \
+    || fail "PostgreSQL ${version} on ${MAIN_HOST}:${MAIN_PORT}: the bootstrap needs PostgreSQL 16 or later (before 16 CREATEROLE can make itself almost a superuser). Unset ${USER_SETTING} and ${PASSWORD_SETTING}: the stack then checks the setup migrations at every start, and you run them by hand (${FILE}, ${DOC})"
   # no superuser, nor what makes one (the files of the server, its programs, all the data)
   # through a role it is a member of (a SET ROLE away)
   wide=$(boot_q "SELECT string_agg(x, ', ') FROM (
@@ -828,32 +839,28 @@ if [ -n "${BOOT_USER}" ] && [ "${ENGINE}" = postgres ]; then
         AND pg_has_role(current_user, r.oid, 'MEMBER')) y")
   [ -z "${wide}" ] || fail "${BOOT_USER} holds ${wide}: the bootstrap account must be a role with CREATEROLE and CREATEDB only, a member of no administrator's role (${DOC_BOOT})"
   # the stack's roles that exist: the stack's when the bootstrap administers them (the ones it
-  # created, those of database-bootstrap.sql) or they own the stack's database of their name;
-  # never from a sign-in (pg_hba.conf may trust it, a password may be someone else's too)
-  PG_ROLES=("${SYNC_POSTGRES_USER} ${SYNC_POSTGRES_NAME} SYNC_POSTGRES_USER")
-  [ -z "${ADMIN_DB_PASSWORD:-}" ] || PG_ROLES+=("${ADMIN_DB_USER} ${ADMIN_DB_NAME} ADMIN_DB_USER" "${ADMIN_DB_SYNC_USER} - ADMIN_DB_SYNC_USER")
-  PG_NEW=()
+  # created, those database-bootstrap.sql gives it), from the catalog; never from a sign-in
+  # (pg_hba.conf may trust it, a password may be someone else's too)
+  PG_ROLES=("${SYNC_POSTGRES_USER} SYNC_POSTGRES_USER")
+  [ -z "${ADMIN_DB_PASSWORD:-}" ] || PG_ROLES+=("${ADMIN_DB_USER} ADMIN_DB_USER" "${ADMIN_DB_SYNC_USER} ADMIN_DB_SYNC_USER")
   pg_owned() {
-    local pair role db setting
-    PG_NEW=()
+    local pair role setting
     for pair in "${PG_ROLES[@]}"; do
-      read -r role db setting <<< "${pair}"
+      read -r role setting <<< "${pair}"
       case "$(boot_q "SELECT CASE WHEN NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN 'none'
           WHEN EXISTS (SELECT FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles b ON b.oid = m.member
             WHERE r.rolname = '${role}' AND b.rolname = current_user AND m.admin_option) THEN 'ours'
-          WHEN EXISTS (SELECT FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = '${db}' AND r.rolname = '${role}') THEN 'ours'
           ELSE 'theirs' END")" in
-        none) PG_NEW+=("${role}") ;;
-        ours) ;;
-        theirs) failed "$(span "${NUMBERS[@]}")" "the role ${role} (${setting}) exists and is not the stack's: ${BOOT_USER} does not administer it and it owns no database of the stack. The bootstrap does not change it: if it is the stack's, GRANT ${role} TO ${BOOT_USER} WITH ADMIN OPTION as a superuser (database-bootstrap.sql does), or choose another name" ;;
+        none|ours) ;;
+        theirs) failed "$(span "${NUMBERS[@]}")" "the role ${role} (${setting}) exists and is not the stack's: ${BOOT_USER} does not administer it. The bootstrap does not change it: if it is the stack's, GRANT ${role} TO ${BOOT_USER} WITH ADMIN OPTION as a superuser (database-bootstrap.sql does), or choose another name" ;;
         *) failed "$(span "${NUMBERS[@]}")" "cannot read the roles as ${BOOT_USER}" ;;
       esac
     done
   }
-  # apply <number>: a file as the bootstrap account, after the check of the stack's roles; the
-  # roles it created administered by it (PostgreSQL 16+ does that itself)
+  # apply <number>: a file as the bootstrap account, after the check of the stack's roles (the
+  # roles it creates it administers: PostgreSQL 16+)
   apply() {
-    local name=$1 out line role
+    local name=$1 out line
     pg_owned
     if ! out=$(PGPASSWORD="${BOOT_PASSWORD}" PGCONNECT_TIMEOUT=10 psql -X -h "${MAIN_HOST}" -p "${MAIN_PORT}" -U "${BOOT_USER}" -d postgres -v ON_ERROR_STOP=1 -q -f "${WORK}/run/${name}" 2>&1); then
       printf '%s\n' "${out}" | grep -v 'NOTICE:' | redact
@@ -861,13 +868,6 @@ if [ -n "${BOOT_USER}" ] && [ "${ENGINE}" = postgres ]; then
       line=$(printf '%s\n' "${out}" | sed -n 's/^psql:[^:]*:\([0-9][0-9]*\): ERROR:.*/\1/p' | head -n 1)
       failed "${name%.sql}" "$([ -n "${line}" ] && sed -n "${line}p" "${WORK}/shown/${name}" || echo "see the error above")"
     fi
-    for role in ${PG_NEW[@]+"${PG_NEW[@]}"}; do
-      [ "$(boot_q "SELECT COUNT(*) FROM pg_roles WHERE rolname = '${role}'")" = 1 ] || continue
-      [ "$(boot_q "SELECT COUNT(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles b ON b.oid = m.member
-        WHERE r.rolname = '${role}' AND b.rolname = current_user AND m.admin_option")" != 0 ] && continue
-      out=$(pg_sql "${BOOT_USER}" "${BOOT_PASSWORD}" postgres -c "GRANT ${role} TO CURRENT_USER WITH ADMIN OPTION") \
-        || failed "${name%.sql}" "GRANT ${role} TO CURRENT_USER WITH ADMIN OPTION: $(head -n 1 <<< "${out}")"
-    done
   }
 elif [ -n "${BOOT_USER}" ]; then
   out=$(grants_of "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" all 2>&1) \
@@ -888,15 +888,40 @@ elif [ -n "${BOOT_USER}" ]; then
       "D "*)
         d=${line#D } a=${d%% *}
         if matches mysql "${a}"; then d=${d#* }; wide="${wide} ${d% [YN]} on the mysql schema (\`${a}\`.*),"; fi ;;
-      "T \`mysql\`.\`user\` SELECT (\`Host\`, \`User\`)"|"T \`mysql\`.\`user\` SELECT (\`User\`, \`Host\`)") ;;
-      "T \`mysql\`.\`global_priv\` SELECT (\`Host\`, \`User\`)"|"T \`mysql\`.\`global_priv\` SELECT (\`User\`, \`Host\`)") ;;
+      # (the columns of setup migration 001 of its account: any of them, nothing else)
+      "T \`mysql\`.\`user\` SELECT ("*")")
+        p=${line#T \`mysql\`.\`user\` SELECT (} p=${p%)} p=${p//\`/}
+        while IFS= read -r a; do
+          case "${a# }" in User|Host|Super_priv|Create_user_priv|Grant_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
+        done <<< "${p//,/$'\n'}" ;;
+      "T \`mysql\`.\`global_grants\` SELECT") ;;
       "R "*|"X "*) ;;
       "T "*) p=${line#T } wide="${wide} ${p#* } on ${p%% *}," ;;
       # (a proxy, a line not understood)
       *) wide="${wide} ${line#[A-Z] }," ;;
     esac
   done <<< "${BOOT_GRANTS}"
-  [ -z "${wide}" ] || fail "${BOOT_USER} holds${wide%,} (itself or through its roles): the bootstrap account must have only CREATE USER on the whole server, SELECT of the names and hosts of mysql.user, and ALL PRIVILEGES on the stack's databases (${DOC_BOOT})"
+  [ -z "${wide}" ] || fail "${BOOT_USER} holds${wide%,} (itself or through its roles): the bootstrap account must have only CREATE USER on the whole server, SELECT of the names, hosts and administrator columns of mysql.user (MySQL: of mysql.global_grants), and ALL PRIVILEGES on the stack's databases (${DOC_BOOT})"
+  # CREATE USER reaches every account of the server: MariaDB has nothing that protects one
+  # (opt-in: a warning at every start); MySQL 8.0.16 and later spare the accounts with
+  # SYSTEM_USER, which every administrator of the server must then hold (the bootstrap account
+  # must not: refused above)
+  version=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" 'SELECT VERSION()')
+  if [[ "${version}" == *[Mm]aria[Dd][Bb]* ]]; then
+    warn "MariaDB has no protection of accounts: ${BOOT_USER} (CREATE USER) can change or drop any account of ${MAIN_HOST}:${MAIN_PORT}, root too. Keep it for a server the stack has to itself, or unset ${USER_SETTING} after this start (${DOC_BOOT})"
+  else
+    IFS=. read -r major minor patch <<< "${version%%-*}"
+    patch=${patch%%[!0-9]*}
+    if ! [[ "${major}.${minor}.${patch}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ $((major * 10000 + minor * 100 + patch)) -lt 80016 ]; then
+      fail "MySQL ${version} on ${MAIN_HOST}:${MAIN_PORT}: the bootstrap needs MySQL 8.0.16 or later (SYSTEM_USER: before it CREATE USER can change root). Unset ${USER_SETTING} and run the setup by hand (${FILE}, ${DOC})"
+    fi
+    if ! admins=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT CONCAT('''', u.User, '''@''', u.Host, '''') FROM mysql.user u
+        WHERE (u.Super_priv = 'Y' OR u.Create_user_priv = 'Y' OR u.Grant_priv = 'Y' OR u.User = 'root') AND NOT (u.User = '${BOOT_USER}' AND u.Host = '%')
+          AND NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = u.User AND g.HOST = u.Host AND g.PRIV = 'SYSTEM_USER') ORDER BY 1"); then
+      fail "${BOOT_USER} cannot read the administrators of ${MAIN_HOST}:${MAIN_PORT} ($(head -n 1 <<< "${admins}")): run its setup migrations again as the server's administrator, they now give it SELECT on mysql.global_grants and the administrator columns of mysql.user (db-setup.sh print ${MAIN}-bootstrap, database-bootstrap$([ "${MAIN}" = fxa ] && echo -fxa).sql; ${DOC_BOOT})"
+    fi
+    [ -z "${admins}" ] || fail "accounts of ${MAIN_HOST}:${MAIN_PORT} with administrator privileges (SUPER, CREATE USER or GRANT OPTION on the whole server, or root) lack SYSTEM_USER: $(paste -sd ',' - <<< "${admins}" | sed -e 's/,/, /g'). ${BOOT_USER} could change or drop them (CREATE USER). As the server's administrator: GRANT SYSTEM_USER ON *.* TO each of them, or unset ${USER_SETTING} and run the setup by hand (${DOC_BOOT})"
+  fi
   # the accounts of a name: "<host>" per line (mysql.user's names and hosts, setup migration
   # 001 of the bootstrap account)
   hosts_of() {
@@ -920,6 +945,7 @@ elif [ -n "${BOOT_USER}" ]; then
     case "${hosts}" in
       "") return 1 ;;
       "[${host}]") ;;
+      # shellcheck disable=SC2001 # (a line per account)
       *) failed "${NAME}" "the server has $(sed -e "s/^\[\(.*\)\]$/'${user}'@'\1'/" <<< "${hosts}" | paste -sd ',' - | sed -e 's/,/, /g') (an account or a role): the setup migrations give '${user}'@'${host}' only, the bootstrap does not create or change it beside another (it would widen where ${user} signs in from). Drop or rename the other one if it is not the stack's, or choose another name" ;;
     esac
     if me=$(my_q "${user}" "${PASSWORD_OF[${user}]}" "${MAIN_HOST}" "${MAIN_PORT}" 'SELECT CURRENT_USER()') && [ "${me}" = "${user}@${host}" ]; then

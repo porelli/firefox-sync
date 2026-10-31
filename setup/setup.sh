@@ -672,7 +672,7 @@ unset ENV_READ
 # earlier one removed: it holds that account's password
 rm -f "${SCRIPT_DIR}/database-bootstrap.sql" "${SCRIPT_DIR}/database-bootstrap-fxa.sql"
 [ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && render_bootstrap_sql "${DATABASE_BACKEND}"
-[ -n "${FXA_DB_BOOTSTRAP_USER}" ] && render_bootstrap_sql fxa
+[ -n "${FXA_DB_BOOTSTRAP_USER}" ] && render_bootstrap_sql fxa "${FXA_DB}"
 if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
     # MySQL and an accounts image without mozilla/fxa#21554: their user on mysql_native_password
     render_fxa_sql "${FXA_DB}" "$([ "${FXA_DB}" = mysql ] && [ "${FXA_MYSQL2}" != 0 ] && echo native)"

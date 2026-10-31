@@ -44,11 +44,12 @@ render_sync_sql() {
 render_fxa_sql() {
     db_setup_print fxa "${1}" "${SCRIPT_DIR}/database-setup-fxa.sql" "FXA_MYSQL_ARGS=$([ "${2:-}" = native ] && echo mysql_native_password)"
 }
-# database-bootstrap.sql (database-bootstrap-fxa.sql: fxa): the account that applies the SQL
-# above at every start (SYNC_DB_BOOTSTRAP_USER, FXA_DB_BOOTSTRAP_USER of .env), docs/databases.md#the-bootstrap-account
+# database-bootstrap.sql (database-bootstrap-fxa.sql: fxa <mysql|mariadb>): the account that
+# applies the SQL above at every start (SYNC_DB_BOOTSTRAP_USER, FXA_DB_BOOTSTRAP_USER of .env),
+# docs/databases.md#the-bootstrap-account; its "-- MySQL: " lines on MySQL only
 render_bootstrap_sql() {
     case "${1}" in
-        fxa) db_setup_print fxa-bootstrap mysql "${SCRIPT_DIR}/database-bootstrap-fxa.sql" ;;
+        fxa) db_setup_print fxa-bootstrap "${2:-mysql}" "${SCRIPT_DIR}/database-bootstrap-fxa.sql" ;;
         *) db_setup_print sync-bootstrap "${1}" "${SCRIPT_DIR}/database-bootstrap.sql" ;;
     esac
 }
