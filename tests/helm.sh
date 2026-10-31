@@ -820,11 +820,11 @@ external_lint() {
   printf '%s\n' '{{- include "firefox-sync.checkSecretKeys" (dict "root" . "name" .Values.existingSecret "data" (fromJson (.Files.Get "files/data.json"))) }}' \
     'apiVersion: v1' 'kind: ConfigMap' 'metadata: {name: checked}' > "${d}/chart/templates/zz-check.yaml"
   echo '{"SYNC_MASTER_SECRET":"eA=="}' > "${d}/chart/files/data.json"
-  out=$(helm template test-release "${d}/chart" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml 2>&1) \
+  out=$(helm template test-release "${d}/chart" -f "${CHART_DIR}/ci/default-values.yaml" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml 2>&1) \
     && fail "an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD passes"
   grep -qF "existingSecret mine lacks SYNC_DB_BOOTSTRAP_PASSWORD" <<< "${out}" || fail "an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD: not the message: ${out}"
   echo '{"SYNC_MASTER_SECRET":"eA==","SYNC_DB_BOOTSTRAP_PASSWORD":"eA=="}' > "${d}/chart/files/data.json"
-  helm template test-release "${d}/chart" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml > /dev/null \
+  helm template test-release "${d}/chart" -f "${CHART_DIR}/ci/default-values.yaml" "${ext[@]}" --set database.external.bootstrap.user=ffs_bootstrap --show-only templates/zz-check.yaml > /dev/null \
     || fail "an existingSecret with SYNC_DB_BOOTSTRAP_PASSWORD refused"
   rm -rf "${d}"
   check "database.external.bootstrap.user: refused with the bundled database and without existingSecret; an existingSecret without SYNC_DB_BOOTSTRAP_PASSWORD refused naming it"

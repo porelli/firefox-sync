@@ -193,6 +193,16 @@ for ENGINE in "$@"; do
     db_setup sync -- "${BOOT[@]}"
     check "$? $(said 'ffs_bootstrap holds INSERT on the mysql schema')" "1 1" "${ENGINE}: a bootstrap account with a privilege on the mysql schema refused"
     admin -e "REVOKE INSERT ON mysql.* FROM 'ffs_bootstrap'@'%'" < /dev/null
+    # deny by default: a table of the mysql schema beyond the names and hosts of mysql.user
+    admin -e "GRANT SELECT ON mysql.user TO 'ffs_bootstrap'@'%'" < /dev/null
+    db_setup sync -- "${BOOT[@]}"
+    check "$? $(said 'ffs_bootstrap holds SELECT.* on `mysql`.`user`')" "1 1" "${ENGINE}: a bootstrap account with SELECT on all of mysql.user (its password hashes) refused"
+    # (MariaDB's REVOKE takes the columns' SELECT with it: the account's SQL again)
+    admin -e "REVOKE SELECT ON mysql.user FROM 'ffs_bootstrap'@'%'" < /dev/null && boot_account ffs_bootstrap "${BOOT_PW}"
+    admin -e "GRANT USAGE ON *.* TO 'ffs_bootstrap'@'%' WITH GRANT OPTION" < /dev/null
+    db_setup sync -- "${BOOT[@]}"
+    check "$? $(said 'ffs_bootstrap holds .*WITH GRANT OPTION on the whole server')" "1 1" "${ENGINE}: a bootstrap account with GRANT OPTION on the whole server refused"
+    admin -e "REVOKE GRANT OPTION ON *.* FROM 'ffs_bootstrap'@'%'" < /dev/null
   fi
 
   # the normal path: two at once on an empty server (replicas of the chart: the lock), applied

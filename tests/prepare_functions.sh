@@ -139,7 +139,7 @@ printf 'OLD=1\n' > "${WORK}/dir/plain"
 new_env 4; replace_env "${WORK}/dir/.env.new" "${WORK}/dir/plain"
 check "$([ -L "${WORK}/dir/plain" ] || echo file) $(cat "${WORK}/dir/plain") $(mode "${WORK}/dir/plain")" "file NEW=4 600" "a plain .env: replaced by the new file"
 
-echo "== setup/env.sh, setup/databases.sh: substitutions with the values in a file, not on the command line (sed_script, sed_escape, render_sql)"
+echo "== setup/env.sh: substitutions with the values in a file, not on the command line (sed_script, sed_escape, apply_sed)"
 tricky='a&b|c/d\e"f'"'"'g$h#i%j'
 printf 'X=@V@ %%V%%\n' > "${WORK}/template"
 check "$(sed_script "s|@V@|$(sed_escape "${tricky}")|g" "${WORK}/template")" "X=${tricky} %V%" "sed_script with sed_escape: & | / \\ quotes \$ # % as they are"
@@ -153,10 +153,9 @@ check "$(s=$(mktemp "${TMPDIR}/ffs-sed.XXXXXX"); mode "${s}"; rm -f "${s}")" 600
 mkdir -p "${WORK}/bin"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/argv\nexec %s "$@"\n' "${WORK}" "$(command -v sed)" > "${WORK}/bin/sed"; chmod +x "${WORK}/bin/sed"
 secret=ffsSECRETvalue
-(PATH=${WORK}/bin:${PATH}; printf 'P=x\n' > "${WORK}/plain"; apply_sed "${WORK}/plain" "s|^P=.*|P=${secret}|"
-  render_sql "${WORK}/template" "${WORK}/out.sql" V="${secret}")
-check "$(grep -c "${secret}" "${WORK}/argv") $(cat "${WORK}/plain") $(cut -d' ' -f1 "${WORK}/out.sql") $(mode "${WORK}/out.sql")" "0 P=${secret} X=${secret} 600" \
-  "apply_sed and render_sql: the value written, never in sed's arguments"
+(PATH=${WORK}/bin:${PATH}; printf 'P=x\n' > "${WORK}/plain"; apply_sed "${WORK}/plain" "s|^P=.*|P=${secret}|")
+check "$(grep -c "${secret}" "${WORK}/argv") $(cat "${WORK}/plain")" "0 P=${secret}" \
+  "apply_sed: the value written, never in sed's arguments"
 
 # stopped while sed runs (TERM, INT): its script removed all the same, and a trap of before
 # (EXIT) still runs after
@@ -285,12 +284,16 @@ check "$( (valid_port 3306) && echo ok) $( (valid_port "") > /dev/null; echo $?)
 echo "== setup/databases.sh: database-setup.sql of your own server (render_sync_sql, db/db-setup.sh print)"
 mkdir -p "${WORK}/sql" && cp -r "${CODE}/db" "${WORK}/sql/"
 sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|pw~ord|' "${CODE}/.env-example" > "${WORK}/sql/.env"
+# (sed's arguments as ps shows them: no password there)
+mkdir -p "${WORK}/argv-bin" && rm -f "${WORK}/argv"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/argv\nexec %s "$@"\n' "${WORK}" "$(command -v sed)" > "${WORK}/argv-bin/sed"; chmod +x "${WORK}/argv-bin/sed"
 for engine in mariadb postgres; do
-  (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_sync_sql "${engine}")
+  (PATH=${WORK}/argv-bin:${PATH}; SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_sync_sql "${engine}")
   out=${WORK}/sql/database-setup.sql
   check "$(grep -c '@[A-Z_]*@' "${out}") $([ "$(grep -c 'pw~ord' "${out}")" -gt 0 ] && echo values) $(mode "${out}") $(grep -c '^-- ==== setup migration 001-' "${out}") $(grep -c "ffs_setup_migrations (scope, number, name, checksum, how) VALUES ('sync', 1, '001-sync-and-admin-ui.sql', '[0-9a-f]\{64\}', 'manual')" "${out}")" \
     "0 values 600 1 1" "render_sync_sql ${engine}: every setup migration, every placeholder filled from .env, this user's only, the INSERT that records it (manual)"
 done
+check "$([ -s "${WORK}/argv" ] && echo sed) $(grep -c 'pw~ord' "${WORK}/argv")" "sed 0" "render_sync_sql (db/db-setup.sh print): no password in sed's arguments"
 # a password the stack refuses at every start (db/db-setup.sh): refused here too, no file
 sed -i.bak -e 's|^SYNC_TOKENSERVER_DB_PASSWORD=.*|SYNC_TOKENSERVER_DB_PASSWORD=pw\&ord|' "${WORK}/sql/.env" && rm -f "${WORK}/sql/.env.bak"
 out=$( (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_sync_sql mariadb) 2>&1)
@@ -306,7 +309,8 @@ rm -f "${WORK}/sql"/database-setup.sql*
 # the bootstrap account's SQL (docs/databases.md#the-bootstrap-account), and the accounts' SQL
 sed -i.bak -e 's|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=ffs_boot|' -e 's|^SYNC_DB_BOOTSTRAP_PASSWORD=.*|SYNC_DB_BOOTSTRAP_PASSWORD=b00t|' \
   -e 's|^FXA_DB_BOOTSTRAP_USER=.*|FXA_DB_BOOTSTRAP_USER=ffs_fxa_boot|' -e 's|^FXA_DB_BOOTSTRAP_PASSWORD=.*|FXA_DB_BOOTSTRAP_PASSWORD=f00t|' \
-  -e 's|^FXA_MYSQL_POLICY_USER=.*|FXA_MYSQL_POLICY_USER=ffs_policy|' "${WORK}/sql/.env" && rm -f "${WORK}/sql/.env.bak"
+  -e 's|^FXA_MYSQL_POLICY_USER=.*|FXA_MYSQL_POLICY_USER=ffs_policy|' -e 's|^FXA_MYSQL_POLICY_PASSWORD=.*|FXA_MYSQL_POLICY_PASSWORD=p0licy|' \
+  -e 's|^FXA_ADMIN_DB_PASSWORD=.*|FXA_ADMIN_DB_PASSWORD=adm1n|' "${WORK}/sql/.env" && rm -f "${WORK}/sql/.env.bak"
 for engine in mariadb postgres fxa; do
   (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_bootstrap_sql "${engine}")
   out=${WORK}/sql/database-bootstrap$([ "${engine}" = fxa ] && echo -fxa).sql
@@ -314,12 +318,17 @@ for engine in mariadb postgres fxa; do
     "0 $(case ${engine} in postgres) echo 3 ;; fxa) echo 9 ;; *) echo 7 ;; esac) $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
     "render_bootstrap_sql ${engine}: the account of .env and its password, every placeholder filled, this user's only"
 done
-(SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mysql native)
+(SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mysql native) || echo "render_fxa_sql mysql native failed"
 check "$(grep -c '@[A-Z_]*@' "${WORK}/sql/database-setup-fxa.sql") $(grep -c 'IDENTIFIED WITH mysql_native_password' "${WORK}/sql/database-setup-fxa.sql") $(grep -c '^-- native:' "${WORK}/sql/database-setup-fxa.sql") $(ls "${WORK}/sql/database-setup-fxa.native" 2> /dev/null)" \
   "0 2 0 " "render_fxa_sql mysql native: the accounts' user on mysql_native_password, the template of it removed"
+# FXA_ADMIN_DB_PASSWORD empty (optional: fxa-policy creates no ffs_admin then): its lines left out
+sed -i.bak -e 's|^FXA_ADMIN_DB_PASSWORD=.*|FXA_ADMIN_DB_PASSWORD=|' "${WORK}/sql/.env" && rm -f "${WORK}/sql/.env.bak"
+(SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mariadb) || echo "render_fxa_sql mariadb failed"
+check "$(grep -c "ffs_admin'" "${WORK}/sql/database-setup-fxa.sql") $(grep -c "'ffs_policy'@'%'" "${WORK}/sql/database-setup-fxa.sql")" "0 7" \
+  "render_fxa_sql without FXA_ADMIN_DB_PASSWORD: no ffs_admin lines, the policy user's there"
 # db/db-setup.sh fills the setup migrations with the same settings: every placeholder of each one is in them
 for pair in $(cd "${CODE}" && for f in db/mysql/setup/sync/*.sql; do echo "mysql:${f}"; done; for f in db/postgres/setup/sync/*.sql; do echo "postgres:${f}"; done
-    for f in db/mysql/setup/fxa-*/*.sql; do echo "fxa:${f}"; done); do
+    for f in db/mysql/setup/fxa-mysql/*.sql db/mysql/setup/fxa-mariadb/*.sql; do echo "fxa:${f}"; done); do
   check "$(grep -o '@[A-Z_]*@' "${CODE}/${pair#*:}" | tr -d @ | sort -u | grep -vxF -f <(bash "${CODE}/db/db-setup.sh" settings "${pair%%:*}" | cut -d' ' -f1) | paste -sd' ' -)" "" \
     "db/db-setup.sh settings ${pair%%:*}: every placeholder of ${pair#*:}"
 done
