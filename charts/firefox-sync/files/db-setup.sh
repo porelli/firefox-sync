@@ -104,6 +104,9 @@ case "${SCOPE}" in sync-bootstrap) FILE=database-bootstrap.sql ;; fxa-bootstrap)
 USER_SETTING=$([ "${MAIN}" = sync ] && echo SYNC || echo FXA)_DB_BOOTSTRAP_USER
 PASSWORD_SETTING=${USER_SETTING%_USER}_PASSWORD
 BOOT_USER=${!USER_SETTING:-} BOOT_PASSWORD=${!PASSWORD_SETTING:-}
+# (both end up in SQL and in the clients' messages: checked before any use)
+[[ -z "${BOOT_USER}" || "${BOOT_USER}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || fail "${USER_SETTING} '${BOOT_USER}': A-Z, a-z, 0-9 and _ only, at most 32"
+[[ -z "${BOOT_PASSWORD}" || "${BOOT_PASSWORD}" =~ ^[A-Za-z0-9._~-]+$ ]] || fail "${PASSWORD_SETTING}: only A-Z a-z 0-9 . _ ~ -"
 
 if [ "${ACTION}" = start ] && [ "${CONTAINERS}" != 0 ]; then
   echo "${WHAT}: the stack's own database containers, nothing to do here (the init container records the setup migrations)"
@@ -888,24 +891,26 @@ elif [ -n "${BOOT_USER}" ]; then
       "D "*)
         d=${line#D } a=${d%% *}
         if matches mysql "${a}"; then d=${d#* }; wide="${wide} ${d% [YN]} on the mysql schema (\`${a}\`.*),"; fi ;;
-      # (the columns of setup migration 001 of its account: any of them, nothing else)
+      # (what setup migration 001 of its account gives: the names, hosts and privilege columns of
+      # mysql.user, nothing else of it; the privilege tables, which hold no secret)
       "T \`mysql\`.\`user\` SELECT ("*")")
         p=${line#T \`mysql\`.\`user\` SELECT (} p=${p%)} p=${p//\`/}
         while IFS= read -r a; do
-          case "${a# }" in User|Host|Super_priv|Create_user_priv|Grant_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
+          case "${a# }" in User|Host|*_priv) ;; *) wide="${wide} SELECT (${a# }) on \`mysql\`.\`user\`," ;; esac
         done <<< "${p//,/$'\n'}" ;;
-      "T \`mysql\`.\`global_grants\` SELECT") ;;
+      "T \`mysql\`.\`global_grants\` SELECT"|"T \`mysql\`.\`role_edges\` SELECT"|"T \`mysql\`.\`db\` SELECT"|"T \`mysql\`.\`tables_priv\` SELECT") ;;
+      "T \`mysql\`.\`columns_priv\` SELECT"|"T \`mysql\`.\`procs_priv\` SELECT") ;;
       "R "*|"X "*) ;;
       "T "*) p=${line#T } wide="${wide} ${p#* } on ${p%% *}," ;;
       # (a proxy, a line not understood)
       *) wide="${wide} ${line#[A-Z] }," ;;
     esac
   done <<< "${BOOT_GRANTS}"
-  [ -z "${wide}" ] || fail "${BOOT_USER} holds${wide%,} (itself or through its roles): the bootstrap account must have only CREATE USER on the whole server, SELECT of the names, hosts and administrator columns of mysql.user (MySQL: of mysql.global_grants), and ALL PRIVILEGES on the stack's databases (${DOC_BOOT})"
+  [ -z "${wide}" ] || fail "${BOOT_USER} holds${wide%,} (itself or through its roles): the bootstrap account must have only CREATE USER on the whole server, SELECT of the names and hosts of mysql.user (MySQL: of its privilege columns and privilege tables), and ALL PRIVILEGES on the stack's databases (${DOC_BOOT})"
   # CREATE USER reaches every account of the server: MariaDB has nothing that protects one
   # (opt-in: a warning at every start); MySQL 8.0.16 and later spare the accounts with
   # SYSTEM_USER, which every administrator of the server must then hold (the bootstrap account
-  # must not: refused above)
+  # must not: refused above), the others it reaches (a warning)
   version=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" 'SELECT VERSION()')
   if [[ "${version}" == *[Mm]aria[Dd][Bb]* ]]; then
     warn "MariaDB has no protection of accounts: ${BOOT_USER} (CREATE USER) can change or drop any account of ${MAIN_HOST}:${MAIN_PORT}, root too. Keep it for a server the stack has to itself, or unset ${USER_SETTING} after this start (${DOC_BOOT})"
@@ -915,12 +920,31 @@ elif [ -n "${BOOT_USER}" ]; then
     if ! [[ "${major}.${minor}.${patch}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ $((major * 10000 + minor * 100 + patch)) -lt 80016 ]; then
       fail "MySQL ${version} on ${MAIN_HOST}:${MAIN_PORT}: the bootstrap needs MySQL 8.0.16 or later (SYSTEM_USER: before it CREATE USER can change root). Unset ${USER_SETTING} and run the setup by hand (${FILE}, ${DOC})"
     fi
-    if ! admins=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT CONCAT('''', u.User, '''@''', u.Host, '''') FROM mysql.user u
-        WHERE (u.Super_priv = 'Y' OR u.Create_user_priv = 'Y' OR u.Grant_priv = 'Y' OR u.User = 'root') AND NOT (u.User = '${BOOT_USER}' AND u.Host = '%')
-          AND NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = u.User AND g.HOST = u.Host AND g.PRIV = 'SYSTEM_USER') ORDER BY 1"); then
-      fail "${BOOT_USER} cannot read the administrators of ${MAIN_HOST}:${MAIN_PORT} ($(head -n 1 <<< "${admins}")): run its setup migrations again as the server's administrator, they now give it SELECT on mysql.global_grants and the administrator columns of mysql.user (db-setup.sh print ${MAIN}-bootstrap, database-bootstrap$([ "${MAIN}" = fxa ] && echo -fxa).sql; ${DOC_BOOT})"
+    # an administrator: any privilege on the whole server beyond USAGE (the *_priv columns of
+    # mysql.user, a dynamic privilege of mysql.global_grants), any grant on the mysql schema
+    # (mysql.db, tables_priv, columns_priv, procs_priv), itself or through its roles, recursively
+    # (mysql.role_edges); the bootstrap account and the stack's own users aside
+    privs=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "SELECT GROUP_CONCAT(CONCAT('u.', COLUMN_NAME, ' = ''Y''') SEPARATOR ' OR ')
+        FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 'user' AND COLUMN_NAME LIKE '%\_priv'") || privs=""
+    stack_users=$(sql_settings "${KIND}" | while read -r placeholder setting; do [[ "${setting}" == *_USER ]] && [ -n "${!setting:-}" ] && printf "'%s'," "${!setting}"; done)
+    [ "${KIND}" != fxa ] || stack_users="${stack_users}'ffs_admin',"
+    if [ -z "${privs}" ] || ! admins=$(my_q "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}" "WITH RECURSIVE reach (u, h, ru, rh) AS (
+          SELECT User, Host, User, Host FROM mysql.user
+          UNION SELECT r.u, r.h, e.FROM_USER, e.FROM_HOST FROM reach r JOIN mysql.role_edges e ON e.TO_USER = r.ru AND e.TO_HOST = r.rh),
+        admin (u, h) AS (
+          SELECT u.User, u.Host FROM mysql.user u WHERE ${privs}
+          UNION SELECT USER, HOST FROM mysql.global_grants
+          UNION SELECT User, Host FROM mysql.db WHERE 'mysql' LIKE Db
+          UNION SELECT User, Host FROM mysql.tables_priv WHERE Db = 'mysql'
+          UNION SELECT User, Host FROM mysql.columns_priv WHERE Db = 'mysql'
+          UNION SELECT User, Host FROM mysql.procs_priv WHERE Db = 'mysql')
+        SELECT DISTINCT CONCAT('''', r.u, '''@''', r.h, '''') FROM reach r JOIN admin a ON a.u = r.ru AND a.h = r.rh
+        WHERE NOT (r.u = '${BOOT_USER}' AND r.h = '%') AND r.u NOT IN (${stack_users%,})
+          AND NOT EXISTS (SELECT 1 FROM mysql.global_grants g WHERE g.USER = r.u AND g.HOST = r.h AND g.PRIV = 'SYSTEM_USER') ORDER BY 1"); then
+      fail "${BOOT_USER} cannot read the administrators of ${MAIN_HOST}:${MAIN_PORT} ($(head -n 1 <<< "${admins:-the columns of mysql.user}")): run its setup migrations again as the server's administrator, they give it SELECT on the privilege tables of the mysql schema (never the passwords' hashes; db-setup.sh print ${MAIN}-bootstrap, database-bootstrap$([ "${MAIN}" = fxa ] && echo -fxa).sql; ${DOC_BOOT})"
     fi
-    [ -z "${admins}" ] || fail "accounts of ${MAIN_HOST}:${MAIN_PORT} with administrator privileges (SUPER, CREATE USER or GRANT OPTION on the whole server, or root) lack SYSTEM_USER: $(paste -sd ',' - <<< "${admins}" | sed -e 's/,/, /g'). ${BOOT_USER} could change or drop them (CREATE USER). As the server's administrator: GRANT SYSTEM_USER ON *.* TO each of them, or unset ${USER_SETTING} and run the setup by hand (${DOC_BOOT})"
+    [ -z "${admins}" ] || fail "accounts of ${MAIN_HOST}:${MAIN_PORT} with administrator privileges (any privilege on the whole server, or on the mysql schema, also through a role) lack SYSTEM_USER: $(paste -sd ',' - <<< "${admins}" | sed -e 's/,/, /g'). ${BOOT_USER} could change or drop them (CREATE USER). As the server's administrator: GRANT SYSTEM_USER ON *.* TO each of them, or unset ${USER_SETTING} and run the setup by hand (${DOC_BOOT})"
+    warn "MySQL: ${BOOT_USER} (CREATE USER) can change or drop the accounts without SYSTEM_USER of ${MAIN_HOST}:${MAIN_PORT}, those of other applications too; the administrators hold SYSTEM_USER. Unset ${USER_SETTING} after this start to hold no such password (${DOC_BOOT})"
   fi
   # the accounts of a name: "<host>" per line (mysql.user's names and hosts, setup migration
   # 001 of the bootstrap account)
