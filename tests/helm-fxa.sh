@@ -1232,7 +1232,7 @@ fxa_e2e_main() {
     || fail "the NetworkPolicies: $(kubectl get networkpolicy -o name | paste -sd' ' -)"
   check "fxa.networkPolicy.servers: auth, content, profile (1111, 1114), pairing unreachable from a pod of no label and from one with Traefik's label in another namespace (the CNI enforces it), reached from extraFrom's; through Traefik in the tests below"
 
-  # fail closed: a wrong password of the accounts' database stops auth at the migrations
+  # fail closed: a wrong password of the accounts' database stops auth at the migrations (your own server: at db-bootstrap)
   # (wait-db has no credentials), never Ready, out of its Service
   local good
   good=$(kubectl get secret "${SECRET}" -o jsonpath='{.data.FXA_MYSQL_PASSWORD}')
@@ -1240,12 +1240,15 @@ fxa_e2e_main() {
   kubectl delete pod -l "${POD_SELECTOR}" --wait=true
   # (the first failure, after the migrations' 60 tries, is rerun at once: Init:Error lasts a
   # moment, then Init:2/5 again, Init:CrashLoopBackOff from the second one on)
-  wait_init_failed migrations 600 || fail "the auth pod's migrations did not fail"
+  # (your own server: db-bootstrap, which signs in first as the accounts' user, stops it there)
+  local failing=migrations
+  [[ -z ${external} ]] || failing=db-bootstrap
+  wait_init_failed "${failing}" 600 || fail "the auth pod's ${failing} did not fail"
   [[ "$(pod_status)" =~ ^Init: ]] || fail "the auth pod is $(pod_status), not in its init containers"
   MATCHED_STATUS=$(pod_status)
   inits=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r '.items[0].status.initContainerStatuses[]
     | "\(.name)=\(.state.terminated.exitCode // .lastState.terminated.exitCode // "none")"' | paste -sd' ' -) || true
-  [[ "${inits}" =~ wait-db=0\ migrations=[1-9] ]] || fail "expected wait-db to pass and the migrations to fail: ${inits}"
+  [[ "${inits}" =~ wait-db=0\ ${failing}=[1-9] ]] || fail "expected wait-db to pass and ${failing} to fail: ${inits}"
   # (over 30 s, not a single look)
   for _ in $(seq 1 6); do
     ready=$(kubectl get endpointslices -l "kubernetes.io/service-name=${FULL}-fxa-auth" -o json \
