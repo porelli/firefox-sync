@@ -1135,7 +1135,10 @@ fxa_e2e_main() {
   # the auth server only after its init containers, in compose's order, all succeeded
   inits=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r '.items[0].status.initContainerStatuses[]
     | "\(.name)=\(.state.terminated.exitCode // "none")"' | paste -sd' ' -) || true
-  [[ "${inits}" == "keys-owner=0 wait-db=0 migrations=0 policy=0 wait-redis=0" ]] || fail "the auth pod's init containers: ${inits}"
+  # (your own server: db-bootstrap checks its users and grants before the migrations)
+  local boot=""
+  [[ -z ${external} ]] || boot="db-bootstrap=0 "
+  [[ "${inits}" == "keys-owner=0 wait-db=0 ${boot}migrations=0 policy=0 wait-redis=0" ]] || fail "the auth pod's init containers: ${inits}"
   check "auth's init containers: ${inits}"
   # (oauth_gen_keys.js also writes openid-oldKey.json, FXA_OPENID_OLDKEYFILE)
   [[ "$(kubectl exec "${auth}" -c auth -- ls /fxa-keys | paste -sd' ' -)" == "oauth-clients.json openid-key.json openid-oldKey.json public-key.json secret-key.json vapid-keys.json" ]] \
@@ -1879,7 +1882,7 @@ PY
   ! kubectl get pvc "${FULL}-fxa-keys" > /dev/null 2>&1 || fail "pvc/${FULL}-fxa-keys with fxa.keys.existingSecret"
   inits=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r '.items[0].status.initContainerStatuses[]
     | "\(.name)=\(.state.terminated.exitCode // "none")"' | paste -sd' ' -) || true
-  [[ "${inits}" == "keys-copy=0 wait-db=0 migrations=0 policy=0 wait-redis=0" ]] || fail "the auth pod's init containers with fxa.keys.existingSecret: ${inits}"
+  [[ "${inits}" == "keys-copy=0 wait-db=0 ${boot}migrations=0 policy=0 wait-redis=0" ]] || fail "the auth pod's init containers with fxa.keys.existingSecret: ${inits}"
   [[ "$(fxa_keys_hash)" == "${keys_before}" ]] || fail "fxa.keys.existingSecret: other keys, $(fxa_keys_hash), before ${keys_before}"
   upgrade_after "the keys moved to fxa.keys.existingSecret"
   check "the keys exported (the NOTES' tar), their volume deleted, fxa.keys.existingSecret=ffs-fxa-keys: ${inits}, the same keys, test_fxa_upgrade.py after: ${UPGRADE_AFTER}"
