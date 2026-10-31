@@ -336,16 +336,24 @@
 {{end}}
 
 {{/* the internals: only a mismatch matters, so folded */}}
-{{if or .Schema (and .Sync .Sync.Nodes) (and .Storage .Storage.OtherDomains)}}
+{{if or .Schema .SetupMigrations (and .Sync .Sync.Nodes) (and .Storage .Storage.OtherDomains)}}
 <section class="card" aria-labelledby="tech-title">
-  <details class="tech">
-    <summary><span id="tech-title">Technical details</span><span class="hint"> · database schemas, Sync nodes, other email domains</span></summary>
+  <details class="tech"{{range .SetupMigrations}}{{if .Problem}} open{{break}}{{end}}{{end}}>
+    <summary><span id="tech-title">Technical details</span><span class="hint"> · database schemas, setup migrations, Sync nodes, other email domains</span></summary>
     {{with .Schema}}
     <h3>Schema of the databases</h3>
     <div class="scroll"><table id="schema" aria-label="Schema of the databases">
       <thead><tr><th>Database</th><th>Schema</th><th>Applied</th></tr></thead>
       <tbody>{{range .}}<tr><td>{{.Database}}</td><td>{{.Level}}</td><td>{{if .At.IsZero}}<span class="quiet-text">not recorded by FxA</span>{{else}}{{date .At}}{{end}}</td></tr>{{end}}</tbody>
     </table></div>
+    {{end}}
+    {{with .SetupMigrations}}
+    <h3 id="setup-migrations">Setup of the database servers</h3>
+    <div class="scroll"><table id="setup-versions" aria-label="Setup of the database servers">
+      <thead><tr><th>Database server</th><th>Database setup</th><th>Check</th></tr></thead>
+      <tbody>{{range .}}<tr><td>{{.Label}}</td><td>{{.Line}}</td><td>{{with .Problem}}<span class="pill bad">needs attention</span> {{.}}{{else}}{{if or .NotRecorded .Err}}<span class="quiet-text">not checked</span>{{else}}in order{{if .State}} (last start: {{date .State.At}}){{end}}{{end}}{{end}}</td></tr>{{end}}</tbody>
+    </table></div>
+    <p class="hint">The users, grants and databases the stack needs on its database servers, numbered: db-bootstrap applies those a server lacks at every start (with its bootstrap account) or stops the start naming them; with the stack's own database containers the init records them. See <a href="https://github.com/porelli/firefox-sync/blob/main/docs/databases.md#setup-migrations">Setup migrations</a>.</p>
     {{end}}
     {{with .Sync}}{{if .Nodes}}
     <h3>Sync nodes</h3>

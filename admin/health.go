@@ -91,6 +91,8 @@ type Health struct {
 	// schema levels of the databases, see schema.go, and the error logged last
 	schema    []SchemaLevel
 	schemaErr string
+	// the setup migrations of the database servers (setupmigrations.go)
+	setup []SetupStatus
 	// the last alert of a burst of sign-ups (maintenance.go)
 	burstAlerted time.Time
 	// the runs of the backups (backup.go)
@@ -255,6 +257,7 @@ func (h *Health) run(ctx context.Context) {
 		h.watchBlocks(ctx)
 		h.watchSecurityEvents(ctx)
 		h.watchSchema(ctx)
+		h.watchSetup(ctx)
 		h.watchBackups(ctx, time.Now())
 		h.watchThresholds(ctx)
 		if time.Since(lastSizes) >= time.Hour {

@@ -50,6 +50,8 @@ type attentionInput struct {
 	accountLimit *Limit
 	// ADMIN_DEPLOYMENT, for the commands
 	deployment deployment
+	// the setup migrations of the database servers (setupmigrations.go)
+	setup []SetupStatus
 }
 
 // nearMaxUsers: 90% of max users or more are taken, full too (0: no new account at all,
@@ -203,6 +205,11 @@ func needsAttention(in attentionInput) []attention {
 		}
 		if last := in.pruneLastRan; last.IsZero() || in.now.Sub(last) > pruneLate {
 			add("/activity#maintenance", "Maintenance", "The accounts database was not pruned for 2 days (last: %s).", whenIn(last, adminZone))
+		}
+	}
+	for _, s := range in.setup {
+		if p := s.Problem(); p != "" {
+			add("#setup-migrations", "Technical details", "%s.", p)
 		}
 	}
 	if alertsFailing(in.alerts) {

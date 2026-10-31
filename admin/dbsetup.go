@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -11,11 +12,11 @@ import (
 // docs/databases.md#when-a-release-needs-new-users-or-grants): db-bootstrap applies them at
 // every start as SYNC_DB_BOOTSTRAP_USER, or checks them and stops the start (db/db-setup.sh).
 // The admin UI checks what it sees itself, as its own two users: the grants of their GRANT
-// lines in db/mysql/sync.sql (dbsetup_test.go reads them there), and on PostgreSQL the
+// lines in the setup migrations of db/mysql/setup/sync (dbsetup_test.go reads them there), and on PostgreSQL the
 // ownership of its database and the databases closed to the other roles. Something missing
 // (a grant revoked, a release that needs a new one) is named with its statement.
 
-// the privileges of db/mysql/sync.sql's GRANT lines of the admin UI's users
+// the privileges of the GRANT lines of the admin UI's users in db/mysql/setup/sync
 var (
 	// ADMIN_DB_USER on ADMIN_DB_NAME
 	ownDBPrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "INDEX", "DROP", "LOCK TABLES"}
@@ -25,27 +26,96 @@ var (
 )
 
 // mysqlPrivileges: the privileges of the connection's user on its database (and those on
-// every database), as it sees them itself
+// every database), as SHOW GRANTS gives them with the roles a session has at sign-in (MySQL:
+// USING its CURRENT_ROLE(); MariaDB's SHOW GRANTS has its default role's): what
+// information_schema shows misses them, and names a database by its grant's pattern
+// (fxa\_oauth, fx%)
 func mysqlPrivileges(ctx context.Context, db *sql.DB) (map[string]bool, string, error) {
-	var schema string
-	if err := db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&schema); err != nil {
+	var schema, version string
+	var role sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT DATABASE(), VERSION(), CURRENT_ROLE()").Scan(&schema, &version, &role); err != nil {
 		return nil, "", err
 	}
-	rows, err := db.QueryContext(ctx, "SELECT PRIVILEGE_TYPE FROM information_schema.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA = DATABASE() "+
-		"UNION SELECT PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES")
+	query := "SHOW GRANTS"
+	if !strings.Contains(strings.ToLower(version), "mariadb") && role.Valid && role.String != "" && role.String != "NONE" {
+		query = "SHOW GRANTS FOR CURRENT_USER() USING " + role.String
+	}
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, schema, err
 	}
 	defer rows.Close()
-	have := map[string]bool{}
+	var lines []string
 	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
+		var line string
+		if err := rows.Scan(&line); err != nil {
 			return nil, schema, err
 		}
-		have[strings.ToUpper(p)] = true
+		lines = append(lines, line)
 	}
-	return have, schema, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, schema, err
+	}
+	return grantedOn(lines, schema), schema, nil
+}
+
+// the privileges of ALL PRIVILEGES on a database
+var allDatabasePrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "REFERENCES", "INDEX", "ALTER",
+	"CREATE TEMPORARY TABLES", "LOCK TABLES", "EXECUTE", "CREATE VIEW", "SHOW VIEW", "CREATE ROUTINE", "ALTER ROUTINE", "EVENT", "TRIGGER"}
+
+var grantLine = regexp.MustCompile("^(GRANT|REVOKE) (.+) ON (\\*\\.\\*|`((?:[^`]|``)*)`\\.\\*) (TO|FROM) ")
+
+// grantedOn: the privileges lines of SHOW GRANTS give on a database (MySQL's partial revokes
+// taken off)
+func grantedOn(lines []string, db string) map[string]bool {
+	have, revoked := map[string]bool{}, map[string]bool{}
+	for _, line := range lines {
+		m := grantLine.FindStringSubmatch(line)
+		if m == nil || (m[3] != "*.*" && !grantPatternMatches(strings.ReplaceAll(m[4], "``", "`"), db)) {
+			continue
+		}
+		for _, p := range strings.Split(m[2], ",") {
+			p = strings.ToUpper(strings.TrimSpace(p))
+			privs := []string{p}
+			if p == "ALL PRIVILEGES" || p == "ALL" {
+				privs = allDatabasePrivileges
+			}
+			for _, p := range privs {
+				if m[1] == "REVOKE" {
+					revoked[p] = true
+				} else {
+					have[p] = true
+				}
+			}
+		}
+	}
+	for p := range revoked {
+		delete(have, p)
+	}
+	return have
+}
+
+// grantPatternMatches: the pattern of a database grant names db (_ and % are wildcards, \_
+// and \% the characters)
+func grantPatternMatches(pattern, db string) bool {
+	var re strings.Builder
+	re.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; {
+		case c == '\\' && i+1 < len(pattern):
+			i++
+			re.WriteString(regexp.QuoteMeta(string(pattern[i])))
+		case c == '_':
+			re.WriteString(".")
+		case c == '%':
+			re.WriteString(".*")
+		default:
+			re.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	re.WriteString("$")
+	ok, err := regexp.MatchString(re.String(), db)
+	return err == nil && ok
 }
 
 // missingGrant: the statement of a GRANT line whose privileges the user lacks, "" when it has them all

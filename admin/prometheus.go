@@ -149,6 +149,7 @@ func (a *App) prometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.health != nil {
 		thresholdMetrics(&b, a.health)
+		setupMetrics(&b, a.health.Setup())
 	}
 	// what the Sync server sent since the admin UI started
 	cumulative := a.rec.Cumulative()

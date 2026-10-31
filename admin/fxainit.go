@@ -383,6 +383,9 @@ var fxaAdminGrants = []string{
 	"GRANT SELECT ON ffs.emails TO 'ffs_admin'@'%'",
 	"GRANT SELECT ON ffs.security_events TO 'ffs_admin'@'%'",
 	"GRANT SELECT ON ffs.schema_levels TO 'ffs_admin'@'%'",
+	// the setup migrations of the accounts' database server (setupmigrations.go)
+	"GRANT SELECT ON ffs.ffs_setup_migrations TO 'ffs_admin'@'%'",
+	"GRANT SELECT ON ffs.ffs_setup_state TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON FUNCTION ffs.signup_allowed TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON FUNCTION ffs.signup_refusal TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.sign_out_session TO 'ffs_admin'@'%'",
@@ -536,6 +539,9 @@ func fxaInit(ctx context.Context) error {
 	}
 	if _, err := db.ExecContext(ctx, view); err != nil {
 		return fmt.Errorf("ffs.schema_levels: %w", err)
+	}
+	if err := recordFxaSetup(ctx, db); err != nil {
+		return fmt.Errorf("the setup migrations: %w", err)
 	}
 
 	if password := env("FXA_ADMIN_DB_PASSWORD", ""); password != "" {
@@ -700,4 +706,53 @@ func describePolicy(p *SignupPolicy) string {
 		return fmt.Sprintf("allowlist (%s)", strings.Join(p.Allowlist, ", "))
 	}
 	return p.Mode
+}
+
+// recordFxaSetup: the record of the setup migrations of the accounts (db/db-setup.sh,
+// docs/databases.md#the-record-of-the-setup-migrations) in ffs, for the admin UI. With your own
+// server fxa-db-bootstrap ran or checked them, and recorded every one before the migrations
+// (the start stops otherwise): nothing is missing here. With the stack's fxa-db, whose root the
+// accounts and this run as, they are recorded here (how 'containers'): the version shows
+// everywhere
+func recordFxaSetup(ctx context.Context, db *sql.DB) error {
+	var version string
+	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+		return err
+	}
+	dir := "mysql/setup/fxa-mysql"
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		dir = "mysql/setup/fxa-mariadb"
+	}
+	stmts := []string{
+		"CREATE TABLE IF NOT EXISTS ffs.ffs_setup_migrations (scope VARCHAR(32) NOT NULL, number INT NOT NULL, name VARCHAR(128) NOT NULL, " +
+			"checksum CHAR(64) NOT NULL, how VARCHAR(16) NOT NULL, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (scope, number))",
+		"CREATE TABLE IF NOT EXISTS ffs.ffs_setup_state (scope VARCHAR(32) PRIMARY KEY, result VARCHAR(16) NOT NULL, expected INT NOT NULL, " +
+			"detail TEXT NOT NULL, checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	sums := map[string]string{}
+	for _, line := range strings.Split(setupManifestText, "\n") {
+		if f := strings.Fields(line); len(f) == 2 {
+			sums[f[0]] = f[1]
+		}
+	}
+	added := 0
+	for _, f := range shippedSetup(setupManifestText, dir) {
+		res, err := db.ExecContext(ctx, "INSERT IGNORE INTO ffs.ffs_setup_migrations (scope, number, name, checksum, how) VALUES ('fxa', ?, ?, ?, 'containers')",
+			f.Number, f.Name, sums[dir+"/"+f.Name])
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+		}
+	}
+	if added > 0 {
+		log.Printf("setup migrations: %d recorded (the stack's accounts database)", added)
+	}
+	return nil
 }

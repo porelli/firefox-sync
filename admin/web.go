@@ -576,6 +576,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 		components, shown, data["Status"] = a.healthTable()
 		backups, certs = a.health.Backups(), a.health.Certs()
 		data["Health"], data["Sizes"], data["Schema"], data["Backups"] = shown, a.health.Sizes(), a.health.Schema(), backups
+		data["SetupMigrations"] = a.health.Setup()
 		data["BackupState"], data["BackupText"] = backupTile(backups, now)
 	}
 	var alerts *SendStatus
@@ -617,6 +618,9 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 
 	in := attentionInput{now: now, components: components, certs: certs, status: status, backups: backups, fxa: a.fxa != nil,
 		staleDays: a.staleDays, alerts: alerts, accountLimit: accountLimit, deployment: a.deployment}
+	if a.health != nil {
+		in.setup = a.health.Setup()
+	}
 	data["Backup"] = a.backupHelp(now)
 	var pages pager
 	if a.fxa != nil {
