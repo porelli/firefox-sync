@@ -84,7 +84,7 @@ Each image lists what was applied in its label `org.firefox-sync.upstream-patche
 docker image inspect -f '{{index .Config.Labels "org.firefox-sync.upstream-patches"}}' ghcr.io/porelli/firefox-sync:fxa-mono-latest
 ```
 
-The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`. A ported change ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
+The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`: the commit of the pull request applied, which for a release the newest commit does not apply to can be an earlier head of it (for example `mozilla/fxa#21554@3e2cb67..a99361e` on v1.348.5). A ported change, made by hand, ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
 
 The label decides what works. Once Mozilla releases a pull request, its entry leaves upstream-patches.yml and the label: [config/fxa/fixed-in](/config/fxa/fixed-in) then names the first accounts release with it, and every accounts image of that release or later has it (Mozilla's too), read from its label `org.opencontainers.image.version`, else its tag.
 

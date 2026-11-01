@@ -164,8 +164,11 @@
   component: fxa-mono
   # the pull request was rebased on a main that removed backfill-account-authorizations-v2 and
   # changed fxa-auth-server's package.json: base...sha does not apply to v1.348.5, which has
-  # them. Its port is the pull request before the rebase (3e2cb67..a99361e), the same change
-  ports: upstream-patches/fxa-mysql2
+  # them. It gets the pull request's head before the rebase, the same change
+  releases:
+    v1.348.5:
+      base: 3e2cb676f8c561e7c293d44ec979c3be88eb81cb
+      sha: a99361eb6229441aa1214a5d6acdf310cc925e02
   why: >-
     fix(shared): replace mysql with mysql2 for MySQL 8.4+/9 auth. The accounts used the
     unmaintained mysqljs driver, which only speaks mysql_native_password: MySQL 8.4 needs
@@ -178,4 +181,4 @@
     docs/upgrading.md#database-majors, .env-example and prepare_environment.sh, add the line
     "mozilla/fxa#21554 <that release>" to config/fxa/fixed-in (our images lose the label;
     prepare_environment.sh and the tests then take every image of that release or later as
-    having it), and remove upstream-patches/fxa-mysql2.
+    having it).
