@@ -54,10 +54,19 @@ valid_limit() {
 }
 # names end up unquoted in SQL and in the database URLs
 valid_name() { [[ "${1}" =~ ^[a-z_][a-z0-9_]{0,31}$ ]] || { echo "ERROR: not a valid database or user name (a-z, 0-9, _): '${1}'"; exit 1; }; }
+# a name of Sync or the accounts: never one of the admin UI's (.env's ADMIN_DB_NAME, ADMIN_DB_USER,
+# ADMIN_DB_SYNC_USER, the accounts' ffs_admin; db/db-setup.sh tells their problems apart by name
+# and refuses them too)
+stack_name() {
+    valid_name "${1}"
+    case " ffs_admin ${ADMIN_DB_NAME:-ffs_admin} ${ADMIN_DB_USER:-ffs_admin_ui} ${ADMIN_DB_SYNC_USER:-ffs_admin_sync} " in
+        *" ${1} "*) echo "ERROR: '${1}' is a name of the admin UI's own users or database: choose another for the stack"; exit 1 ;;
+    esac
+}
 # a user of the stack on your own server: a name, none of the server's own accounts or roles
 # (db/db-setup.sh refuses them too: its bootstrap creates and changes the stack's users only)
 valid_user() {
-    valid_name "${1}"
+    stack_name "${1}"
     case "${1}" in
         root|mysql|healthcheck|mariadb_sys|mysql_sys|postgres|public)
             echo "ERROR: '${1}' is a name of the database server's own accounts: choose another user for the stack"; exit 1 ;;

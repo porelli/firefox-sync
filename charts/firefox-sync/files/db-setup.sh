@@ -189,6 +189,17 @@ while read -r placeholder setting; do
   EXEC_SCRIPT="${EXEC_SCRIPT}s|@${placeholder}@|${value}|g
 "
 done < <(placeholders)
+# the admin UI's names never one of Sync's or the accounts': its problems are told apart by
+# name (problem_of: a warning), one of theirs among them would make a stop a warning
+ADMIN_NAMES="ffs_admin"
+[ "${MAIN}" = fxa ] || ADMIN_NAMES="${ADMIN_DB_USER:-ffs_admin_ui} ${ADMIN_DB_SYNC_USER:-ffs_admin_sync} ${ADMIN_DB_NAME:-ffs_admin}"
+while read -r placeholder setting; do
+  [[ "${setting}" == *_USER || "${setting}" == *_NAME ]] && [[ "${setting}" != ADMIN_* ]] || continue
+  value=${!setting:-}
+  case " ${ADMIN_NAMES} " in
+    *" ${value} "*) [ -n "${value}" ] && fail "${setting} is '${value}', a name of the admin UI's own users or database (ADMIN_DB_USER, ADMIN_DB_SYNC_USER, ADMIN_DB_NAME; the accounts' ffs_admin): choose two different names (docs/reference/database-users.md)" ;;
+  esac
+done < <(sql_settings "${KIND}")
 # render <file> <run> <shown>: the file filled in, with the passwords (what runs) and with
 # <SETTING> for them (what the messages and the logs say). The parts of a file the settings
 # leave out: without ADMIN_DB_PASSWORD (an install from before it) what follows "-- The admin
@@ -240,6 +251,7 @@ s/@FXA_POLICY_USER@/@FXA_USER@/g' "${source}" > "${step}" && mv "${step}" "${sou
   case "${SCOPE}" in *)
     # shellcheck disable=SC2016 # (sed's backticks)
     local escape='/ ON `[^`]*`\.\* TO /{
+s/ON `_/ON `\\_/
 :a
 s/\(ON `[^`]*[^\\`]\)_\([^`]*`\.\* TO \)/\1\\_\2/
 ta
@@ -427,10 +439,15 @@ redact() {
 # role granted (any of them a SET ROLE away)
 # mandatory_roles <user> <password> <host> <port>: MySQL's @@mandatory_roles, every account's
 # (a SET ROLE away), "`role`@`host`" per line; none on MariaDB. A name not of the forms of
-# account names: an error (fail closed)
+# account names, or the variable not read on MySQL: an error (fail closed)
 mandatory_roles() {
   local out item u h
-  out=$(my_q "$1" "$2" "$3" "$4" 'SELECT @@GLOBAL.mandatory_roles' 2> /dev/null) || return 0
+  # (MariaDB has none: Unknown system variable; any other error fails closed)
+  if ! out=$(my_q "$1" "$2" "$3" "$4" 'SELECT @@GLOBAL.mandatory_roles' 2> /dev/null); then
+    case "${out}" in *"Unknown system variable"*) return 0 ;; esac
+    echo "@@mandatory_roles not read: ${out}" >&2
+    return 1
+  fi
   while IFS= read -r item; do
     item=${item// /} item=${item//\`/} item=${item//\'/}
     [ -n "${item}" ] || continue
@@ -578,9 +595,7 @@ PROBLEMS=() ADMIN_PROBLEMS=()
 problem() { PROBLEMS+=("$1"); }
 # problem_of <user or database> <text>: the admin UI's when it is one of its names
 problem_of() {
-  local admin_names=" ffs_admin "
-  [ "${MAIN}" = fxa ] || admin_names=" ${ADMIN_DB_USER:-ffs_admin_ui} ${ADMIN_DB_SYNC_USER:-ffs_admin_sync} ${ADMIN_DB_NAME:-ffs_admin} "
-  case "${admin_names}" in
+  case " ${ADMIN_NAMES} " in
     *" $1 "*) ADMIN_PROBLEMS+=("$2") ;;
     *) PROBLEMS+=("$2") ;;
   esac
@@ -882,6 +897,12 @@ if [ -n "${BOOT_USER}" ]; then
   done < <(sql_settings "${KIND}")
 fi
 failed() {
+  # (the rerun for the admin UI's problems alone: in a subshell, which this ends; the end state
+  # after it says whether that is a warning or a stop)
+  if [ -n "${REPLAY_SOFT:-}" ]; then
+    echo "  ! setup migration $1 as ${BOOT_USER}: $2"
+    exit 1
+  fi
   echo "✗ ERROR: setup migration $1 failed as ${BOOT_USER} on ${MAIN_HOST}:${MAIN_PORT}: $2"
   echo "  The account needs the grants of ${DOC_BOOT} (${DOC})"
   write_state error "setup migration $1 failed as ${BOOT_USER}: $2"
@@ -1000,7 +1021,7 @@ elif [ -n "${BOOT_USER}" ]; then
     stack_users=$(sql_settings "${KIND}" | while read -r placeholder setting; do [[ "${setting}" == *_USER ]] && [ -n "${!setting:-}" ] && printf "'%s'," "${!setting}"; done)
     [ "${KIND}" != fxa ] || stack_users="${stack_users}'ffs_admin',"
     # MySQL's mandatory roles: every account reaches them (a SET ROLE away)
-    mandatory=$(mandatory_roles "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}") || fail "${BOOT_USER}: the mandatory roles of ${MAIN_HOST}:${MAIN_PORT} not understood (@@mandatory_roles)"
+    mandatory=$(mandatory_roles "${BOOT_USER}" "${BOOT_PASSWORD}" "${MAIN_HOST}" "${MAIN_PORT}") || fail "${BOOT_USER}: the mandatory roles of ${MAIN_HOST}:${MAIN_PORT} not read or not understood (@@mandatory_roles)"
     # shellcheck disable=SC2001,SC2016 # (a line per role, backticks of the names)
     mandatory_rows=$(sed -e 's/^`\(.*\)`@`\(.*\)`$/SELECT '"'"'\1'"'"' AS mu, '"'"'\2'"'"' AS mh/' <<< "${mandatory}" | paste -sd '|' - | sed -e 's/|/ UNION ALL /g')
     # the bootstrap account of the stack's other scope (Sync's or the accounts'), left to its own
@@ -1217,8 +1238,17 @@ end_state
 if [ "$((${#PROBLEMS[@]} + ${#ADMIN_PROBLEMS[@]}))" != 0 ] && [ -n "${BOOT_USER}" ]; then
   echo "${WHAT}: drift from the setup migrations, run again as ${BOOT_USER}:"
   show_problems
-  for i in "${!NAMES[@]}"; do apply "${NAMES[i]}"; done
+  REPLAY_FAILED=""
+  if [ "${#PROBLEMS[@]}" = 0 ]; then
+    # the admin UI's alone: what the bootstrap cannot change (an account of that name it does
+    # not take over, say) stays the admin UI's warning, as without the bootstrap
+    ( REPLAY_SOFT=1; for i in "${!NAMES[@]}"; do apply "${NAMES[i]}"; done ) || REPLAY_FAILED=1
+  else
+    for i in "${!NAMES[@]}"; do apply "${NAMES[i]}"; done
+  fi
   end_state
+  [ -z "${REPLAY_FAILED}" ] || [ "${#PROBLEMS[@]}" != 0 ] || [ "${#ADMIN_PROBLEMS[@]}" != 0 ] \
+    || ADMIN_PROBLEMS+=("the setup migrations did not run again in full as ${BOOT_USER} (above)")
 fi
 if [ "${#PROBLEMS[@]}" != 0 ]; then
   echo "✗ ERROR: ${WHAT} on your server lack what this release needs (setup migrations $(span "${NUMBERS[@]}"), version $(nnn "${VERSION}")):"

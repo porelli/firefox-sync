@@ -218,7 +218,7 @@ A user or grant missing from what the files give (revoked by hand, a user droppe
   - 'ffs_admin_sync' cannot sign in on db.example.com:3306 (ERROR 1045 (28000): Access denied ...): CREATE USER IF NOT EXISTS 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>'; ALTER USER 'ffs_admin_sync'@'%' IDENTIFIED BY '<ADMIN_DB_PASSWORD>';
 ```
 
-What only the admin UI's own users and database lack is a warning, not a stop: the Sync server and the accounts start, the admin UI shows it (`ffs_setup_state` result `admin`) and checks its users itself again every round.
+What only the admin UI's own users and database lack is a warning, not a stop: the Sync server and the accounts start, the admin UI shows it (`ffs_setup_state` result `admin`) and checks its users itself again every round. With the bootstrap too: an admin UI account it does not take over (another password, say an older `ADMIN_DB_PASSWORD`, or one of that name on another host) stays that warning.
 
 Read it with `docker compose logs db-bootstrap` (`fxa-db-bootstrap`), `journalctl --user -u firefox-sync-db-bootstrap` (`firefox-sync-fxa-db-bootstrap`) with the Quadlets, or `kubectl logs deploy/<release>-firefox-sync-syncstorage -c db-bootstrap` (the accounts: `deploy/<release>-firefox-sync-fxa-auth`). The admin UI's setup checks show its own users' grants too.
 
@@ -282,7 +282,7 @@ GRANT ALL PRIVILEGES ON `syncstorage`.* TO 'ffs_sync_bootstrap'@'%' WITH GRANT O
 GRANT ALL PRIVILEGES ON `ffs\_admin`.* TO 'ffs_sync_bootstrap'@'%' WITH GRANT OPTION;
 ```
 
-For the accounts, the same with an account of its own (`prepare_environment.sh` proposes `ffs_fxa_bootstrap`, Sync's `ffs_sync_bootstrap`; one account for both would get two passwords), `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa\_oauth`, `fxa\_profile`, `pushbox` and `ffs` instead of the three above. The `_` of a database name in a `GRANT` is a wildcard: escaped (`ffs\_admin`), the account gets exactly the stack's databases, no look-alike.
+For the accounts, the same with an account of its own (`prepare_environment.sh` proposes `ffs_fxa_bootstrap`, Sync's `ffs_sync_bootstrap`; one account for both on one server would get two passwords, on two servers the same name is fine), `FXA_DB_BOOTSTRAP_PASSWORD`, and the databases `fxa`, `fxa\_oauth`, `fxa\_profile`, `pushbox` and `ffs` instead of the three above. The `_` of a database name in a `GRANT` is a wildcard: escaped (`ffs\_admin`), the account gets exactly the stack's databases, no look-alike.
 
 - `CREATE USER` creates the stack's users, and sets their passwords again (`ALTER USER`).
 - `SELECT (User, Host) ON mysql.user`: which accounts of the stack's names exist, on which hosts. Nothing else of `mysql.user`, not the passwords' hashes. On MySQL also its privilege columns and the privilege tables (`global_grants`, `role_edges`, `db`, `tables_priv`, `columns_priv`, `procs_priv`, `proxies_priv`, which hold no secret): who is an administrator, and holds `SYSTEM_USER`. `prepare_environment.sh` writes those lines (the file's `-- MySQL:` lines) for MySQL only; the file has every column.

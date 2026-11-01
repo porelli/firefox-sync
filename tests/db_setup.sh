@@ -235,7 +235,8 @@ for ENGINE in "$@"; do
       admin_case "a proxy grant (PROXY ON 'root'@'%')" "GRANT PROXY ON 'root'@'%' TO 'ffs_dba'@'%';"
       # the accounts' bootstrap account on the same server: the stack's too, left to its own start
       # by its name (FXA_DB_BOOTSTRAP_USER), else an administrator without SYSTEM_USER
-      printf '%s\n' "CREATE USER 'ffs_peer'@'%' IDENTIFIED BY '${THEIRS}';" "GRANT CREATE USER ON *.* TO 'ffs_peer'@'%';" | admin > /dev/null
+      # (the template's grants, database-bootstrap.sql's: CREATE USER, the read grants on the mysql schema)
+      boot_account ffs_peer "${THEIRS}"
       db_setup sync -- "${BOOT[@]}"
       check "$? $(saidF "lack SYSTEM_USER: 'ffs_peer'@'%'")" "1 1" "mysql: another account with CREATE USER, not named as the other bootstrap account: refused"
       PEER=(FXA_DB_BOOTSTRAP_USER=ffs_peer "FFS_PEER_DB_HOST=${NAME}" FFS_PEER_DB_PORT=3306)
@@ -275,6 +276,18 @@ for ENGINE in "$@"; do
       # (and back to an empty server for the normal path)
       printf '%s\n' "DROP DATABASE tokenserver;" "DROP DATABASE syncstorage;" "DROP DATABASE ffs_admin;" "DROP USER 'tokenserver'@'%', 'syncstorage'@'%', 'ffs_admin_ui'@'%', 'ffs_admin_sync'@'%';" | admin > /dev/null
     fi
+  fi
+
+  # an admin UI name that is one of Sync's (its problems would be a warning): refused at start
+  sync_user=$([ "${ENGINE}" = postgres ] && echo syncserver || echo tokenserver)
+  db_setup sync -- "ADMIN_DB_SYNC_USER=${sync_user}"
+  check "$? $(said "is '${sync_user}', a name of the admin UI's own users or database")" "1 1" \
+    "${ENGINE}: ADMIN_DB_SYNC_USER the name of a Sync user: refused at start, also without the bootstrap"
+  if [ "${ENGINE}" != postgres ]; then
+    # a database name with a leading _: escaped too in the GRANTs (no look-alike databases)
+    db_setup -o "${WORK}/lead.sql" print sync -- ADMIN_DB_NAME=_ffsadm
+    # shellcheck disable=SC2016 # (the backticks of the GRANT)
+    check "$(grep -q 'ON `\\_ffsadm`\.\* TO' "${WORK}/lead.sql" && echo escaped) $(grep -c 'ON `_ffsadm`\.\* TO' "${WORK}/lead.sql")" "escaped 0" "${ENGINE}: ADMIN_DB_NAME=_ffsadm: its leading _ escaped in the GRANT"
   fi
 
   # the normal path: two at once on an empty server (replicas of the chart: the lock), applied
@@ -329,6 +342,15 @@ for ENGINE in "$@"; do
     db_setup sync -- "${BOOT[@]}"
     check "$? $(said 'drift from the setup migrations, run again as ffs_bootstrap') $(admin -e "SHOW GRANTS FOR 'ffs_admin_sync'@'%'" < /dev/null | grep -c 'GRANT SELECT, EXECUTE ON `tokenserver`') $(admin -e "SHOW GRANTS FOR 'tokenserver'@'%'" < /dev/null | grep -c 'REFERENCES') $(state)" "0 1 1 1 ok" \
       "${ENGINE}: with the bootstrap: the drift run again, both grants back"
+    # the admin UI's user with another password (an older ADMIN_DB_PASSWORD): the bootstrap does
+    # not take it over, which stays the admin UI's warning, as without the bootstrap
+    admin -e "ALTER USER 'ffs_admin_ui'@'%' IDENTIFIED BY '${THEIRS}'" < /dev/null
+    db_setup sync -- "${BOOT[@]}"
+    check "$? $(said "'ffs_admin_ui'@'%' exists on the server and does not sign in with <ADMIN_DB_PASSWORD>") $(said "WARNING: the Sync databases on .*: the admin UI's users or database lack") $(as ffs_admin_ui "${THEIRS}") $(state)" "0 1 1 1 admin" \
+      "${ENGINE}: with the bootstrap, an admin UI user it does not take over: a warning, the start goes on, the user untouched, the record says admin"
+    admin -e "ALTER USER 'ffs_admin_ui'@'%' IDENTIFIED BY '${ADMIN_PW}'" < /dev/null
+    db_setup sync -- "${BOOT[@]}"
+    check "$? $(state)" "0 ok" "${ENGINE}: its password back: the start finds it all"
   fi
 
   echo "== ${ENGINE}: the record of the setup migrations"

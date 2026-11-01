@@ -60,6 +60,11 @@ func TestSetupStatus(t *testing.T) {
 		{"up to date", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, ok, nil), "ok", "", "version 002 (applied bootstrap on ", false},
 		{"pending", setupStatus("sync", "Sync", shipped, []SetupMigration{m1}, true, nil, nil), "pending",
 			"version 001, this release expects 002 (002-a-reader not applied)", "version 001 (applied baseline on ", false},
+		// drift and a file pending: pending first, the gauge still says drift
+		{"pending, with the admin UI's check finding drift", setupStatus("sync", "Sync", shipped, []SetupMigration{m1}, true, ok, []string{"ffs_admin_sync lacks EXECUTE on tokenserver: GRANT ..."}), "pending",
+			"002-a-reader not applied", "", true},
+		{"pending, with the last start's drift", setupStatus("sync", "Sync", shipped, []SetupMigration{m1}, true, &SetupState{Result: "drift", Detail: "'tokenserver' lacks TRIGGER", At: at}, nil), "pending",
+			"002-a-reader not applied", "", true},
 		{"newer (a rollback)", setupStatus("sync", "Sync", shipped[:1], []SetupMigration{m1, m2}, true, ok, nil), "newer",
 			"the server has 002-a-reader, newer than this release (it expects 001)", "this release expects 001", false},
 		{"drift of the admin UI's check", setupStatus("sync", "Sync", shipped, []SetupMigration{m1, m2}, true, ok, []string{"ffs_admin_sync lacks EXECUTE on tokenserver: GRANT ..."}), "drift",

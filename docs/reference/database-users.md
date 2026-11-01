@@ -139,6 +139,8 @@ The admin UI has two users there, both with `ADMIN_DB_PASSWORD`. It is not given
 - `ADMIN_DB_USER` (`ffs_admin_ui`) reaches `ffs_admin` and nothing else.
 - `ADMIN_DB_SYNC_USER` (`ffs_admin_sync`) reads the Sync data, changes it only as the tables above say, and has nothing on `ffs_admin`.
 
+These three names (`ADMIN_DB_NAME`, `ADMIN_DB_USER`, `ADMIN_DB_SYNC_USER`) and the accounts' `ffs_admin` are never one of Sync's or the accounts' users or databases: `prepare_environment.sh` and `db-bootstrap` refuse that. What only they lack is a warning at start, so a Sync user of the same name would turn a stop into a warning.
+
 <details><summary>Why two users</summary>
 
 The tokenserver user owns its database and can put code there: procedures, functions and views over its tables, with `SQL SECURITY INVOKER` (PostgreSQL: `SECURITY INVOKER`, the default). That code runs with the privileges of whoever calls it or reads the view, and on MariaDB and MySQL a session reaches every database by its name.

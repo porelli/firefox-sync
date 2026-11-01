@@ -529,6 +529,10 @@ refused_external $((external_at + 2)) "tokenserver;drop" "not a valid database o
 refused_external $((external_at + 5)) "Sync-User" "not a valid database or user name"
 refused_external $((external_at + 4)) "tokenserver" "need two databases"
 refused_external $((external_at + 1)) "33o6" "not a port"
+# the admin UI's names (db/db-setup.sh tells its problems apart by them): never Sync's or the accounts'
+refused_external $((external_at + 3)) "ffs_admin_sync" "admin UI's own users or database"
+refused_external $((external_at + 2)) "ffs_admin" "admin UI's own users or database"
+refused_external $((external_at + 9)) "ffs_admin_ui" "admin UI's own users or database"
 refused_external "${external_at}" "" "database host is required"
 # the accounts on MariaDB: the last question (EOF above: mysql)
 external_answers[admin_answer+12]=db.example.org
@@ -552,6 +556,17 @@ check "$(grep -c 'mysql -h db.example.org -P 3306 -u root -p < database-bootstra
   "1 1 2" "prepare_environment.sh says to create the accounts once, then the stack applies the SQL"
 check "$(setup_compose config | sed -n '/^  db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +SYNC_DB_BOOTSTRAP_USER: ffs_sync_bootstrap$') $(setup_compose config | sed -n '/^  fxa-db-bootstrap:/,/^  [a-z]/p' | grep -cE '^ +FXA_DB_BOOTSTRAP_USER: fxa_boot$')" \
   "1 1" "db-bootstrap and fxa-db-bootstrap get their accounts"
+# one bootstrap name for both: on two servers (3306, 3307) two accounts, fine; on one server refused
+rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
+printf '%s\n' "${external_answers[@]}" "" "" "" "" "" "" y "" "" y ffs_sync_bootstrap "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap-same-name.log" 2>&1
+check "$? $(env_value SYNC_DB_BOOTSTRAP_USER) $(env_value FXA_DB_BOOTSTRAP_USER)" "0 ffs_sync_bootstrap ffs_sync_bootstrap" \
+  "prepare_environment.sh: the same bootstrap name for Sync and the accounts on two servers"
+one_server=("${external_answers[@]}")
+one_server[external_at + 8]=""
+rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
+printf '%s\n' "${one_server[@]}" "" "" "" "" "" "" y "" "" y ffs_sync_bootstrap "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap-same-server.log" 2>&1
+check "$? $(grep -c "is Sync's bootstrap account already, on the same server" "${WORK}/setup-bootstrap-same-server.log") [$(ls "${SETUP}/.env" 2> /dev/null)]" "1 1 []" \
+  "prepare_environment.sh: the same bootstrap name for Sync and the accounts on one server refused"
 rm -f "${SETUP}"/database-bootstrap*.sql
 # Sync on your own PostgreSQL server (host, port, database, user), the accounts built in
 answers[4]=postgres

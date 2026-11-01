@@ -180,7 +180,7 @@ if [ "${EXTERNAL_DB}" = "yes" ]; then
         SYNC_POSTGRES_NAME=${SYNC_POSTGRES_NAME:-syncserver}
         read -r -e -p "Database user [syncserver]: " SYNC_POSTGRES_USER
         SYNC_POSTGRES_USER=${SYNC_POSTGRES_USER:-syncserver}
-        valid_name "${SYNC_POSTGRES_NAME}"; valid_user "${SYNC_POSTGRES_USER}"
+        stack_name "${SYNC_POSTGRES_NAME}"; valid_user "${SYNC_POSTGRES_USER}"
     else
         read -r -e -p "Tokenserver database [tokenserver]: " SYNC_TOKENSERVER_DB_NAME
         SYNC_TOKENSERVER_DB_NAME=${SYNC_TOKENSERVER_DB_NAME:-tokenserver}
@@ -190,7 +190,7 @@ if [ "${EXTERNAL_DB}" = "yes" ]; then
         SYNC_STORAGE_DB_NAME=${SYNC_STORAGE_DB_NAME:-syncstorage}
         read -r -e -p "Storage database user [syncstorage]: " SYNC_STORAGE_DB_USER
         SYNC_STORAGE_DB_USER=${SYNC_STORAGE_DB_USER:-syncstorage}
-        valid_name "${SYNC_TOKENSERVER_DB_NAME}"; valid_name "${SYNC_STORAGE_DB_NAME}"
+        stack_name "${SYNC_TOKENSERVER_DB_NAME}"; stack_name "${SYNC_STORAGE_DB_NAME}"
         valid_user "${SYNC_TOKENSERVER_DB_USER}"; valid_user "${SYNC_STORAGE_DB_USER}"
         [ "${SYNC_TOKENSERVER_DB_NAME}" != "${SYNC_STORAGE_DB_NAME}" ] || { echo "ERROR: the tokenserver and the storage need two databases"; exit 1; }
     fi
@@ -340,8 +340,10 @@ ask_bootstrap() { # <prefix: SYNC or FXA> <what>
     read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [${default}]: " user
     user=${user:-${default}}
     [[ "${user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "ERROR: not a valid user name (A-Z, a-z, 0-9, _): '${user}'"; exit 1; }
+    # (on another server than Sync's the same name is another account)
     [ "${1}" != FXA ] || [ "${user}" != "${SYNC_DB_BOOTSTRAP_USER}" ] \
-        || { echo "ERROR: '${user}' is Sync's bootstrap account already: the accounts need one of their own (one account would get two passwords)"; exit 1; }
+        || [ "$(tr '[:upper:]' '[:lower:]' <<< "${FXA_MYSQL_HOST}:${FXA_MYSQL_PORT}")" != "$(tr '[:upper:]' '[:lower:]' <<< "${DB_HOST}:${DB_PORT}")" ] \
+        || { echo "ERROR: '${user}' is Sync's bootstrap account already, on the same server: the accounts need one of their own there (one account would get two passwords)"; exit 1; }
     # an account of its own, not one of the stack's users nor the server's administrator
     case " root postgres ${SYNC_TOKENSERVER_DB_USER:-} ${SYNC_STORAGE_DB_USER:-} ${SYNC_POSTGRES_USER:-} ${FXA_MYSQL_USER:-} ${FXA_MYSQL_POLICY_USER:-} ffs_admin ffs_admin_ui ffs_admin_sync " in
         *" ${user} "*) echo "ERROR: '${user}' is the server's administrator or one of the stack's users: the bootstrap needs an account of its own (docs/databases.md#the-bootstrap-account)"; exit 1 ;;

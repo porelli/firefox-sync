@@ -123,9 +123,13 @@ func (s SetupStatus) Kind() string {
 }
 
 // DriftFlag: 1 for ffs_db_setup_drift, a user or grant missing (the admin UI's check, or the
-// last start's): as Needs attention says
+// last start's), whether files are pending or not (Kind says pending first)
 func (s SetupStatus) DriftFlag() bool {
-	return s.Kind() == "drift"
+	result := ""
+	if s.State != nil {
+		result = s.State.Result
+	}
+	return len(s.Drift) > 0 || result == "drift" || result == "missing" || (result == "admin" && !s.LiveCheck)
 }
 
 // Line: "version 002 (applied bootstrap on ...), this release expects 002"

@@ -303,7 +303,7 @@ scrape_configs:
 | `ffs_security_events_total{event}` | the events of the [security history](accounts.md#security-history) since the admin UI started, by Mozilla's name (`account.login`, `account.login.failure`, `account.password_changed`...), with `FXA_ACCOUNT_EVENTS=true` |
 | `ffs_backup_age_seconds{scope}`, `ffs_backup_last_ok{scope}` | seconds since the last good backup (`sync`, `accounts`), and 1 when the last run worked, see [Backups](../backups.md) |
 | `ffs_db_setup_version{scope}`, `ffs_db_setup_expected_version{scope}` | the highest [setup migration](#setup-migrations) the database server recorded (`sync`, `fxa`; 0: none), and the highest this release ships |
-| `ffs_db_setup_drift{scope}` | 1 when a user, grant or database of the setup migrations is missing (the admin UI's check, or the last start's) |
+| `ffs_db_setup_drift{scope}` | 1 when a user, grant or database of the setup migrations is missing (the admin UI's check, or the last start's), also while a newer file is pending |
 
 The tokens refused have no counter: verified minus issued goes down when a token comes after its verification, which a counter must not do (`rate()` would see a reset). Subtract the two counters instead:
 
