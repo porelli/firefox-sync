@@ -14,7 +14,7 @@ The images are built from Mozilla's releases: [fxa.yml](/.github/workflows/fxa.y
 On a branch the images are built and tested, not published. Merged into main, a change of `upstream-patches.yml` rebuilds the current release of the component with it, under the same tags (a new digest). A manual run on main does the same.
 
 - fxa.yml rebuilds when the published image was built for another plan (its label `org.firefox-sync.upstream-patches-plan`). Upstream's code runs in build jobs without write access, which hand an OCI archive to push jobs. These push it under tags of the run (`fxa-mono-<release>-linux-<arch>-run<id>`, the same for the pairing server), the tests use those digests, and main publishes the multi-arch tags from them.
-- syncstorage-rs.yml has the patches in the key of the images it reuses. It writes the tags main reuses (keys, per-architecture tags, build cache) from main only; a branch gets key tags of its own.
+- syncstorage-rs.yml has the patches in the key of the images it reuses, with the files of their ports. It writes the tags main reuses (keys, per-architecture tags, build cache) from main only; a branch gets key tags of its own, and reuses main's image when the key is the same ([Releasing](releasing.md#the-images)).
 
 Both run one at a time per branch.
 

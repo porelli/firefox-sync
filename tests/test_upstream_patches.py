@@ -6,6 +6,7 @@ Usage: python3 tests/test_upstream_patches.py [-v]
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -414,6 +415,19 @@ class Decisions(unittest.TestCase):
     def test_key_follows_label(self):
         gh = FakeGitHub({("up/stream", 7): pull()})
         self.assertNotEqual(up.outputs(run([entry()], gh))["key"], up.outputs(run([], gh))["key"])
+        # without ports: the label's sha256, as the keys of the images built before ports counted
+        self.assertEqual(up.outputs(run([entry()], gh))["key"],
+                         hashlib.sha256(b"up/stream#7@ccccccc..aaaaaaa").hexdigest()[:12])
+
+    def test_key_follows_port_contents(self):
+        # a port fixed for the same release: the same label, another image
+        keys = []
+        for port in (PORT, PORT + "\n"):
+            with Ports({"v1.2.3.diff": port}) as p:
+                out = up.outputs(run([entry(ports="ports/fix")], FakeGitHub({("up/stream", 7): pull()}), root=p.path))
+            self.assertEqual(out["label"], "up/stream#7@ccccccc..aaaaaaa+v1.2.3")
+            keys.append(out["key"])
+        self.assertNotEqual(keys[0], keys[1])
 
 
 # a pull request rebased on a newer upstream main: its head (PINNED) does not apply to the

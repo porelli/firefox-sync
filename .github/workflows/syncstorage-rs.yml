@@ -67,8 +67,10 @@ env:
   SERVICE_CHANGELOG_PATH: CHANGELOG.md # upstream's file (check-links: ignore)
   # specific for this component (image tags used to name the GitHub release)
   IMAGE_TAGS: mysql
-  # bump when the way the app image is built changes (build args, platforms, ...):
-  # app images are otherwise reused as long as the upstream tag does not change
+  # bump when the way the app image is built changes in this workflow (platforms, the steps
+  # before the build, ...): app images are otherwise reused as long as the upstream tag, the
+  # upstream patches, the build arguments and the scripts that prepare the sources (in
+  # the key, see "Look for an identical image") do not change
   APP_BUILD_REVISION: 2
 
 jobs:
@@ -118,6 +120,9 @@ jobs:
 
       - name: Unit tests of the upstream patches script
         run: python3 tests/test_upstream_patches.py
+
+      - name: Unit tests of the script that prepares the app's sources
+        run: python3 tests/test_syncstorage_rs_build.py
 
       # the pull requests of upstream-patches.yml for the app images: a closed one fails here
       - name: Upstream patches for the release
@@ -206,6 +211,15 @@ jobs:
               ;;
           esac
 
+          # in the key of the app image too
+          {
+            echo 'build_args<<EOF'
+            echo 'DATABASE_BACKEND=${{ matrix.database_backend }}'
+            echo 'SYNCSTORAGE_DATABASE_BACKEND=${{ matrix.database_backend }}'
+            echo 'TOKENSERVER_DATABASE_BACKEND=${{ matrix.database_backend }}'
+            echo 'EOF'
+          } >> ${GITHUB_OUTPUT}
+
       - name: Prepare platform pair
         id: prepare-platform-pair
         run: |
@@ -249,6 +263,7 @@ jobs:
             upstream-patches.yml
             upstream-patches/
             .github/scripts/upstream-patches.py
+            .github/scripts/syncstorage-rs-build.py
           sparse-checkout-cone-mode: false
 
       # the pull requests of upstream-patches.yml, into the label org.firefox-sync.upstream-patches
@@ -259,6 +274,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 ffs/.github/scripts/upstream-patches.py apply syncstorage-rs "${{ needs.prepare-env.outputs.service_tag }}" .
+
+      # version.json, and the Dockerfile's cache mounts dropped: the compiled dependencies in a
+      # layer of the build cache (the script says why)
+      - name: Prepare the sources for the build
+        id: sources
+        if: matrix.image_type == 'app'
+        env:
+          SERVICE_TAG: ${{ needs.prepare-env.outputs.service_tag }}
+          SERVICE_REPOSITORY_NAME: ${{ env.SERVICE_REPOSITORY_NAME }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUILD_ARGS: ${{ steps.prepare-variables.outputs.build_args }}
+        run: |
+          python3 -I ffs/.github/scripts/syncstorage-rs-build.py .
+          # what of this repository goes into the image, for its key: the scripts that change the
+          # sources (the ports applied are in the key of the patches) and the build arguments
+          src=$( (cd ffs && sha256sum .github/scripts/upstream-patches.py .github/scripts/syncstorage-rs-build.py; printf '%s\n' "${BUILD_ARGS}") | sha256sum | cut -c1-12)
+          echo "Sources of this repository in the image: ${src}"
+          echo "src=${src}" >> "${GITHUB_OUTPUT}"
           # not in the image
           rm -rf ffs
           git status --short
@@ -280,16 +313,6 @@ jobs:
           path: ${{ runner.temp }}/upstream-patches/obsolete.json
           if-no-files-found: error
           retention-days: 1
-
-      - name: Version of the app
-        if: matrix.image_type == 'app'
-        env:
-          SERVICE_TAG: ${{ needs.prepare-env.outputs.service_tag }}
-        run: |
-          # upstream's CI fills version.json (served at /__version__), it says TBD otherwise
-          printf '{"version":"%s","commit":"%s","source":"https://github.com/%s","build":"%s/%s/actions/runs/%s"}\n' \
-            "${SERVICE_TAG}" "$(git rev-parse HEAD)" "${{ env.SERVICE_REPOSITORY_NAME }}" \
-            "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}" | tee version.json
 
       - name: Docker meta
         id: meta
@@ -315,32 +338,46 @@ jobs:
       - name: Look for an identical image
         id: reuse
         run: |
-          # the key only changes when the inputs of the image change: the upstream tag and
-          # the upstream patches applied for the app, the content of its directory in this
-          # repository for the init image
+          # the key only changes when the inputs of the image change: for the app the upstream
+          # tag, the upstream patches applied (and the files of their ports), and what of this
+          # repository goes into it (the scripts that prepare the sources, the build arguments:
+          # step "Prepare the sources for the build"; the rest of this workflow:
+          # APP_BUILD_REVISION); for the init image the content of its directory in this repository
           if [ "${{ matrix.image_type }}" = app ]; then
-            key="${{ needs.prepare-env.outputs.service_tag }}-r${{ env.APP_BUILD_REVISION }}-p${{ steps.patches.outputs.key }}"
+            key="${{ needs.prepare-env.outputs.service_tag }}-r${{ env.APP_BUILD_REVISION }}-p${{ steps.patches.outputs.key }}-s${{ steps.sources.outputs.src }}"
           else
             dir="${{ steps.prepare-variables.outputs.code_dockerfile_path }}"
             dir=${dir#./}
             key="src-$(git rev-parse --short=12 "HEAD:${dir%/}")"
           fi
           # main's tags (the key tags it reuses, the per-architecture tags, the build cache) are
-          # written by main only: a branch gets key tags of its own and only the dated tag
+          # written by main only: a branch gets key tags of its own and only the dated tag. As the
+          # key covers every input, a branch reuses main's image of the same key too (read only:
+          # it tags it with its own tags), and builds only what it changed
           prefix="${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}"
           pair="${{ steps.prepare-platform-pair.outputs.platform_pair }}"
+          cache="${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}"
+          main_key_tag="${prefix}-key-${key}-${pair}"
           if [ "${GITHUB_REF}" = "refs/heads/${{ env.REPOSITORY_MAIN_BRANCH }}" ]; then
             scope=""
+            candidates=("${main_key_tag}")
           else
             scope="-ref-$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40)"
+            candidates=("${prefix}-key-${key}${scope}-${pair}" "${main_key_tag}")
           fi
           key_tag="${prefix}-key-${key}${scope}-${pair}"
-          echo "key_tag=${key_tag}" >> "${GITHUB_OUTPUT}"
           tags="${prefix}-${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-${pair}"
+          # the build cache: main's, and for an app image on a branch one of its own after it
+          # (its compiled dependencies when they are not main's: a patch that changes them)
+          cache_from="type=registry,ref=${cache}-${pair}"
           if [ -z "${scope}" ]; then
             tags="${tags},${prefix}-${{ needs.prepare-env.outputs.service_tag }}-${pair},${prefix}-${pair}-latest"
-            echo "cache_to=type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${pair},mode=max" >> "${GITHUB_OUTPUT}"
+            echo "cache_to=type=registry,ref=${cache}-${pair},mode=max" >> "${GITHUB_OUTPUT}"
+          elif [ "${{ matrix.image_type }}" = app ]; then
+            cache_from="${cache_from}"$'\n'"type=registry,ref=${cache}${scope}-${pair}"
+            echo "cache_to=type=registry,ref=${cache}${scope}-${pair},mode=max" >> "${GITHUB_OUTPUT}"
           fi
+          printf 'cache_from<<EOF\n%s\nEOF\n' "${cache_from}" >> "${GITHUB_OUTPUT}"
           echo "tags=${tags},${key_tag}" >> "${GITHUB_OUTPUT}"
 
           # scheduled builds, releases and manual rebuilds start from scratch to pick up
@@ -348,23 +385,29 @@ jobs:
           if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.rebuild }}" = true ] || [ "${{ needs.prepare-env.outputs.github_release }}" = true ]; then
             echo "Fresh build (${{ github.event_name }})"
             echo "fresh=true" >> ${GITHUB_OUTPUT}
-          elif digest=$(docker buildx imagetools inspect "${key_tag}" --format '{{json .Manifest}}' 2> /dev/null | jq -r .digest) && [ -n "${digest}" ]; then
-            echo "Reusing ${key_tag} (${digest})"
-            echo "digest=${digest}" >> ${GITHUB_OUTPUT}
-          else
-            echo "No image for ${key_tag}, building it"
+            exit 0
           fi
+          for candidate in "${candidates[@]}"; do
+            if digest=$(docker buildx imagetools inspect "${candidate}" --format '{{json .Manifest}}' 2> /dev/null | jq -r .digest) && [ -n "${digest}" ]; then
+              echo "Reusing ${candidate} (${digest})"
+              echo "digest=${digest}" >> ${GITHUB_OUTPUT}
+              echo "source=${candidate}" >> ${GITHUB_OUTPUT}
+              exit 0
+            fi
+          done
+          echo "No image for ${candidates[*]}, building it"
 
       - name: Tag the identical image
         if: steps.reuse.outputs.digest != ''
         env:
           TAGS: ${{ steps.reuse.outputs.tags }}
-          KEY_TAG: ${{ steps.reuse.outputs.key_tag }}
+          SOURCE: ${{ steps.reuse.outputs.source }}
         run: |
+          # the run's tags (on a branch its own key tag too, when the image is main's)
           args=()
           IFS=, read -r -a tags <<< "${TAGS}"
-          for t in "${tags[@]}"; do [ "${t}" = "${KEY_TAG}" ] || args+=(-t "${t}"); done
-          docker buildx imagetools create "${args[@]}" "${KEY_TAG}"
+          for t in "${tags[@]}"; do [ "${t}" = "${SOURCE}" ] || args+=(-t "${t}"); done
+          docker buildx imagetools create "${args[@]}" "${SOURCE}"
 
       - name: Build and push
         id: build
@@ -379,12 +422,9 @@ jobs:
           no-cache: ${{ steps.reuse.outputs.fresh == 'true' }}
           outputs: type=image,"name=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}",name-canonical=true,push=true
           context: ${{ steps.prepare-variables.outputs.code_dockerfile_path }}
-          build-args: |
-            DATABASE_BACKEND=${{ matrix.database_backend }}
-            SYNCSTORAGE_DATABASE_BACKEND=${{ matrix.database_backend }}
-            TOKENSERVER_DATABASE_BACKEND=${{ matrix.database_backend }}
-          cache-from: type=registry,ref=${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:buildcache-${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.service_tag }}-${{ steps.prepare-platform-pair.outputs.platform_pair }}
-          # main only (empty on branches: no cache written)
+          build-args: ${{ steps.prepare-variables.outputs.build_args }}
+          cache-from: ${{ steps.reuse.outputs.cache_from }}
+          # main's on main; a branch's own for an app image (none for an init image)
           cache-to: ${{ steps.reuse.outputs.cache_to }}
 
       - name: Export digest

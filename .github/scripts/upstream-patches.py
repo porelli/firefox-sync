@@ -48,7 +48,8 @@ that neither applies nor is in the sources, the pin of the newest older release 
 longer serve fails: make it a port.
 
 Outputs (GITHUB_OUTPUT, and printed): applied (space-separated owner/repo#pr@base7..sha7),
-label (applied, or "none"), key (12 hex of label's sha256, for cache keys), obsolete
+label (applied, or "none"), key (12 hex of a sha256 of label and of the ports applied, the
+contents of their files: for the keys of the images reused), obsolete
 (the same form), obsolete_json ([{"id", "pr", "when_released"}]). A summary for
 GITHUB_STEP_SUMMARY. Environment: UPSTREAM_PATCHES_FILE (default: upstream-patches.yml at
 the root of this repository), GH_TOKEN for gh.
@@ -232,7 +233,13 @@ def with_port(entry, tag, root):
     path = os.path.join(root, entry["ports"], f"{tag}.diff")
     if not os.path.isfile(path):
         return entry
-    return dict(entry, port=path, port_tag=tag)
+    return dict(entry, port=path, port_tag=tag, port_sha256=_sha256(path))
+
+
+def _sha256(path):
+    """Of the file of a port, for the key (read when it is chosen)."""
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 def _version(tag):
@@ -256,7 +263,8 @@ def fallback_port(entry, tag, root):
     if not older:
         return None
     port_tag = max(older)[1]
-    return dict(entry, port=os.path.join(directory, f"{port_tag}.diff"), port_tag=port_tag, fallback=tag)
+    path = os.path.join(directory, f"{port_tag}.diff")
+    return dict(entry, port=path, port_tag=port_tag, port_sha256=_sha256(path), fallback=tag)
 
 
 # --- GitHub, through gh (replaced by a fake in the tests) ---
@@ -535,13 +543,23 @@ def run(entries, component, tag, gh, checkout=None, log=print, root=None):
     return result
 
 
+def key(result, label):
+    """12 hex of a sha256 of label and of the files of the ports applied: a port changed for
+    the same release (the same label) is another image. That of label alone without ports."""
+    h = hashlib.sha256(label.encode())
+    for e in result["applied"]:
+        if e.get("port"):
+            h.update(f" {e['port_sha256']}".encode())
+    return h.hexdigest()[:12]
+
+
 def outputs(result):
     applied = " ".join(ref(e) for e in result["applied"])
     label = applied or "none"
     return {
         "applied": applied,
         "label": label,
-        "key": hashlib.sha256(label.encode()).hexdigest()[:12],
+        "key": key(result, label),
         "obsolete": " ".join(ref(e) for e in result["obsolete"]),
         "obsolete_json": json.dumps([{"id": e["id"], "pr": ref(e), "when_released": e["when_released"]}
                                      for e in result["obsolete"]], separators=(",", ":")),

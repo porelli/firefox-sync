@@ -24,6 +24,7 @@ The images here are built as close to Mozilla's as possible. They add arm64, Mar
 - Architectures: amd64 and arm64.
 - `<release>` is syncstorage-rs' release tag. `<build date>` is the build's time, `YYYYMMDDTHHMMSS`: a weekly rebuild of the same release gets a new one.
 - Source: [mozilla-services/syncstorage-rs](https://github.com/mozilla-services/syncstorage-rs). Code changes: only the [upstream patches](#upstream-patches), in the two Sync server images. The init images change no upstream code.
+- The build fills in upstream's `version.json` (served at `/__version__`) and drops the cache mounts of the Dockerfile's cargo steps, so that the compiled dependencies are kept in the build cache ([syncstorage-rs-build.py](/.github/scripts/syncstorage-rs-build.py)). What is compiled and what the image contains stay the same.
 - Built by [syncstorage-rs.yml](/.github/workflows/syncstorage-rs.yml) ([runs](https://github.com/porelli/firefox-sync/actions/workflows/syncstorage-rs.yml)).
 - Settings: `IMAGE_REPOSITORY`, `SYNC_IMAGE`, `SYNC_IMAGE_TAG`, `SYNC_INIT_IMAGE` and `SYNC_INIT_IMAGE_TAG`, see [Settings](settings.md#images).
 
