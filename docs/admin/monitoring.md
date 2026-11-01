@@ -69,11 +69,14 @@ With self-hosted accounts it also checks that `POST /v1/account/create` of `FXA_
 
 The overview lists settings that must agree with each other, each with what goes wrong when they do not:
 
+- **Event log** (`ADMIN_DB_PASSWORD`): where the event log, the audit trail and the notes are. Without `ADMIN_DB_PASSWORD` (an install from before it) they are in the tokenserver database, which the Sync server's database user can read and change: the check says how to move them, see [The admin UI's own database](../upgrading.md#the-admin-uis-own-database). It also warns when the admin UI's database holds something its user does not own (the admin UI does not start again until it is dropped), when admin UI tables of before are still, or again, in the tokenserver database, and on PostgreSQL when the Sync tables belong to a superuser, which can still read the event log.
+- **Database users and grants** (`database-setup.sql`), with your own database server (`SYNC_DB_CONTAINERS=0`): the grants of the admin UI's own two users. On MariaDB and MySQL, those of their `GRANT` lines: `ADMIN_DB_USER` on `ADMIN_DB_NAME`, `ADMIN_DB_SYNC_USER` on the tokenserver and storage databases. On PostgreSQL, that `ADMIN_DB_NAME` belongs to `ADMIN_DB_USER`, and that neither it nor the tokenserver database lets every role connect. What is missing is named with the statement that gives it, see [When a release needs new users or grants](../databases.md#when-a-release-needs-new-users-or-grants).
 - **Sync node**: the tokenserver hands out the Sync node of its `nodes` table, which the init container sets from `SYNC_PUBLIC_URL` when it starts. When they differ (`.env` changed, the stack not restarted), the warning names both: Firefox syncs with the one of the table.
 - **Sign-in keys** (`FXA_OAUTH_SERVER_URL`): the Sync server checks every sign-in of Firefox with the keys at `FXA_OAUTH_SERVER_URL/jwks` (`/v1` added when missing). Checked every hour. With Mozilla's accounts that is Mozilla's server, so it is checked only with the public checks on.
 - **Email of the accounts** (`FXA_SMTP_HOST`), with self-hosted accounts: without an SMTP server nobody can sign up or sign in, see [Do you need an SMTP server?](alerts.md#do-you-need-an-smtp-server). Without self-hosted accounts there is no such check.
 - **Sync node load**: the tokenserver counts a refused new account in its node's load (see [`SYNC_ALLOWED_ACCOUNTS`](../limits.md#sync_allowed_accounts)): the admin UI counts it again from the node's accounts every few minutes, at once when it is off by 10 or more. That last case is a warning for a day, with the counts: many refused tries in a short time.
 - **Pending accounts list**, with [invite-only Sync](../limits.md#sync_allowed_accounts): accounts refused without a record because its list of 1000 was full, for a week after the last one.
+- **Old setting names**, with docker compose: settings of `.env`, or of the environment compose runs in, still under their names from before the `SYNC_` prefix. They still work, and a later release removes them. `./prepare_environment.sh --upgrade` renames them, see [Renamed settings](../upgrading.md#renamed-settings). The Quadlets and the chart have the new names only.
 - **Account emails** (`FXA_EMAIL_DOMAIN`): the tokenserver keeps each account as `<uid>@FXA_EMAIL_DOMAIN`. After `FXA_EMAIL_DOMAIN` changed, everybody comes back as a new account, with empty storage, and counts twice against max users. The warning names the domain set and the others found, with how many accounts each.
 
 The Sync nodes table, in the Sync section, shows for each node the accounts on it (those whose current keys are there), its capacity, current load, places available and backoff.
@@ -171,12 +174,22 @@ The admin UI reads the latest write of the storage database every round of check
 
 ## Event log
 
-The Activity page shows, over the last 24 hours, 7 or 30 days, the Sync requests, the Sync tokens issued, the [errors](#errors-and-growth) and the size of the databases. Below them is the event log:
+The Activity page shows, over the last 24 hours, 7 or 30 days, the Sync requests, the Sync tokens issued, the [errors](#errors-and-growth) and the size of the databases. Below them is the event log, each event with its kind:
 
-- sign-ins to the admin UI, and changes made in it;
-- refused sign-ups, components going down and up, new releases;
-- with self-hosted accounts, new accounts and new devices, blocks and the security history;
-- the daily maintenance, see [Maintenance and retention](storage.md#maintenance-and-retention).
+| Kind | Events |
+|---|---|
+| `admin` | sign-ins to the admin UI, and every change made in it, with who made it (below) |
+| `sign-in` | refused sign-ins to the admin UI: a wrong password, not an admin, an email not verified, see [Signing in](signing-in.md) |
+| `sign-up refused` | a sign-up the [sign-up gate](../accounts.md#who-can-sign-up) refused, or the first try of an account that [invite-only Sync](../limits.md#sync_allowed_accounts) refused |
+| `health` | a row of the [Health](#health) table going down, to check, or back up: a component, a public URL or its certificate, the Email (SMTP) row, the Notifications row |
+| `update` | a newer release of a component, a change of the [schema levels](#versions-and-schema-levels), the admin UI's tables moved into its own database |
+| `blocked` | self-hosted accounts: an account blocked by the rate limits, see [Helping account owners](accounts.md#helping-account-owners) |
+| `maintenance` | the daily jobs and what they did, see [Maintenance and retention](storage.md#maintenance-and-retention), and the second pass of a deletion on the Sync storage |
+| `sign-up burst` | self-hosted accounts: more accounts created in an hour than `ADMIN_SIGNUP_BURST` |
+| `backup` | a backup failed or too old, and working again, see [Backups](../backups.md) |
+| `attention` | a line of [Needs attention](#needs-attention) that starts or ends: the limits, Sync metrics missing, alert emails failing, a spike of errors, a database growing fast, the [setup migrations](#setup-migrations) |
+| `security` | self-hosted accounts: an event of the [security history](accounts.md#security-history) |
+| `sign-up`, `new device` | self-hosted accounts: a new account, a new device. They are read from the accounts database, not written to the event log |
 
 ![Activity](../images/admin/activity.png)
 

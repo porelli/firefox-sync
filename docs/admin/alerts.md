@@ -138,7 +138,7 @@ The generic webhook gets a `POST` with `Content-Type: application/json` and `Use
 
 | Field | Value |
 |---|---|
-| `kind` | the kind of every event: `sign-up refused`, `health`, `update`, `sign-in`, `admin`, `blocked`, `sign-up burst`, `backup`, `attention` or `security`. `several` when they differ, `test` for the test notification |
+| `kind` | the kind of every event: `sign-up refused`, `health`, `update`, `sign-in`, `admin`, `blocked`, `sign-up burst`, `backup`, `attention`, `security`, or with self-hosted accounts `sign-up` and `new device` (see [Event log](monitoring.md#event-log)). `several` when they differ, `test` for the test notification |
 | `severity` | `warning` when one of them needs a look (the same kinds as ntfy's higher priority), `info` otherwise |
 | `title` | the title of the message |
 | `text` | all of it as plain text, at most 16,000 characters |
