@@ -136,7 +136,7 @@
   pr: 21554
   head_repo: porelli/fxa
   base: 3e2cb676f8c561e7c293d44ec979c3be88eb81cb
-  sha: 84d71e2165adeca84809afec2f3706822226ca11
+  sha: a99361eb6229441aa1214a5d6acdf310cc925e02
   component: fxa-mono
   why: >-
     fix(shared): replace mysql with mysql2 for MySQL 8.4+/9 auth. The accounts used the
