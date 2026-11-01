@@ -169,9 +169,11 @@ db() {
           "$@"
 }
 
-# Function to check if database is accessible
+# Function to check if database is accessible; DB_ERROR: the first line of the client's error, when not
 check_db_connection() {
-  db --connect-timeout=5 -e "SELECT 1;" >/dev/null 2>&1
+  DB_ERROR=$(db --connect-timeout=5 -e "SELECT 1;" 2>&1 >/dev/null) && return 0
+  DB_ERROR=$(printf '%s\n' "${DB_ERROR}" | head -n 1)
+  return 1
 }
 
 # Function to check if a table exists
@@ -183,21 +185,25 @@ table_exists() {
   [ "${count}" = "1" ]
 }
 
-# Wait for database connection
+# Wait for database connection: MAX_WAIT seconds of the clock (a try that fails slowly, a name
+# that does not resolve or an address that does not answer, counts too), the client's error
+# each time it changes
 echo "Checking database connection..."
-WAIT_COUNT=0
-while [ ${WAIT_COUNT} -lt ${MAX_WAIT} ]; do
+SECONDS=0 connected="" last_error=""
+while [ "${SECONDS}" -lt "${MAX_WAIT}" ]; do
   if check_db_connection; then
     echo "✓ Database connection established!"
+    connected=1
     break
   fi
-  echo "  Waiting for database... (${WAIT_COUNT}/${MAX_WAIT}s)"
+  [ "${DB_ERROR}" = "${last_error}" ] || echo "  ${DB_ERROR}"
+  last_error=${DB_ERROR}
+  echo "  Waiting for database... (${SECONDS}/${MAX_WAIT}s)"
   sleep ${SLEEP_INTERVAL}
-  ((WAIT_COUNT+=SLEEP_INTERVAL))
 done
 
-if [ ${WAIT_COUNT} -ge ${MAX_WAIT} ]; then
-  echo "✗ ERROR: Timeout waiting for database connection"
+if [ -z "${connected}" ]; then
+  echo "✗ ERROR: Timeout waiting for database connection (${MARIADB_SERVER}:${MARIADB_SERVER_PORT}): ${DB_ERROR}"
   exit 1
 fi
 
