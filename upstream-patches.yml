@@ -9,7 +9,7 @@
 # "mozilla/fxa#21494@517651a..aa0b178", base..sha; "none" without any), shown in the summary
 # of the run; the tests run on these images as always.
 #
-# Fields (all required, but ports):
+# Fields (all required, but ports and releases):
 #   id             a short name for the entry
 #   repo           the upstream repository, owner/name
 #   pr             the pull request number
@@ -31,7 +31,25 @@
 #                  applies cleanly it is used (label +<its release-tag>) with a ::warning::
 #                  to review it and add a port for the new release; if not, the build fails.
 #                  Review a port like the pull request: the release's code, the same change
-# Values are plain one-line scalars, or folded blocks (>-) for the long texts.
+#   releases       optional, release pins: per release tag, another commit of the same pull
+#                  request (and its merge base) for a release base...sha does not apply to,
+#                  typically its head before a rebase on a newer upstream main:
+#                    releases:
+#                      v1.348.5:
+#                        base: <full sha>
+#                        sha: <full sha>
+#                  The pinned sha must have been a head of the pull request: in its history,
+#                  or a head before a force push (GraphQL HeadRefForcePushedEvent, before and
+#                  after), and base an ancestor of it; base and sha of the entry are checked
+#                  too. Building that release base...sha of the pin is applied instead (label
+#                  ...@<its base>..<its sha>, no +tag: it is a commit of the pull request).
+#                  For a release: its port, else its release pin, else the entry's base...sha;
+#                  when that neither applies nor is in the sources, the pin of the newest older
+#                  release (git apply --check, a ::warning:: to pin one for the new release),
+#                  then the newest older port, else the build fails. If GitHub can no longer
+#                  serve a pinned commit, the build fails: make it a port
+# Values are plain one-line scalars, folded blocks (>-) for the long texts, and the mapping of
+# releases (release tags at 4 spaces, base and sha at 6).
 #
 # Adding a pull request: review it at the commit to apply and pin it:
 #   gh api repos/<repo>/pulls/<pr> --jq '.head.repo.full_name, .head.sha, .base.sha'
@@ -40,6 +58,10 @@
 # component with the patch (same image tag, a new digest); on other branches the images are
 # built and tested, not published. Updating it: review the new commits, move sha (and base
 # if the pull request was rebased); again a rebuild.
+# Rebasing one of our pull requests upstream: in the same sitting move the entry's base and sha
+# to the new head, and if the new one no longer applies to the release built here, pin the old
+# head for that release under releases (gh api repos/<repo>/pulls/<pr> before the force push,
+# or the force push's beforeCommit afterwards).
 #
 # What a run of a workflow says about each entry:
 #   open, or merged but not in the release built yet
@@ -56,7 +78,9 @@
 #           and a new sha, or remove the entry and its workaround)
 # Removing an entry: also undo what when_released says, in the same commit.
 #
-# Removing an entry with ports: its directory too.
+# Removing an entry with ports: its directory too. Its release pins go with it (in the entry).
+# A release pin no release built here needs any more (the entry's base...sha applies to the
+# release built) can go.
 #
 # Unit tests: python3 tests/test_upstream_patches.py (no network)
 

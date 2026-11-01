@@ -114,10 +114,11 @@ jobs:
               echo "${image} exists (upstream patches: ${applied}, planned: ${planned}), nothing to build"
               echo "build=false" >> "${GITHUB_OUTPUT}"
               # planned but not applied: already in the sources, for the job upstream-patches.
-              # Applied as the port of an older release, it is ${p}+<that release>
+              # By pull request (<repo>#<pr>@): applied as the port of an older release it is
+              # ${p}+<that release>, as the release pin of an older release another base..sha
               present=""
               for p in ${planned}; do
-                [ "${p}" = none ] || [[ " ${applied} " == *" ${p} "* || " ${applied}" == *" ${p}+"* ]] || present="${present:+${present} }${p}"
+                [ "${p}" = none ] || [[ " ${applied}" == *" ${p%%@*}@"* ]] || present="${present:+${present} }${p}"
               done
               echo "present=${present}" >> "${GITHUB_OUTPUT}"
               exit 0

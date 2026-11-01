@@ -26,6 +26,11 @@ NEWER = "b" * 40
 BASE = "c" * 40
 MERGE = "d" * 40
 OTHER = "e" * 40
+# a head of the pull request before a force push, its base, and an older one
+OLD = "f" * 40
+OLDBASE = "1" * 40
+OLDER = "2" * 40
+OLDERBASE = "3" * 40
 
 ORIGINAL = "one\ntwo\nthree\n"
 PATCHED = "one\n2\nthree\n"
@@ -57,8 +62,13 @@ HISTORY = {(BASE, PINNED), (BASE, NEWER), (PINNED, NEWER)}
 
 
 class FakeGitHub:
-    def __init__(self, pulls, contained=(), diff=DIFF, history=HISTORY):
+    """diff: the diff of every compare, or {"base...sha": diff} (a missing one: GitHub cannot
+    serve it). heads: the former heads of the pull request (force pushes). gone: commits
+    GitHub cannot serve any more (compare fails)."""
+
+    def __init__(self, pulls, contained=(), diff=DIFF, history=HISTORY, heads=(), gone=()):
         self.pulls, self.contained, self._diff = pulls, set(contained) | set(history), diff
+        self.heads, self.gone = set(heads), set(gone)
         self.calls = []
 
     def pull(self, repo, number):
@@ -67,10 +77,20 @@ class FakeGitHub:
 
     def contains(self, repo, commit, tag):
         self.calls.append(("compare", f"{commit}...{tag}"))
+        if {commit, tag} & self.gone:
+            raise up.Fail(f"gh api repos/{repo}/compare/{commit}...{tag}: HTTP 404: Not Found")
         return commit == tag or (commit, tag) in self.contained
+
+    def former_heads(self, repo, number):
+        self.calls.append(("former_heads", repo, number))
+        return self.heads
 
     def diff(self, repo, base, sha):
         self.calls.append(("diff", f"{base}...{sha}"))
+        if isinstance(self._diff, dict):
+            if f"{base}...{sha}" not in self._diff:
+                raise up.Fail(f"gh api repos/{repo}/compare/{base}...{sha}: HTTP 404: Not Found")
+            return self._diff[f"{base}...{sha}"]
         return self._diff
 
 
@@ -396,6 +416,184 @@ class Decisions(unittest.TestCase):
         self.assertNotEqual(up.outputs(run([entry()], gh))["key"], up.outputs(run([], gh))["key"])
 
 
+# a pull request rebased on a newer upstream main: its head (PINNED) does not apply to the
+# release (MOVED), its head before the force push (OLD, from OLDBASE) does
+PINS = {"v1.2.3": {"base": OLDBASE, "sha": OLD}}
+PIN_HISTORY = HISTORY | {(OLDBASE, OLD), (OLDERBASE, OLDER)}
+PIN_DIFFS = {f"{BASE}...{PINNED}": DIFF, f"{OLDBASE}...{OLD}": PORT, f"{OLDERBASE}...{OLDER}": PORT}
+
+
+def rebased(**kw):
+    """A FakeGitHub of the rebased pull request: OLD and OLDER former heads."""
+    args = dict(history=PIN_HISTORY, diff=PIN_DIFFS, heads={OLD, OLDER, PINNED})
+    args.update(kw)
+    return FakeGitHub({("up/stream", 7): pull()}, **args)
+
+
+class ReleasePins(unittest.TestCase):
+    def test_release_pin_applied(self):
+        gh = rebased()
+        with Checkout(MOVED) as c:
+            r = run([entry(releases=PINS)], gh, c)
+            self.assertEqual(c.read(), MOVED.replace("two", "2"))
+        self.assertIn(("diff", f"{OLDBASE}...{OLD}"), gh.calls)
+        self.assertNotIn(("diff", f"{BASE}...{PINNED}"), gh.calls, "the pin instead of base...sha")
+        # a commit of the pull request: its own base..sha, no +tag
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@1111111..fffffff")
+        self.assertEqual(r["warnings"], [])
+        # the plan knows it too (the reuse of images)
+        plan = run([entry(releases=PINS)], rebased())
+        self.assertEqual(up.outputs(plan)["label"], "up/stream#7@1111111..fffffff")
+        # the entry's own pin is still checked
+        self.assertIn(("compare", f"{BASE}...{PINNED}"), gh.calls)
+        self.assertIn("(https://github.com/up/stream/pull/7) | fix | open, the release pin of v1.2.3 | apply |", up.summary(r, "fxa-mono", "v1.2.3"))
+
+    def test_release_pin_in_the_current_history(self):
+        # not a former head, but in the pull request's history: as for sha
+        gh = rebased(heads=set(), history=PIN_HISTORY | {(OLD, PINNED)})
+        with Checkout(MOVED) as c:
+            r = run([entry(releases=PINS)], gh, c)
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@1111111..fffffff")
+
+    def test_release_pin_never_a_head_fails(self):
+        # e.g. a commit of another fork of the network, which compare resolves too
+        with self.assertRaisesRegex(up.Fail, r"releases v1.2.3\): sha fffffff was never a head of the pull request"):
+            run([entry(releases=PINS)], rebased(heads={OLDER}))
+
+    def test_release_pin_base_not_an_ancestor_fails(self):
+        with self.assertRaisesRegex(up.Fail, "base 1111111 is not an ancestor of sha fffffff"):
+            run([entry(releases=PINS)], rebased(history=HISTORY))
+
+    def test_release_pin_github_cannot_serve_fails(self):
+        # garbage collected: GitHub no longer compares it, nor has its diff
+        with self.assertRaisesRegex(up.Fail, r"GitHub can no longer serve 1111111...fffffff(.|\n)*port"):
+            run([entry(releases=PINS)], rebased(gone={OLD}))
+        with Checkout(MOVED) as c:
+            with self.assertRaisesRegex(up.Fail, r"GitHub can no longer serve 1111111...fffffff(.|\n)*port"):
+                run([entry(releases=PINS)], rebased(diff={f"{BASE}...{PINNED}": DIFF}), c)
+            self.assertEqual(c.read(), MOVED)
+
+    def test_release_pin_unknown_commit_fails(self):
+        # not a former head and compare does not know it
+        with self.assertRaisesRegex(up.Fail, "not a former head of the pull request"):
+            run([entry(releases=PINS)], rebased(heads=set(), gone={OLD}))
+
+    def test_port_before_release_pin(self):
+        # a port is a change by hand for the release: it wins
+        gh = rebased()
+        with Ports({"v1.2.3.diff": PORT}) as p, Checkout(MOVED) as c:
+            r = run([entry(ports="ports/fix", releases=PINS)], gh, c, root=p.path)
+            self.assertEqual(c.read(), MOVED.replace("two", "2"))
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@ccccccc..aaaaaaa+v1.2.3")
+        self.assertNotIn("diff", [call[0] for call in gh.calls])
+        self.assertNotIn("former_heads", [call[0] for call in gh.calls])
+
+    def test_release_pin_of_another_release_unused(self):
+        # base...sha applies: the pin of v1.2.2 is not looked at
+        gh = rebased()
+        with Checkout() as c:
+            r = run([entry(releases={"v1.2.2": PINS["v1.2.3"]})], gh, c)
+            self.assertEqual(c.read(), PATCHED)
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@ccccccc..aaaaaaa")
+        self.assertNotIn("former_heads", [call[0] for call in gh.calls])
+        self.assertEqual(r["warnings"], [])
+
+    def test_release_pin_that_does_not_apply_fails(self):
+        # the release's own pin: no fallback to older pins or ports
+        with Ports({"v1.2.2.diff": DIFF}) as p, Checkout() as c:
+            releases = dict(PINS, **{"v1.2.2": {"base": BASE, "sha": PINNED}})
+            with self.assertRaisesRegex(up.Fail, "the release pin of v1.2.3 does not apply to the release"):
+                run([entry(ports="ports/fix", releases=releases)], rebased(), c, root=p.path)
+            self.assertEqual(c.read(), ORIGINAL)
+
+    def test_newest_older_release_pin_when_base_sha_does_not_apply(self):
+        # v1.2.2 (OLD) over v1.1.0 (OLDER, which does not apply); v1.2.10 is newer than v1.2.3
+        diffs = dict(PIN_DIFFS, **{f"{OLDERBASE}...{OLDER}": PORT.replace("zero", "nothing like it")})
+        releases = {"v1.1.0": {"base": OLDERBASE, "sha": OLDER}, "v1.2.2": PINS["v1.2.3"],
+                    "v1.2.10": {"base": OLDERBASE, "sha": OLDER}}
+        gh = rebased(diff=diffs)
+        with Ports({"v1.2.1.diff": PORT}) as p, Checkout(MOVED) as c:
+            r = run([entry(ports="ports/fix", releases=releases)], gh, c, root=p.path)
+            self.assertEqual(c.read(), MOVED.replace("two", "2"))
+            plan = run([entry(ports="ports/fix", releases=releases)], rebased(diff=diffs), root=p.path)
+        self.assertIn(("diff", f"{BASE}...{PINNED}"), gh.calls, "base...sha first")
+        self.assertNotIn(("diff", f"{OLDERBASE}...{OLDER}"), gh.calls)
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@1111111..fffffff", "the commit applied, no +tag")
+        self.assertEqual(len(r["warnings"]), 1)
+        self.assertIn("the release pin of v1.2.2", r["warnings"][0])
+        self.assertIn("for v1.2.3 under releases", r["warnings"][0])
+        # plan: no sources, base...sha
+        self.assertEqual(up.outputs(plan)["label"], "up/stream#7@ccccccc..aaaaaaa")
+
+    def test_older_port_when_the_older_release_pin_does_not_apply(self):
+        diffs = dict(PIN_DIFFS, **{f"{OLDBASE}...{OLD}": PORT.replace("zero", "nothing like it")})
+        with Ports({"v1.2.1.diff": PORT}) as p, Checkout(MOVED) as c:
+            r = run([entry(ports="ports/fix", releases={"v1.2.2": PINS["v1.2.3"]})], rebased(diff=diffs), c, root=p.path)
+            self.assertEqual(c.read(), MOVED.replace("two", "2"))
+        self.assertEqual(up.outputs(r)["label"], "up/stream#7@ccccccc..aaaaaaa+v1.2.1")
+        self.assertIn("ports/fix/v1.2.1.diff", r["warnings"][0])
+
+    def test_nothing_applies_fails(self):
+        broken = PORT.replace("zero", "nothing like it")
+        diffs = dict(PIN_DIFFS, **{f"{OLDBASE}...{OLD}": broken})
+        with Ports({"v1.2.1.diff": broken}) as p, Checkout(MOVED) as c:
+            with self.assertRaisesRegex(up.Fail, r"does not apply to the release(.|\n)*nor does the release pin of v1.2.2, "
+                                        r"up/stream#7@1111111..fffffff(.|\n)*nor does the newest port, ports/fix/v1.2.1.diff"):
+                run([entry(ports="ports/fix", releases={"v1.2.2": PINS["v1.2.3"]})], rebased(diff=diffs), c, root=p.path)
+            self.assertEqual(c.read(), MOVED)
+
+    def test_older_release_pin_is_checked(self):
+        with Checkout(MOVED) as c:
+            with self.assertRaisesRegex(up.Fail, "releases v1.2.2\): sha fffffff was never a head"):
+                run([entry(releases={"v1.2.2": PINS["v1.2.3"]})], rebased(heads=set()), c)
+            self.assertEqual(c.read(), MOVED)
+
+    def test_older_release_pin_already_in_the_sources_is_obsolete(self):
+        with Checkout(MOVED.replace("two", "2")) as c:
+            r = run([entry(releases={"v1.2.2": PINS["v1.2.3"]})], rebased(), c)
+        self.assertEqual(r["applied"], [])
+        self.assertEqual([e["id"] for e in r["obsolete"]], ["fix"])
+
+    def test_merged_and_released_with_a_release_pin(self):
+        gh = rebased()
+        gh.pulls[("up/stream", 7)] = pull("closed", True)
+        gh.contained.add((MERGE, "v1.2.3"))
+        with Checkout(MOVED.replace("two", "2")) as c:
+            r = run([entry(releases=PINS)], gh, c)
+        self.assertEqual([e["id"] for e in r["obsolete"]], ["fix"])
+        self.assertEqual(json.loads(up.outputs(r)["obsolete_json"])[0]["pr"], "up/stream#7@1111111..fffffff")
+
+    def test_fallback_pin_choice(self):
+        e = entry(releases={"v1.2.2": PINS["v1.2.3"], "v1.3.0": PINS["v1.2.3"], "latest": PINS["v1.2.3"]})
+        self.assertEqual(up.fallback_pin(e, "v1.2.3")["pin"]["tag"], "v1.2.2")
+        self.assertEqual(up.fallback_pin(e, "v1.4.0")["pin"]["tag"], "v1.3.0")
+        self.assertIsNone(up.fallback_pin(e, "v1.2.2"), "only older releases")
+        self.assertIsNone(up.fallback_pin(e, "main"), "not a version")
+        self.assertIsNone(up.fallback_pin(entry(), "v1.2.3"), "no releases")
+        self.assertIsNone(up.fallback_pin(up.with_pin(e, "v1.3.0"), "v1.3.0"), "its own pin is not a fallback")
+
+    def test_from_the_file(self):
+        # parse and run: the file's form of a release pin, its label printed
+        with tempfile.TemporaryDirectory() as d, Checkout(MOVED) as c:
+            patches = os.path.join(d, "upstream-patches.yml")
+            with open(patches, "w") as f:
+                f.write("- id: fix\n  repo: up/stream\n  pr: 7\n  head_repo: me/stream\n  base: " + BASE + "\n  sha: " + PINNED +
+                        "\n  component: fxa-mono\n  releases:\n    # before the rebase\n    v1.2.3:\n      base: " + OLDBASE +
+                        "\n      sha: " + OLD + "  # the head then\n  why: w\n  when_released: x\n")
+            old_gh, old_env = up.GitHub, os.environ.get("UPSTREAM_PATCHES_FILE")
+            up.GitHub = rebased
+            os.environ["UPSTREAM_PATCHES_FILE"] = patches
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(up.main(["apply", "fxa-mono", "v1.2.3", c.path]), 0)
+            finally:
+                up.GitHub = old_gh
+                os.environ.pop("UPSTREAM_PATCHES_FILE") if old_env is None else os.environ.__setitem__("UPSTREAM_PATCHES_FILE", old_env)
+            self.assertEqual(c.read(), MOVED.replace("two", "2"))
+        self.assertIn("label=up/stream#7@1111111..fffffff\n", out.getvalue())
+        self.assertNotIn("::warning", out.getvalue())
+
+
 class Parse(unittest.TestCase):
     def test_file_of_this_repository(self):
         with open(os.path.join(ROOT, "upstream-patches.yml")) as f:
@@ -409,6 +607,9 @@ class Parse(unittest.TestCase):
                 self.assertTrue(os.path.isdir(ports), ports)
                 for name in os.listdir(ports):
                     self.assertRegex(name, r"^v[0-9]+\.[0-9]+\.[0-9]+\.diff$", f"{e['ports']}/{name}: <release-tag>.diff")
+            for tag, pin in e.get("releases", {}).items():
+                self.assertRegex(tag, r"^v[0-9]+\.[0-9]+\.[0-9]+$", f"{e['id']}: releases {tag}: a release tag")
+                self.assertNotEqual((pin["base"], pin["sha"]), (e["base"], e["sha"]), f"{e['id']}: releases {tag}: the entry's own pin")
 
     def test_folded_and_quoted(self):
         e = up.parse("# c\n- id: a\n  repo: o/r\n  pr: 1\n  head_repo: me/r\n  base: " + BASE + "\n  sha: " + PINNED + "\n  component: 'fxa-mono'\n"
@@ -419,6 +620,33 @@ class Parse(unittest.TestCase):
         good = "- id: a\n  repo: o/r\n  pr: 1\n  head_repo: me/r\n  base: " + BASE + "\n  sha: " + PINNED + "\n  component: fxa-mono\n  why: w\n  when_released: x\n"
         self.assertNotIn("ports", up.parse(good)[0])
         self.assertEqual(up.parse(good + "  ports: upstream-patches/a\n")[0]["ports"], "upstream-patches/a")
+
+    def test_releases(self):
+        good = "- id: a\n  repo: o/r\n  pr: 1\n  head_repo: me/r\n  base: " + BASE + "\n  sha: " + PINNED + "\n  component: fxa-mono\n"
+        e = up.parse(good + "  releases:\n    v1.2.3:\n      base: " + OLDBASE + "\n      sha: " + OLD + "  # before the rebase\n"
+                     "    # an older one\n\n    v1.2.0:  # comment\n      sha: " + OLDER + "\n      base: " + OLDERBASE + "\n"
+                     "  why: w\n  when_released: x\n")[0]
+        self.assertEqual(e["releases"], {"v1.2.3": {"base": OLDBASE, "sha": OLD}, "v1.2.0": {"base": OLDERBASE, "sha": OLDER}})
+        self.assertEqual((e["why"], e["when_released"]), ("w", "x"))
+        # last in the entry, then the next entry
+        two = up.parse(good + "  why: w\n  when_released: x\n  releases:\n    v1:\n      base: " + OLDBASE + "\n      sha: " + OLD + "\n"
+                       + good.replace("id: a", "id: b") + "  why: w\n  when_released: x\n")
+        self.assertEqual([x["id"] for x in two], ["a", "b"])
+        self.assertNotIn("releases", two[1])
+        pin = "  releases:\n    v1.2.3:\n      base: " + OLDBASE + "\n      sha: " + OLD + "\n"
+        for bad, message in ((pin.replace("releases:", "releases: v1.2.3"), "a mapping on the next lines"),
+                             ("  releases:\n", "releases without any release"),
+                             (pin + "    v1.2.3:\n      base: " + OLDBASE + "\n      sha: " + OLD + "\n", "release v1.2.3 twice"),
+                             (pin + "      base: " + OLDBASE + "\n", "base twice"),
+                             (pin + "      why: w\n", "base and sha only"),
+                             (pin.replace("      sha: " + OLD + "\n", ""), "releases v1.2.3: sha must be a full commit"),
+                             (pin.replace(OLD, "fffffff"), "releases v1.2.3: sha must be a full commit"),
+                             (pin.replace(OLDBASE, "[x]"), "plain or quoted"),
+                             ("  releases:\n      base: " + OLDBASE + "\n", "expected '    <release-tag>:'"),
+                             (pin.replace("    v1.2.3:", "    v1 2:"), "expected '    <release-tag>:'"),
+                             (pin.replace("      base", "     base"), "expected '    <release-tag>:'")):
+            with self.assertRaisesRegex(ValueError, message):
+                up.parse(good + bad + "  why: w\n  when_released: x\n")
 
     def test_errors(self):
         good = "- id: a\n  repo: o/r\n  pr: 1\n  head_repo: me/r\n  base: " + BASE + "\n  sha: " + PINNED + "\n  component: fxa-mono\n  why: w\n  when_released: x\n"
@@ -481,6 +709,39 @@ class RealGitHub(unittest.TestCase):
         with Checkout() as c:
             with self.assertRaisesRegex(up.Fail, "no changes"):
                 run([entry()], gh, c)
+
+
+class StubGraphQL(up.GitHub):
+    def __init__(self, pages):
+        self.pages, self.args = pages, []
+
+    def _graphql(self, args):
+        self.args.append(args)
+        return json.dumps(self.pages[len(self.args) - 1])
+
+
+def page(nodes, cursor=None):
+    return {"data": {"repository": {"pullRequest": {"timelineItems": {
+        "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor}, "nodes": nodes}}}}}
+
+
+class FormerHeads(unittest.TestCase):
+    def test_before_and_after_of_each_force_push(self):
+        # the first head (before the first force push) is in beforeCommit only
+        gh = StubGraphQL([page([{"beforeCommit": {"oid": OLDER}, "afterCommit": {"oid": OLD}}], "c1"),
+                          page([{"beforeCommit": {"oid": OLD}, "afterCommit": {"oid": PINNED}},
+                                {"beforeCommit": None, "afterCommit": {"oid": NEWER}}, {}])])
+        self.assertEqual(gh.former_heads("up/stream", 7), {OLDER, OLD, PINNED, NEWER})
+        self.assertEqual(len(gh.args), 2)
+        self.assertIn("owner=up", gh.args[0])
+        self.assertIn("name=stream", gh.args[0])
+        self.assertIn("number=7", gh.args[0])
+        self.assertNotIn("after=c1", gh.args[0])
+        self.assertIn("after=c1", gh.args[1])
+        self.assertIn("HEAD_REF_FORCE_PUSHED_EVENT", [a for a in gh.args[0] if a.startswith("query=")][0])
+
+    def test_none(self):
+        self.assertEqual(StubGraphQL([page([])]).former_heads("up/stream", 7), set())
 
 
 class Main(unittest.TestCase):
