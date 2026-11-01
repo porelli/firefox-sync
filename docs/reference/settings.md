@@ -15,6 +15,7 @@ How to read the tables:
 |---|---|---|---|---|
 | `SYNC_PUBLIC_URL` | `syncDomain` | required | the public `https://` URL of the Sync server, which the init container sets as the node of the tokenserver. Firefox uses `<it>/1.0/sync/1.5` | `SYNCSTORAGE_DOMAIN` |
 | `SYNC_MAX_USERS` | `maxUsers` | `1` (Helm `"1"`) | how many accounts can use the server: `N`, `fixed:N`, `initial:N` or `unlimited`. The forms: [Limits](../limits.md#sync_max_users) | `MAX_USERS` |
+| `SYNC_ALLOWED_ACCOUNTS` | `allowedAccounts` | empty: off | invite-only Sync, the uids that can start to sync: `<uid>,...`, `fixed:<uid>,...`, `admin` or `initial:<uid>,...`. The forms: [Limits](../limits.md#sync_allowed_accounts) | |
 | `SYNC_MASTER_SECRET` | Secret: `SYNC_MASTER_SECRET` | generated | signs the Sync tokens. A new one signs every Firefox out | |
 | `SYNC_METRICS_HASH_SECRET` | Secret: `METRICS_HASH_SECRET` | generated | the key of the hash of the account ids in the metrics | `METRICS_HASH_SECRET` |
 | `SYNC_EXPORT_PORT` | – (the Service, port `syncstorage.service.port`, `8000`) | `127.0.0.1:5000` | where the host publishes the Sync server for your reverse proxy: `[address:]port`. A port alone in `.env` publishes it on every interface: [Host names and ports](../reverse-proxy.md#host-names-and-ports) | `CONTAINER_EXPORT_PORT` |

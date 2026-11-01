@@ -8,10 +8,10 @@ Reference: the database users the stack uses on each backend, what each one can 
 
 | User (setting, default) | Grants | What it does with them |
 |---|---|---|
-| tokenserver (`SYNC_TOKENSERVER_DB_USER`, `tokenserver`) | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, TRIGGER` on the tokenserver database | creates the tables (the migrations), the init container's `config` table, the `CheckUserLimit` procedure and the `BeforeInsertUser` trigger that enforce `SYNC_MAX_USERS`, and the procedures the admin UI calls: `ffs_set_max_users`, `ffs_delete_user_row` and `ffs_drop_admin_tables` |
+| tokenserver (`SYNC_TOKENSERVER_DB_USER`, `tokenserver`) | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, TRIGGER` on the tokenserver database | creates the tables (the migrations), the init container's `config` table, the `CheckUserLimit` procedure and the `BeforeInsertUser` trigger that enforce `SYNC_MAX_USERS`, the allowlist of `SYNC_ALLOWED_ACCOUNTS` (`sync_allowed_accounts`, `sync_refused_accounts`, the `BeforeInsertAllowedUser` trigger), and the procedures the admin UI calls: `ffs_set_max_users`, `ffs_delete_user_row`, `ffs_drop_admin_tables`, `ffs_allow_account`, `ffs_remove_allowed_account`, `ffs_reject_account`, `ffs_mark_refusal_reported` and `ffs_resync_node_load` |
 | storage (`SYNC_STORAGE_DB_USER`, `syncstorage`) | the same on the storage database, without `TRIGGER` | creates the tables (the migrations; one of them creates, calls and drops a procedure) |
 | `ffs_admin_ui` (`ADMIN_DB_USER`) | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, LOCK TABLES` on `ffs_admin` only | the admin UI's own data. `DROP` and `LOCK TABLES` are for a restore of its dump |
-| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | `SELECT, EXECUTE` on the tokenserver database, `SELECT, DELETE` on the storage database | reads the Sync data. Changes max users and deletes rows of `users` only through the procedures above. Deletes stored data for purges and resets |
+| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | `SELECT, EXECUTE` on the tokenserver database, `SELECT, DELETE` on the storage database | reads the Sync data. Changes max users, the allowlist and the nodes' load, and deletes rows of `users`, only through the procedures above. Deletes stored data for purges and resets |
 
 Notes:
 
@@ -28,9 +28,9 @@ Notes:
 
 | Role | What it is |
 |---|---|
-| `SYNC_POSTGRES_USER` (`syncserver`) | the owner of the Sync database. It creates the tables, the `post_bso` type, the `check_user_limit()` function and its trigger, and the `ffs_drop_admin_tables()` function. At every start it gives `ffs_admin_sync` its grants on them. No superuser, `CREATEDB` or `CREATEROLE` |
+| `SYNC_POSTGRES_USER` (`syncserver`) | the owner of the Sync database. It creates the tables, the `post_bso` type, the `check_user_limit()` and `ffs_check_allowed_account()` functions and their triggers, the allowlist's tables, and the `ffs_drop_admin_tables()`, `ffs_allow_account()`, `ffs_remove_allowed_account()`, `ffs_reject_account()`, `ffs_mark_refusal_reported()` and `ffs_resync_node_load()` functions. At every start it gives `ffs_admin_sync` its grants on them. No superuser, `CREATEDB` or `CREATEROLE` |
 | `ffs_admin_ui` (`ADMIN_DB_USER`) | the owner of `ffs_admin`, which is closed to every other role. Nothing on the Sync database (no `CONNECT`) |
-| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | on the Sync database: `CONNECT`, `SELECT` on its tables, `UPDATE (config_value)` of `config` (max users), `DELETE` on `users`, `bsos`, `user_collections`, `batches` and `batch_bsos`, and `EXECUTE` on `ffs_drop_admin_tables()`. Nothing on `ffs_admin` |
+| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | on the Sync database: `CONNECT`, `SELECT` on its tables, `UPDATE (config_value)` of `config` (max users), `DELETE` on `users`, `bsos`, `user_collections`, `batches` and `batch_bsos`, and `EXECUTE` on `ffs_drop_admin_tables()`, the four functions of the allowlist and `ffs_resync_node_load()`. Nothing on `ffs_admin` |
 
 Running the file:
 

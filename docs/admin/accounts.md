@@ -43,6 +43,16 @@ A change applies at once, without a restart. What each form of the two settings 
 
 The rows turn amber when the limit is near or reached: when that is, and how it alerts, is in [Near and full](../limits.md#near-and-full). Below that, a row shows the count and is not counted by the health light.
 
+## Invite-only Sync
+
+With [`SYNC_ALLOWED_ACCOUNTS`](../limits.md#sync_allowed_accounts) on, the overview has an Invite-only Sync card, under the accounts:
+
+- **Pending accounts**: the uids the allowlist refused, with their first and last try and how many. Approve opens the confirm page that allows the uid: its next try gets in. Reject takes it off this list (`Rejected`, in a fold below, where it can still be allowed); its next tries are counted, without an alert.
+- **Allow a uid**: the uid an owner sent you, with an optional note, through the same confirm page.
+- **Allowed accounts**: each uid with when, by whom and its note; a link to its page once it syncs. Remove stops it from starting to sync; an account that syncs already keeps working.
+
+Each change is in the event log with who made it and the reason typed on the confirm page: `Approved Sync account <uid>`, `Allowed`, `Rejected`, `Removed ... from the allowlist`. They need `SYNC_ALLOWED_ACCOUNTS=admin` or `initial:...`; with a plain list the card is read-only but for Reject. The admin UI's user changes the lists only through the init container's procedures, see [Database users](../reference/database-users.md).
+
 ## Sign-ups
 
 With self-hosted accounts, Sign-ups on the overview sets who can create an account: anybody, an allowlist of emails and domains, or nobody. What each policy does, how the database enforces it, and how `.env` and the page share it, is in [Who can sign up](../accounts.md#who-can-sign-up).

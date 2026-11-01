@@ -28,6 +28,7 @@ The top of the overview lists what to look at now, one line each, with a link to
 | sign-ups that bypass the sign-up gate, see [Public checks](#public-checks) | Health |
 | the SMTP server does not work, or the last alert email failed | Health, the alert status |
 | max users near or at the limit, see [Near and full](../limits.md#near-and-full) | the max users form |
+| accounts refused by [invite-only Sync](../limits.md#sync_allowed_accounts), waiting for your approval | Pending accounts |
 | self-hosted accounts: max accounts near or at the limit | the max accounts form |
 | a backup failed, or the last good one is older than 36 hours | [Backups](../backups.md) |
 | orphaned Sync data, see [Storage](storage.md) | the purge |
@@ -71,6 +72,8 @@ The overview lists settings that must agree with each other, each with what goes
 - **Sync node**: the tokenserver hands out the Sync node of its `nodes` table, which the init container sets from `SYNC_PUBLIC_URL` when it starts. When they differ (`.env` changed, the stack not restarted), the warning names both: Firefox syncs with the one of the table.
 - **Sign-in keys** (`FXA_OAUTH_SERVER_URL`): the Sync server checks every sign-in of Firefox with the keys at `FXA_OAUTH_SERVER_URL/jwks` (`/v1` added when missing). Checked every hour. With Mozilla's accounts that is Mozilla's server, so it is checked only with the public checks on.
 - **Email of the accounts** (`FXA_SMTP_HOST`), with self-hosted accounts: without an SMTP server nobody can sign up or sign in, see [Do you need an SMTP server?](alerts.md#do-you-need-an-smtp-server). Without self-hosted accounts there is no such check.
+- **Sync node load**: the tokenserver counts a refused new account in its node's load (see [`SYNC_ALLOWED_ACCOUNTS`](../limits.md#sync_allowed_accounts)): the admin UI counts it again from the node's accounts every few minutes, at once when it is off by 10 or more. That last case is a warning for a day, with the counts: many refused tries in a short time.
+- **Pending accounts list**, with [invite-only Sync](../limits.md#sync_allowed_accounts): accounts refused without a record because its list of 1000 was full, for a week after the last one.
 - **Account emails** (`FXA_EMAIL_DOMAIN`): the tokenserver keeps each account as `<uid>@FXA_EMAIL_DOMAIN`. After `FXA_EMAIL_DOMAIN` changed, everybody comes back as a new account, with empty storage, and counts twice against max users. The warning names the domain set and the others found, with how many accounts each.
 
 The Sync nodes table, in the Sync section, shows for each node the accounts on it (those whose current keys are there), its capacity, current load, places available and backoff.
@@ -283,6 +286,7 @@ scrape_configs:
 | `ffs_up{component}` | 1 if the component answers its health check |
 | `ffs_sync_accounts`, `ffs_sync_max_users` | accounts using Sync, and the limit (no `ffs_sync_max_users` with `SYNC_MAX_USERS=unlimited`) |
 | `ffs_sync_near_max_users`, `ffs_sync_full` | 1 when 90% of max users or more are taken, 1 when all are |
+| `ffs_sync_pending_accounts`, `ffs_sync_refusals_dropped` | the accounts refused by [invite-only Sync](../limits.md#sync_allowed_accounts) and waiting for an approval, and those refused without a record because the list was full (only while it is on) |
 | `ffs_sync_stored_items`, `ffs_sync_stored_bytes` | what all accounts store |
 | `ffs_accounts`, `ffs_accounts_max` | accounts of the self-hosted accounts service, and `FXA_MAX_ACCOUNTS` (none when unlimited) |
 | `ffs_accounts_near_max`, `ffs_accounts_full` | the same for `FXA_MAX_ACCOUNTS` |
