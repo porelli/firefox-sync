@@ -1242,7 +1242,7 @@ fxa_e2e_main() {
   # moment, then Init:2/5 again, Init:CrashLoopBackOff from the second one on)
   # (your own server: db-bootstrap, which signs in first as the accounts' user, stops it there)
   local failing=migrations
-  [[ -z ${external} ]] || failing=db-bootstrap
+  [[ -z ${external} ]] || failing="db-bootstrap"
   wait_init_failed "${failing}" 600 || fail "the auth pod's ${failing} did not fail"
   [[ "$(pod_status)" =~ ^Init: ]] || fail "the auth pod is $(pod_status), not in its init containers"
   MATCHED_STATUS=$(pod_status)
