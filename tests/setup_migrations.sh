@@ -2,8 +2,9 @@
 # The setup migrations of db/<engine>/setup/<scope>/ (db/db-setup.sh) against db/setup-manifest:
 #   - every file has its line there, with its sha256, and every line its file: a released file
 #     is never edited nor removed, a new one appends its line;
-#   - against the manifest of BASE (default origin/main, else main; none: skipped): each of its
-#     lines is still there, unchanged (what a release shipped stays as it was);
+#   - against the manifest of BASE (default main@{upstream}, else origin/main, else main; none:
+#     skipped): each of its lines is still there, unchanged (what a release shipped stays as it
+#     was);
 #   - the names NNN-name.sql, numbered from 001 without a gap in each scope; the accounts' on
 #     MySQL and on MariaDB (fxa-mysql, fxa-mariadb) the same numbers and names;
 #   - the copies of the manifest (the init images', the admin UI's) identical to it;
@@ -29,10 +30,12 @@ files() { (cd "${DB}" && ls -1 ./*/setup/*/*.sql 2> /dev/null | sed -e 's|^\./||
 # the released manifest
 # BASE: what was released before this commit. On a branch: main (where it forked from it, when
 # git has that much history); on main itself (HEAD is main): the commit before, HEAD^, else
-# main would compare with itself. BASE given: as it is
+# main would compare with itself. main is the remote branch local main tracks (main@{upstream},
+# e.g. dev/main where origin is another repository), else origin/main, else main. BASE given: as
+# it is
 BASE=${BASE:-}
 if [ -z "${BASE}" ]; then
-  for ref in origin/main main; do
+  for ref in "main@{upstream}" origin/main main; do
     git -C "${CODE}" rev-parse -q --verify "${ref}^{commit}" > /dev/null 2>&1 && { BASE=${ref}; break; }
   done
   if [ -n "${BASE}" ] && [ "$(git -C "${CODE}" rev-parse HEAD 2> /dev/null)" = "$(git -C "${CODE}" rev-parse "${BASE}")" ]; then
