@@ -105,6 +105,50 @@ diagnose() {
     podman logs --tail 15 "${c}" 2>&1
   done
   systemctl --user list-timers --all --no-pager 2> /dev/null | head -10
+  dns_diagnose
+}
+# the containers' names on their networks: aardvark-dns's records and process, each running
+# container's address and aliases, what a new container on its network resolves them to (the
+# image of a database container: it has getent), and the neighbours of the rootless network
+dns_diagnose() {
+  local d=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/containers/networks/aardvark-dns c net ip aliases img a
+  echo "---- aardvark-dns: $(pgrep -a aardvark-dns | paste -sd' ' -) (pid file: $(cat "${d}/aardvark.pid" 2> /dev/null))"
+  for c in "${d}"/*; do
+    [ -f "${c}" ] && [ "${c##*/}" != aardvark.pid ] && [ "${c##*/}" != aardvark.lock ] && { echo "-- ${c##*/}"; cat "${c}"; }
+  done
+  img=$(podman ps --format '{{.Image}} {{.Names}}' | awk '$2 ~ /db/ {print $1; exit}')
+  for c in $(podman ps --format '{{.Names}}'); do
+    while read -r net ip aliases; do
+      [ -n "${net}" ] || continue
+      aliases=${aliases#[}; aliases=${aliases%]}
+      echo "-- ${c}: ${net} ${ip} [${aliases}]"
+      [ -n "${aliases}" ] || continue
+      # what aardvark-dns answers now, asked in the rootless network (no container started:
+      # a new one makes netavark signal aardvark-dns to read its records again)
+      if command -v dig > /dev/null && [ -f "${d}/${net}" ]; then
+        # shellcheck disable=SC2086 # (the aliases, one word each)
+        for a in ${aliases}; do
+          echo "   dig ${a}: $(podman unshare --rootless-netns dig +time=2 +tries=1 +short "@$(head -n 1 "${d}/${net}" | cut -d' ' -f1 | cut -d, -f1)" "${a}.dns.podman" 2>&1 | paste -sd' ' -)"
+        done
+      fi
+      [ -n "${img}" ] || continue
+      # shellcheck disable=SC2016,SC2086 # (the script of the container's sh; the aliases, one word each)
+      podman run --rm --network "${net}" --entrypoint sh "${img}" -c \
+        's=$(date +%s%N); for n in "$@"; do echo "   $n -> $(getent ahostsv4 "$n" | awk "NR == 1 {print \$1}")"; done; echo "   ($(( ($(date +%s%N) - s) / 1000000 )) ms)"' \
+        sh ${aliases} 2>&1 | head -6
+    done < <(podman inspect -f '{{range $n, $v := .NetworkSettings.Networks}}{{$n}} {{$v.IPAddress}} {{$v.Aliases}}{{"\n"}}{{end}}' "${c}" 2> /dev/null)
+  done
+  podman unshare --rootless-netns ip neigh 2>&1 | head -20
+}
+podman_major() { podman version --format '{{.Client.Version}}' 2> /dev/null | cut -d. -f1 | grep -x '[0-9][0-9]*' || echo 0; }
+# the stack's one-shot containers that exited for a name their database client could not
+# resolve (psql, mariadb, mysql): their services, or nothing
+compose_name_unresolved() {
+  local c
+  for c in $(podman ps -a -q --filter label=com.docker.compose.project=ffs --filter status=exited); do
+    podman logs "${c}" 2>&1 | grep -qE 'could not translate host name|Unknown (MySQL )?server host' &&
+      podman inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "${c}"
+  done | sort -u | paste -sd' ' -
 }
 
 podman --version
@@ -304,7 +348,19 @@ compose_test() {
     "--upgrade pins the Sync databases of an install from before on MySQL 8, nothing for the accounts it has not (mysql)"
   admin_password=$(env_of ADMIN_DB_PASSWORD)
   dcp_timeout 600 up -d >> "compose-${backend}.log" 2>&1
-  check "$?" 0 "docker compose up (${backend})"
+  rc=$?
+  # Podman 4 (Ubuntu 24.04's 4.9, netavark and aardvark-dns 1.4): now and then, once compose
+  # recreated every container of the network, its DNS does not find a database container that
+  # runs, and an init container times out on that name. Only then, what docs/troubleshooting.md#podman
+  # says, once: down (the volumes kept) and up; the names and records of then printed first
+  if [ "${rc}" != 0 ] && [ "$(podman_major)" -lt 5 ] && [ -n "$(compose_name_unresolved)" ]; then
+    echo "NOTE: Podman $(podman_major): $(compose_name_unresolved) did not resolve a name of the stack after compose recreated it, down and up again (docs/troubleshooting.md#podman)"
+    for c in $(compose_name_unresolved); do podman logs --tail 3 "$(ctr "${c}")" 2>&1; done
+    dns_diagnose
+    { dcp down && dcp_timeout 600 up -d; } >> "compose-${backend}.log" 2>&1
+    rc=$?
+  fi
+  check "${rc}" 0 "docker compose up (${backend})"
   check "$(hb)" 200 "/__heartbeat__ (compose, ${backend})"
   check "$(podman inspect -f '{{.State.ExitCode}}' "$(ctr syncstorage_migrate)")" 0 "migrate container exit code (${backend})"
   check "$(podman inspect -f '{{.State.ExitCode}}' "$(ctr tokenserver_db_init)")" 0 "init container exit code (${backend})"
