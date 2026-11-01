@@ -21,8 +21,9 @@ x-sync-mysql: &sync-mysql
   # no binary logging, like the MariaDB containers: no replica reads it, and it would keep
   # 30 days of every change (binlog_expire_logs_seconds). With it on, the init container's
   # max users procedure and trigger would also need log_bin_trust_function_creators (ERROR 1419)
-  # (through db/mysql/admin-user.sh, the admin UI's user, see sync-mariadb.yml)
-  command: [sh, /ffs-db/keep-major.sh, sh, /ffs-db/admin-user.sh, mysqld, --disable-log-bin]
+  # (through db/mysql/admin-user.sh, the admin UI's user, see sync-mariadb.yml). MyISAM tables
+  # (the refusals of SYNC_ALLOWED_ACCOUNTS) checked and repaired when opened after a crash
+  command: [sh, /ffs-db/keep-major.sh, sh, /ffs-db/admin-user.sh, mysqld, --disable-log-bin, "--myisam-recover-options=BACKUP,FORCE"]
   healthcheck:
     # over TCP: during the first start the image runs a temporary server on the socket only;
     # as the stack's user (the root password is random), mysqladmin ping only asks if it answers

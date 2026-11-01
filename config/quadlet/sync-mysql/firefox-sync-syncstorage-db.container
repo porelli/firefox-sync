@@ -25,7 +25,7 @@ Environment=ADMIN_DB_PASSWORD=%ADMIN_DB_PASSWORD%
 
 # no binary logging, like MariaDB: no replica reads it, it would keep 30 days of every
 # change, and the init container's max users trigger would need log_bin_trust_function_creators
-Exec=sh /ffs-db/admin-user.sh mysqld --disable-log-bin
+Exec=sh /ffs-db/admin-user.sh mysqld --disable-log-bin --myisam-recover-options=BACKUP,FORCE
 
 # over TCP: during the first start the image runs a temporary server on the socket only
 HealthCmd=MYSQL_PWD=$${MYSQL_PASSWORD} mysqladmin ping -h 127.0.0.1 --protocol=tcp -u%SYNC_STORAGE_DB_USER% --silent

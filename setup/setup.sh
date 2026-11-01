@@ -123,6 +123,23 @@ ADMIN_HOST=""
 # self-hosted Mozilla accounts (docs/accounts.md)
 read -r -e -p "Also self-host Mozilla accounts? See docs/accounts.md (y/N): " SELF_HOST_FXA
 case "${SELF_HOST_FXA}" in y|Y|yes) SELF_HOST_FXA=yes ;; *) SELF_HOST_FXA=no ;; esac
+# invite-only Sync with Mozilla's accounts (docs/limits.md#sync_allowed_accounts): only the
+# accounts you approve can start to sync, approved in the admin UI (SYNC_ALLOWED_ACCOUNTS=admin)
+# or, without it, listed here by their uid. With self-hosted accounts the sign-up policy
+# (FXA_SIGNUP_ALLOWLIST) decides who has an account at all
+SYNC_ALLOWED_ACCOUNTS=""
+if [ "${SELF_HOST_FXA}" = "no" ]; then
+    read -r -e -p "Invite-only: only accounts you approve can sync? See docs/limits.md#sync_allowed_accounts (y/N): " INVITE_ONLY
+    case "${INVITE_ONLY}" in
+        y|Y|yes)
+            if [ "${ADMIN_UI}" = "yes" ]; then
+                SYNC_ALLOWED_ACCOUNTS=admin
+            else
+                read -r -e -p "Without the admin UI: the account ids (uids) that can sync, comma-separated: " SYNC_ALLOWED_ACCOUNTS
+                SYNC_ALLOWED_ACCOUNTS=$(valid_uids "${SYNC_ALLOWED_ACCOUNTS}") || exit 1
+            fi ;;
+    esac
+fi
 if [ "${SELF_HOST_FXA}" = "yes" ]; then
     DEFAULT_FXA_DOMAIN=${SYNC_FQDN#*.}
     read -r -e -p "Domain for the accounts host names (accounts., api. and profile. are prepended) [${DEFAULT_FXA_DOMAIN}]: " FXA_DOMAIN
@@ -460,6 +477,7 @@ apply_sed "${NEW_ENV}" "s|^SYNC_METRICS_HASH_SECRET=.*|SYNC_METRICS_HASH_SECRET=
 apply_sed "${NEW_ENV}" "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://${SYNC_FQDN}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_EXPORT_PORT=.*|SYNC_EXPORT_PORT=${SYNC_EXPORT_PORT}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_MAX_USERS=.*|SYNC_MAX_USERS=${SYNC_MAX_USERS}|"
+apply_sed "${NEW_ENV}" "s|^SYNC_ALLOWED_ACCOUNTS=.*|SYNC_ALLOWED_ACCOUNTS=${SYNC_ALLOWED_ACCOUNTS}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_IMAGE_TAG=.*|SYNC_IMAGE_TAG=${SYNC_IMAGE_TAG}|"
 apply_sed "${NEW_ENV}" "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=${ADMIN_PASSWORD}|"
 # the admin UI's database user, also for the backups: with or without the admin UI

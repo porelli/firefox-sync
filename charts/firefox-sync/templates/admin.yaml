@@ -132,6 +132,12 @@ spec:
             # initial:N: the admin UI manages max users, otherwise the chart does (read-only)
             - name: MAX_USERS
               value: {{ include "firefox-sync.maxUsers" . | quote }}
+            # admin or initial:...: the admin UI manages the allowlist of Sync, otherwise the chart
+            # does (only when set: unset is empty, off)
+            {{- with .Values.allowedAccounts }}
+            - name: SYNC_ALLOWED_ACCOUNTS
+              value: {{ . | quote }}
+            {{- end }}
             # its own users and database, out of the Sync server's reach (docs/reference/database-users.md#the-admin-uis-own-database)
             - name: ADMIN_DB_USER
               value: {{ include "firefox-sync.adminDbUser" . }}

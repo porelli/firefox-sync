@@ -37,6 +37,7 @@ Every value is described in [values.yaml](https://github.com/porelli/firefox-syn
 |---|---|---|
 | `syncDomain` | required | the public URL of the Sync server |
 | `maxUsers` | `"1"` | how many accounts can use it: [the forms](https://github.com/porelli/firefox-sync/blob/main/docs/limits.md#the-forms) |
+| `allowedAccounts` | `""` (off) | invite-only Sync, the account ids that can start to sync: [SYNC_ALLOWED_ACCOUNTS](https://github.com/porelli/firefox-sync/blob/main/docs/limits.md#sync_allowed_accounts) |
 | `database.backend` | `mariadb` | `mariadb`, `mysql` or `postgres` |
 | `database.bundled` | `true` | `false`: your own server, `database.external.*` and `existingSecret` |
 | `existingSecret` | | a Secret of your own; required with your own server and with `helm template` or GitOps rendering |

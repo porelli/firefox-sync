@@ -42,6 +42,10 @@
         }
       ]
     },
+    "allowedAccounts": {
+      "type": "string",
+      "pattern": "^\\s*(|admin|(fixed:|initial:)?[\\s0-9a-fA-F,]*)\\s*$"
+    },
     "smtp": {
       "type": "object",
       "properties": {

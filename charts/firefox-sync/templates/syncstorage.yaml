@@ -233,7 +233,7 @@ spec:
               echo "Timeout waiting for syncstorage-rs to start"
               kill $$pid
               exit 1
-        # compose's tokenserver_db_init: MAX_USERS and the sign-up trigger
+        # compose's tokenserver_db_init: MAX_USERS, SYNC_ALLOWED_ACCOUNTS and their triggers
         - name: db-init
           image: {{ include "firefox-sync.image" (dict "root" . "name" "init") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -272,6 +272,10 @@ spec:
             {{- end }}
             - name: MAX_USERS
               value: {{ include "firefox-sync.maxUsers" . | quote }}
+            {{- with .Values.allowedAccounts }}
+            - name: SYNC_ALLOWED_ACCOUNTS
+              value: {{ . | quote }}
+            {{- end }}
             - name: DOMAIN
               value: {{ .Values.syncDomain | quote }}
             {{- if eq $backend "postgres" }}

@@ -28,7 +28,7 @@ Environment=ADMIN_DB_NAME=%ADMIN_DB_NAME%
 
 # no binary logging, like MariaDB: no replica reads it, it would keep 30 days of every
 # change, and the init container's max users trigger would need log_bin_trust_function_creators
-Exec=sh /ffs-db/admin-user.sh mysqld --disable-log-bin
+Exec=sh /ffs-db/admin-user.sh mysqld --disable-log-bin --myisam-recover-options=BACKUP,FORCE
 
 # over TCP: during the first start the image runs a temporary server on the socket only;
 # the password in mysqladmin's environment, not in its arguments, which ps shows

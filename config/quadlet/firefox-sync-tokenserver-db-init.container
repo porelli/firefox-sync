@@ -18,6 +18,8 @@ Environment=MARIADB_DATABASE=%SYNC_TOKENSERVER_DB_NAME%
 Environment=MARIADB_USER=%SYNC_TOKENSERVER_DB_USER%
 Environment=MARIADB_PASSWORD=%SYNC_TOKENSERVER_DB_PASSWORD%
 Environment=MAX_USERS=%SYNC_MAX_USERS%
+# invite-only Sync (docs/limits.md#sync_allowed_accounts): empty is off
+Environment="SYNC_ALLOWED_ACCOUNTS=%SYNC_ALLOWED_ACCOUNTS%"
 Environment=DOMAIN=%SYNC_PUBLIC_URL%
 
 AutoUpdate=registry

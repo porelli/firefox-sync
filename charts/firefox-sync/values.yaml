@@ -28,6 +28,12 @@ syncDomain: ""
 # (a number like 5 is taken as "5")
 maxUsers: "1"
 
+# Invite-only Sync, SYNC_ALLOWED_ACCOUNTS of .env (docs/limits.md#sync_allowed_accounts): only
+# the accounts on the list can start to sync. "": off, everyone gets in
+# - "<uid>,<uid>" (or "fixed:<uid>,..."): the list, set on every start, read-only in the admin UI
+# - "admin", or "initial:<uid>,...": those uids first, then the list is managed in the admin UI
+allowedAccounts: ""
+
 # FXA_SMTP_*: the SMTP server of the self-hosted accounts' emails (confirmation codes, sign-in
 # codes) and of the admin UI's alerts and invitations (empty host: no emails from the admin UI).
 # The password (FXA_SMTP_PASS) goes into the Secret, as the values say (see existingSecret)

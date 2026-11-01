@@ -136,8 +136,9 @@ spec:
           {{- $check = list "healthcheck.sh" "--connect" "--innodb_initialized" }}
           {{- else if eq $backend "mysql" }}
           # no binary logging, as compose/sync-mysql.yml: the init container's MAX_USERS
-          # procedure and trigger would otherwise need log_bin_trust_function_creators
-          args: [sh, /ffs-db/admin-user.sh, mysqld, --disable-log-bin]
+          # procedure and trigger would otherwise need log_bin_trust_function_creators; MyISAM
+          # tables (the refusals of allowedAccounts) checked and repaired when opened after a crash
+          args: [sh, /ffs-db/admin-user.sh, mysqld, --disable-log-bin, "--myisam-recover-options=BACKUP,FORCE"]
           env:
             - name: MYSQL_RANDOM_ROOT_PASSWORD
               value: "yes"

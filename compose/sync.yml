@@ -158,6 +158,8 @@ services:
     restart: "no"
     environment:
       MAX_USERS: ${SYNC_MAX_USERS:-${MAX_USERS:-}}
+      # invite-only Sync (docs/limits.md#sync_allowed_accounts): empty is off
+      SYNC_ALLOWED_ACCOUNTS: ${SYNC_ALLOWED_ACCOUNTS:-}
       DOMAIN: ${SYNC_PUBLIC_URL:-${SYNCSTORAGE_DOMAIN:-}}
       # the old setting names it got values through, for its warning
       FFS_OLD_ENV_NAMES: *old-env-names
@@ -174,6 +176,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # initial:N: the admin UI manages max users, otherwise .env does (read-only)
       MAX_USERS: ${SYNC_MAX_USERS:-${MAX_USERS:-}}
+      # admin or initial:...: the admin UI manages the allowlist of Sync, otherwise .env does
+      SYNC_ALLOWED_ACCOUNTS: ${SYNC_ALLOWED_ACCOUNTS:-}
       # its own users and database, out of the Sync server's reach (docs/reference/database-users.md#the-admin-uis-own-database): one for
       # its database, one that reads the Sync data. Without ADMIN_DB_PASSWORD (an install
       # from before it) the Sync users, and its tables in the tokenserver database (the

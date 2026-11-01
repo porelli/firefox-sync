@@ -13,6 +13,8 @@ PodmanArgs=--network-alias=ffs-admin
 Environment="ADMIN_PASSWORD=%ADMIN_PASSWORD%"
 # initial:N: the admin UI manages max users, otherwise .env does (read-only)
 Environment="MAX_USERS=%SYNC_MAX_USERS%"
+# admin or initial:...: the admin UI manages the allowlist of Sync, otherwise .env does
+Environment="SYNC_ALLOWED_ACCOUNTS=%SYNC_ALLOWED_ACCOUNTS%"
 # its own users and database, out of the Sync server's reach (docs/reference/database-users.md#the-admin-uis-own-database): one for its
 # database, one that reads the Sync data. It gets no password of the Sync users
 Environment="ADMIN_DB_USER=%ADMIN_DB_USER%"

@@ -52,6 +52,20 @@ valid_limit() {
         *) [ "${#2}" -le 10 ] && [ "${2}" -le 2147483647 ] || { echo "ERROR: ${1} must be at most 2147483647, got '${2}'"; exit 1; } ;;
     esac
 }
+# valid_uids <list>: account ids of Mozilla's accounts for SYNC_ALLOWED_ACCOUNTS, comma-separated:
+# printed lowercase without spaces, at least one; as the init container takes them
+valid_uids() {
+    local uid out="" list
+    list=$(printf '%s' "${1}" | LC_ALL=C tr -d '[:space:]' | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    IFS=, read -r -a uids <<< "${list}"
+    for uid in ${uids[@]+"${uids[@]}"}; do
+        [ -n "${uid}" ] || continue
+        [[ "${uid}" =~ ^[0-9a-f]{32}$ ]] || { echo "ERROR: not an account id (32 hexadecimal characters, docs/limits.md#find-the-uid-of-an-account): '${uid}'" >&2; return 1; }
+        out=${out:+${out},}${uid}
+    done
+    [ -n "${out}" ] || { echo "ERROR: no account id given: without the admin UI, invite-only Sync needs the uids (or answer n)" >&2; return 1; }
+    printf '%s' "${out}"
+}
 # names end up unquoted in SQL and in the database URLs
 valid_name() { [[ "${1}" =~ ^[a-z_][a-z0-9_]{0,31}$ ]] || { echo "ERROR: not a valid database or user name (a-z, 0-9, _): '${1}'"; exit 1; }; }
 # a name of Sync or the accounts: never one of the admin UI's (.env's ADMIN_DB_NAME, ADMIN_DB_USER,
