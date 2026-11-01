@@ -31,6 +31,8 @@ on:
       - 'docs/databases.md'
       - 'docs/firefox.md'
       - 'docs/limits.md'
+      - 'docs/access-control.md'
+      - 'docs/single-sign-on.md'
       - 'docs/reverse-proxy.md'
       - 'docs/troubleshooting.md'
       - '.github/workflows/docs.yml'
