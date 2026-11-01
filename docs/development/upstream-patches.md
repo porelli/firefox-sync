@@ -41,7 +41,7 @@ A pull request that moves, is rebased or retargeted changes nothing until the en
 - Any other release gets `base...sha` as always. When that does not apply, the build tries the newest port of an older release with `git apply --check`. If it applies cleanly it is used, the label names that port (`+v1.347.3` on a later release), and the run warns: review the change on the new release and add its port. If neither applies, the build fails: add a port, or rebase the pull request.
 - Review a port like the pull request: the release's code, the same change.
 
-No entry has a port today: every pull request applies to the release built as it is. (mozilla/fxa#21554 had one for v1.347.3, where the shared database code was still in `packages/fxa-shared`; from v1.348.0 on the pull request applies itself.)
+mozilla/fxa#21554 has a port for v1.348.5: the pull request was rebased on a `main` that removed a script it changed (`backfill-account-authorizations-v2`) and changed `fxa-auth-server`'s `package.json`, so it no longer applies to that release. The port is the pull request as it was before the rebase. (It had one for v1.347.3 before, where the shared database code was still in `packages/fxa-shared`.)
 
 ## What a run says
 
