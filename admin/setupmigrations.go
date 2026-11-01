@@ -88,7 +88,7 @@ type SetupStatus struct {
 	// the admin UI checked its own users itself (Drift): a last start's result of them alone
 	// ('admin') is then outdated
 	LiveCheck bool
-	Err         string // the record could not be read
+	Err       string // the record could not be read
 }
 
 func nnn(n int) string { return fmt.Sprintf("%03d", n) }
