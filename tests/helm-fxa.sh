@@ -864,7 +864,9 @@ fxa_base_parity() {
   # arguments, as compose's healthchecks. And backup.sh's text: the chart ships compose's
   # config/backup/backup.sh as it is, which the parity of tests/helm_parity.py checks, and fixes
   # to it are not a change of the chart's objects; the same for PostgreSQL's keep-major.sh, a
-  # copy of db/postgres/keep-major.sh, and the checksum of its ConfigMap, db-scripts)
+  # copy of db/postgres/keep-major.sh, and the checksum of its ConfigMap, db-scripts; and the
+  # bundled MySQL's --myisam-recover-options=BACKUP,FORCE, since 0.2.0: the refusals of allowedAccounts
+  # are MyISAM, checked and repaired after a crash)
   mask='walk(if type == "string" and test("^MYSQL_PWD=[$][{]MYSQL_PASSWORD[}] mysqladmin ping |^mysqladmin ping .* -p\"[$][{]MYSQL_PASSWORD[}]\" ") then "mysqladmin ping (masked)"
     elif type == "object" then
       (if has("helm.sh/chart") then .["helm.sh/chart"] = "masked" else . end)
@@ -875,6 +877,7 @@ fxa_base_parity() {
       | (if .kind? == "ConfigMap" and (.data? | type) == "object" and (.data | has("backup.sh")) then .data["backup.sh"] = "masked" else . end)
       | (if .kind? == "ConfigMap" and (.data? | type) == "object" and (.data | has("keep-major.sh")) then .data["keep-major.sh"] = "masked" else . end)
       | (if has("checksum/db-scripts") then .["checksum/db-scripts"] = "masked" else . end)
+    elif type == "array" then map(select(. != "--myisam-recover-options=BACKUP,FORCE"))
     else . end)'
   diffs=""
   for values in "${base_dir}"/ci/*.yaml; do
@@ -889,7 +892,7 @@ fxa_base_parity() {
   done
   rm -rf "${base}"
   [[ -z "${diffs}" ]] || fail "with the accounts off, not what chart 0.1.0 renders:${diffs}"
-  check "accounts off: the same objects as chart 0.1.0 (${PARITY_BASE}) for every ci/*.yaml it had (but helm.sh/chart, app.kubernetes.io/version (set when published), ADMIN_K8S_CHART_VERSION, the Secret's values and their checksum, backup.sh's and PostgreSQL's keep-major.sh's text and the latter's checksum)"
+  check "accounts off: the same objects as chart 0.1.0 (${PARITY_BASE}) for every ci/*.yaml it had (but helm.sh/chart, app.kubernetes.io/version (set when published), ADMIN_K8S_CHART_VERSION, the Secret's values and their checksum, backup.sh's and PostgreSQL's keep-major.sh's text and the latter's checksum, MySQL's --myisam-recover-options=BACKUP,FORCE)"
 }
 
 # e2e <mysql|mariadb>: the chart with the accounts (their database on that backend, the Sync

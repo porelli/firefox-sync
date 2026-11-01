@@ -61,6 +61,9 @@ ALLOWED_DIFFERENCES = {
     f"{BUNDLED}:admin/SYNC_DB_CONTAINERS": "compose passes it always; the chart only with database.bundled false (its "
     "setup check of database-setup.sql), so that the default render stays that of 0.1.0: unset, the admin UI takes 1",
     f"{BUNDLED}:admin/SYNC_DB_BOOTSTRAP_USER": "as SYNC_DB_CONTAINERS: with your own server only",
+    "*:admin/SYNC_ALLOWED_ACCOUNTS": "as ADMIN_INSECURE_COOKIE: the chart only when allowedAccounts is set (unset is empty, off), "
+    "so that the default render stays that of 0.1.0",
+    "*:db-init/SYNC_ALLOWED_ACCOUNTS": "as the admin UI's: the chart only when allowedAccounts is set",
     # the old names of .env (docs/upgrading.md#renamed-settings): compose tells its containers which
     # are still set, or set with their new ones; the chart has no .env
     "*:migrate/FFS_BOTH_ENV_NAMES": "compose-only: the old .env names set with their new ones; the chart has no .env",
@@ -172,7 +175,7 @@ ALLOWED_COMMANDS = {
     f"{SYNC_MARIADB}:db": ([None, ["sh", "/ffs-db/admin-user.sh", "mariadbd", "--explicit_defaults_for_timestamp"]],
                    "compose starts it through db/mysql/keep-major.sh (no upgrade of the data to another major with "
                    "SYNC_MARIADB_IMAGE unset in .env); the chart has no unset: database.image.mariadb"),
-    "mysql:db": ([None, ["sh", "/ffs-db/admin-user.sh", "mysqld", "--disable-log-bin"]],
+    "mysql:db": ([None, ["sh", "/ffs-db/admin-user.sh", "mysqld", "--disable-log-bin", "--myisam-recover-options=BACKUP,FORCE"]],
                  "compose starts it through db/mysql/keep-major.sh (no upgrade of the data to another major with "
                  "SYNC_MYSQL_IMAGE unset in .env); the chart has no unset: database.image.mysql"),
     # the accounts' database: compose's command without db/mysql/keep-major.sh (the chart refuses

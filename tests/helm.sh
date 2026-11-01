@@ -65,6 +65,21 @@ lint() {
   done
   check "maxUsers bogus, -1, fixed:-1, initial: refused by the schema"
 
+  # allowedAccounts: SYNC_ALLOWED_ACCOUNTS of the db-init container and of the admin UI, as given
+  local uids=0123456789abcdef0123456789abcdef,fedcba9876543210fedcba9876543210 allowed
+  allowed=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set admin.enabled=true \
+    --set-string allowedAccounts="initial:${uids//,/\\,}" | grep -A1 'name: SYNC_ALLOWED_ACCOUNTS$' | grep -c "value: \"initial:${uids}\"")
+  [[ "${allowed}" == 2 ]] || fail "allowedAccounts=initial:<uids> not in the db-init and admin containers (${allowed})"
+  [[ "$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set admin.enabled=true | grep -c 'name: SYNC_ALLOWED_ACCOUNTS$')" == 0 ]] \
+    || fail "allowedAccounts not set, but SYNC_ALLOWED_ACCOUNTS rendered"
+  check "allowedAccounts: not rendered by default (off, the objects of 0.1.0), initial:<uids> as given in the db-init and admin containers"
+  for bad in bogus "initial:xyz" "admin:${uids%%,*}"; do
+    if helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set-string allowedAccounts="${bad}" > /dev/null 2>&1; then
+      fail "allowedAccounts=${bad} not refused by the schema"
+    fi
+  done
+  check "allowedAccounts bogus, initial:xyz, admin:<uid> refused by the schema (the db-init container checks the uids themselves)"
+
   # wait-db logs in to nothing: no password in that init container
   for backend in mariadb mysql postgres; do
     waitdb=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set database.backend="${backend}" \
@@ -1148,6 +1163,9 @@ e2e() {
   client_flow flow-2 "-k first_sign_in" || fail "client flow after the upgrade failed"
   check "client flow after the upgrade passed"
 
+  # invite-only Sync (allowedAccounts): one backend, the bundled MariaDB
+  [[ ${backend} == mariadb && -z "${EXTERNAL}" ]] && allowlist_e2e
+
   # another major of the bundled database: refused at render time, nothing applied; MySQL
   # moves with database.allowMajorUpgrade (8 to lts, its data upgraded in place)
   if [[ -z "${EXTERNAL}" ]]; then
@@ -1253,6 +1271,38 @@ e2e() {
 
   echo ""
   echo "=== e2e (${backend}) passed ==="
+}
+
+# allowedAccounts (SYNC_ALLOWED_ACCOUNTS) on a running release: the db-init container of the new
+# pod applies it, a listed uid gets in, another is refused and recorded as pending, an account
+# from before (alice, of the client flow) still syncs; then off again
+allowlist_e2e() {
+  local listed=0123456789abcdef0123456789abcdef other=fedcba9876543210fedcba9876543210 got
+  helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set-string allowedAccounts="initial:${listed}" --wait --timeout 10m \
+    || fail "helm upgrade with allowedAccounts did not get Ready"
+  kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=-1 | grep -q "SYNC_ALLOWED_ACCOUNTS=initial:${listed}: invite-only, 1 accounts allowed" \
+    || fail "the db-init container did not apply allowedAccounts: $(kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=5)"
+  got=$(sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'; SELECT uid FROM sync_allowed_accounts;" -sN | paste -sd' ' -)
+  [[ "${got}" == "on ${listed}" ]] || fail "allowedAccounts: the database has ${got}"
+  check "allowedAccounts=initial:<uid> applied by the db-init container (on, the uid listed)"
+  client_flow flow-allowlist "-k second_device" || fail "an account from before the allowlist no longer syncs"
+  check "an account from before the allowlist still syncs"
+  # (maxUsers=1 is full with alice: no limit here, as before for the next ones)
+  local max
+  max=$(sql "SELECT config_value FROM config WHERE config_key = 'max_users'" -sN)
+  sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users'" > /dev/null || fail "max users not lifted"
+  ins() { sql "INSERT INTO users (service, email, generation, client_state, created_at, nodeid) SELECT s.id, '$1@helm.invalid', 1, 'aa', 1, n.id FROM services s JOIN nodes n ON n.service = s.id WHERE s.service = 'sync-1.5' AND n.downed = 0" > /dev/null 2>&1
+    sql "SELECT COUNT(*) FROM users WHERE email = '$1@helm.invalid'" -sN; }
+  got="$(ins "${listed}") $(ins "${other}") $(sql "SELECT uid FROM sync_refused_accounts" -sN)"
+  [[ "${got}" == "1 0 ${other}" ]] || fail "allowedAccounts: listed, unlisted and pending: ${got}"
+  check "a listed uid gets in, another one is refused and pending"
+  sql "DELETE FROM users WHERE email LIKE '%@helm.invalid'; DELETE FROM sync_refused_accounts;" > /dev/null || fail "could not clean up"
+  helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set-string allowedAccounts= --wait --timeout 10m || fail "helm upgrade allowedAccounts= did not get Ready"
+  sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users'" > /dev/null || fail "max users not lifted"
+  got="$(sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'" -sN) $(ins "${other}")"
+  [[ "${got}" == "off 1" ]] || fail "allowedAccounts empty again: ${got}"
+  sql "DELETE FROM users WHERE email LIKE '%@helm.invalid'; UPDATE config SET config_value = '${max}' WHERE config_key = 'max_users'" > /dev/null
+  check "allowedAccounts empty again: off, every account gets in"
 }
 
 # helm uninstall, then helm install with the same release name and values (docs/upgrading.md#helm):
@@ -1582,8 +1632,8 @@ sql() {
     return
   fi
   case "${BACKEND}" in
-    mariadb) kubectl exec "${FULL}-tokenserver-db-0" -- sh -c 'MYSQL_PWD="${MARIADB_PASSWORD}" mariadb -u"${MARIADB_USER}" "${MARIADB_DATABASE}" -e "$1"' sh "$1" ;;
-    mysql) kubectl exec "${FULL}-tokenserver-db-0" -- sh -c 'MYSQL_PWD="${MYSQL_PASSWORD}" mysql -u"${MYSQL_USER}" "${MYSQL_DATABASE}" -e "$1"' sh "$1" ;;
+    mariadb) kubectl exec "${FULL}-tokenserver-db-0" -- sh -c 'q=$1; shift; MYSQL_PWD="${MARIADB_PASSWORD}" mariadb -u"${MARIADB_USER}" "${MARIADB_DATABASE}" -e "${q}" "$@"' sh "$1" "${@:2}" ;;
+    mysql) kubectl exec "${FULL}-tokenserver-db-0" -- sh -c 'q=$1; shift; MYSQL_PWD="${MYSQL_PASSWORD}" mysql -u"${MYSQL_USER}" "${MYSQL_DATABASE}" -e "${q}" "$@"' sh "$1" "${@:2}" ;;
     # as the Sync server's own role: no superuser session on the tables it owns
     postgres) kubectl exec "${FULL}-postgres-0" -- env PGPASSWORD="$(secret POSTGRES_SYNC_PASSWORD)" \
       psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U syncserver_app -d syncserver -c "$1" "${@:2}" ;;

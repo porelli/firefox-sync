@@ -146,8 +146,9 @@ else
 fi
 rc=$?; check "${rc}" 0 "admin UI image"; [ "${rc}" = 0 ] || tail -5 build-admin.log
 # answers: domain, compose dir, port, max users, backend, deploy method, user, image tag, admin UI,
-# accounts, your own database server, alerts' destination, nightly backups ($3, default n)
-setup() { printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "$1" "$2" "" "${TAG}" "" "" "" "" "${3:-n}" | ./prepare_environment.sh > "setup-$1-$2.log" 2>&1; }
+# accounts, invite-only ($4, default n), your own database server, alerts' destination, nightly
+# backups ($3, default n)
+setup() { printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "$1" "$2" "" "${TAG}" "" "" "${4:-}" "" "" "${3:-n}" | ./prepare_environment.sh > "setup-$1-$2.log" 2>&1; }
 admin_up() {
   local c
   for _ in $(seq 1 30); do
@@ -349,7 +350,7 @@ compose_test postgres
 
 echo "== where the Sync server listens: on this host only by default (nothing started)"
 # answers as setup, the port: the default, a port alone, another address, not a port
-port_setup() { printf '%s\n' ffs-e2e.invalid "" "$1" 1 mariadb 2 "" "${TAG}" "" "" "" "" n | ./prepare_environment.sh > setup-port.log 2>&1; }
+port_setup() { printf '%s\n' ffs-e2e.invalid "" "$1" 1 mariadb 2 "" "${TAG}" "" "" "" "" "" n | ./prepare_environment.sh > setup-port.log 2>&1; }
 rm -f .env .env.before-setup-*
 port_setup ""
 check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5000;$' config/nginx/syncstorage-rs.conf)" "0 127.0.0.1:5000 1" \
@@ -392,6 +393,22 @@ sed -i --follow-symlinks '/^ADMIN_DB_NAME=/d' .env
 check "$? $([ -L .env ] && echo link) $(grep -c '^ADMIN_DB_NAME=' "${WORK}/secrets/ffs.env") $(stat -c %a "${WORK}/secrets/ffs.env")" "0 link 1 600" \
   "--upgrade on an .env that is a symlink: the symlink kept, its file written, 0600"
 rm .env && mv "${WORK}/secrets/ffs.env" .env
+echo "== invite-only Sync: asked with Mozilla's accounts, kept by --upgrade (nothing started)"
+# answers as port_setup: admin UI (y: approved there, n: the uids asked), the accounts: no, invite-only: y
+invite_setup() { printf '%s\n' ffs-e2e.invalid "" "" 1 mariadb 2 "" "${TAG}" "$@" "" n | ./prepare_environment.sh > setup-invite.log 2>&1; }
+invite_setup "" "" y ""
+check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 admin" "invite-only with the admin UI: SYNC_ALLOWED_ACCOUNTS=admin"
+./prepare_environment.sh --upgrade < /dev/null > upgrade-invite.log 2>&1
+check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 admin" "--upgrade keeps SYNC_ALLOWED_ACCOUNTS"
+invite_setup n "" y " 0123456789ABCDEF0123456789abcdef, fedcba9876543210fedcba9876543210 "
+check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 0123456789abcdef0123456789abcdef,fedcba9876543210fedcba9876543210" \
+  "invite-only without the admin UI: the uids given, lowercase, without spaces"
+cp -p .env "${WORK}/invite.env"
+invite_setup n "" y "0123456789abcdef"
+check "$? $(grep -c "^ERROR: not an account id (32 hexadecimal characters" setup-invite.log) $(cmp -s .env "${WORK}/invite.env" && echo kept)" "1 1 kept" \
+  "not an account id: refused, .env as it was"
+port_setup ""
+check "$? $(grep -c '^SYNC_ALLOWED_ACCOUNTS=$' .env)" "0 1" "not invite-only (the default): SYNC_ALLOWED_ACCOUNTS empty"
 # --render-units on a compose install: refused, nothing written; --fresh asks for it
 port_setup ""
 cp -p .env "${WORK}/port.env"
@@ -671,6 +688,37 @@ check "$(admin_db_sql "SELECT COUNT(*) FROM ffs_backups WHERE scope = 'sync' AND
 check "$(podman run --rm -v firefox-sync-backups:/backups:ro docker.io/library/mariadb:lts sh -c 'for f in /backups/sync/*/*.sql.gz; do gzip -t "$f" && basename "$f"; done' | sort | paste -sd' ')" \
   "${SYNC_DUMPS}" "the dumps in the firefox-sync-backups volume (quadlets)"
 [ "${FAILED}" = 0 ] || journalctl --user -u firefox-sync-backup.service --no-pager | tail -20
+
+echo "== invite-only Sync with the Quadlets: SYNC_ALLOWED_ACCOUNTS of the init and admin UI units"
+check "$(grep -hcxF 'Environment="SYNC_ALLOWED_ACCOUNTS="' "${QUADLET_DIR}"/firefox-sync-{tokenserver-db-init,admin}.container | paste -sd' ')" "1 1" \
+  "SYNC_ALLOWED_ACCOUNTS empty (off) in the init and admin UI quadlets"
+cp -p .env "${WORK}/before-allowlist.env"
+INVITED=0123456789abcdef0123456789abcdef UNINVITED=fedcba9876543210fedcba9876543210
+# as docs/limits.md#switch-between-the-forms says for the Quadlets
+allowlist_units() {
+  sed -i "s|^SYNC_ALLOWED_ACCOUNTS=.*|SYNC_ALLOWED_ACCOUNTS=$1|" .env
+  ./prepare_environment.sh --render-units < /dev/null > "render-allowlist.log" 2>&1 && fast_admin_checks &&
+    timeout 300 systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-admin.service
+}
+allowlist_units "initial:${INVITED}"
+check "$? $(grep -hcxF "Environment=\"SYNC_ALLOWED_ACCOUNTS=initial:${INVITED}\"" "${QUADLET_DIR}"/firefox-sync-{tokenserver-db-init,admin}.container | paste -sd' ')" "0 1 1" \
+  "SYNC_ALLOWED_ACCOUNTS=initial:<uid> in both units, the init container run again (quadlets)"
+check "$(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'") $(ts_sql "SELECT uid FROM sync_allowed_accounts")" "on ${INVITED}" \
+  "the allowlist on, the uid of initial: on it (quadlets)"
+ts_ins() { ts_sql "INSERT INTO users (service, email, generation, client_state, created_at, nodeid) SELECT s.id, '$1@ffs-podman.invalid', 1, 'aa', 1, n.id FROM services s JOIN nodes n ON n.service = s.id WHERE s.service = 'sync-1.5' AND n.downed = 0" > /dev/null 2>&1
+  ts_sql "SELECT COUNT(*) FROM users WHERE email = '$1@ffs-podman.invalid'"; }
+check "$(ts_ins "${INVITED}") $(ts_ins "${UNINVITED}") $(ts_sql "SELECT uid FROM sync_refused_accounts")" "1 0 ${UNINVITED}" \
+  "the uid on the list gets in, the other one is refused and pending (quadlets)"
+check "$(metrics_show 'ffs_sync_pending_accounts 1')" all "the admin UI counts it pending (quadlets)"
+for _ in $(seq 1 30); do [ "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'sign-up refused' AND detail LIKE 'Sync: account ${UNINVITED} %'")" = 1 ] && break; sleep 1; done
+check "$(admin_db_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'sign-up refused' AND detail LIKE 'Sync: account ${UNINVITED} %'")" 1 "and records the refusal (quadlets)"
+# back to off, as before
+ts_sql "DELETE FROM users WHERE email LIKE '%@ffs-podman.invalid'; DELETE FROM sync_refused_accounts" > /dev/null
+cp -p "${WORK}/before-allowlist.env" .env
+allowlist_units ""
+check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'") $(ts_ins "${UNINVITED}")" "0 off 1" "SYNC_ALLOWED_ACCOUNTS empty again: off, every account gets in (quadlets)"
+ts_sql "DELETE FROM users WHERE email LIKE '%@ffs-podman.invalid'" > /dev/null
+check "$(hb)" 200 "/__heartbeat__ after the allowlist (quadlets)"
 
 echo "== the units of the running install rendered again from its .env: a setting changed, an image pinned"
 cp -p .env "${WORK}/rendered.env"
@@ -979,7 +1027,7 @@ mariadb_sql
 rm -f .env
 # answers as setup, admin UI: n, the accounts and your own server: no, the nightly backups:
 # yes. The Sync server starts without ffs-admin to resolve (the port as address and port)
-printf '%s\n' ffs-e2e.invalid "" "127.0.0.1:${PORT}" 1 mariadb 1 "" "${TAG}" n "" "" y | ./prepare_environment.sh > setup-no-admin.log 2>&1
+printf '%s\n' ffs-e2e.invalid "" "127.0.0.1:${PORT}" 1 mariadb 1 "" "${TAG}" n "" "" "" y | ./prepare_environment.sh > setup-no-admin.log 2>&1
 check "$?" 0 "prepare_environment.sh (quadlets, no admin UI)"
 check "$(env_of COMPOSE_PROFILES) $(systemctl --user is-enabled firefox-sync-backup.timer 2> /dev/null)" "backup enabled" \
   "the nightly backups chosen: COMPOSE_PROFILES=backup, the backup timer enabled (quadlets)"
@@ -1014,7 +1062,7 @@ check "$(sed -n 's/^Image=//p' "${QUADLET_DIR}"/firefox-sync-{syncstorage-db,tok
   "docker.io/library/mysql:lts docker.io/library/mysql:lts docker.io/library/mysql:lts mysql:lts" "MySQL lts database and backup units for a new install"
 check "$(ls "${QUADLET_DIR}"/firefox-sync-*-db*.volume 2> /dev/null | xargs -n1 basename | LC_ALL=C sort | paste -sd' ')" \
   "firefox-sync-syncstorage-db-mysql.volume firefox-sync-tokenserver-db-mysql.volume" "MySQL's own volumes, not MariaDB's"
-check "$(grep -hcxE 'Exec=sh /ffs-db/admin-user\.sh mysqld --disable-log-bin|HealthCmd=MYSQL_PWD=\$\$\{MYSQL_PASSWORD\} mysqladmin ping -h 127\.0\.0\.1 --protocol=tcp -u(syncstorage|tokenserver) --silent' "${QUADLET_DIR}"/firefox-sync-{syncstorage,tokenserver}-db.container | paste -sd' ')" \
+check "$(grep -hcxE 'Exec=sh /ffs-db/admin-user\.sh mysqld --disable-log-bin --myisam-recover-options=BACKUP,FORCE|HealthCmd=MYSQL_PWD=\$\$\{MYSQL_PASSWORD\} mysqladmin ping -h 127\.0\.0\.1 --protocol=tcp -u(syncstorage|tokenserver) --silent' "${QUADLET_DIR}"/firefox-sync-{syncstorage,tokenserver}-db.container | paste -sd' ')" \
   "2 2" "MySQL without binary logging, healthcheck over TCP (the password in its environment, not on its command line)"
 check "$(grep -cxF 'Environment=MARIADB_TLS_VERIFY=false' "${QUADLET_DIR}/firefox-sync-tokenserver-db-init.container")" 1 "init container does not check MySQL's self-signed certificate"
 check "$(grep -l '%[A-Z_]*%' "${QUADLET_DIR}"/firefox-sync-* | wc -l)" 0 "no unreplaced placeholders in the MySQL quadlets"
@@ -1048,7 +1096,7 @@ if [ "${SYNC_DB}" != postgres ]; then
   # your own PostgreSQL server: no database unit, nothing depends on one
   # (answers as setup, then: your own server? host, port, database, user)
   rm -f .env
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 postgres 1 "" "${TAG}" "" "" y pg.ffs-e2e.invalid "" "" "" "" n | ./prepare_environment.sh > setup-postgres-external.log 2>&1
+  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 postgres 1 "" "${TAG}" "" "" "" y pg.ffs-e2e.invalid "" "" "" "" n | ./prepare_environment.sh > setup-postgres-external.log 2>&1
   check "$? $(ls "${QUADLET_DIR}"/firefox-sync-*-db.* 2> /dev/null | wc -l) $(grep -hE '^(After|Requires)=.*-db\.service' "${QUADLET_DIR}"/firefox-sync-* | wc -l)" "0 0 0" \
     "your own PostgreSQL server: no database unit, no dependency on one (quadlets)"
   check "$(unit_count '^Environment="?(SYNC_SYNCSTORAGE__DATABASE_URL=postgres://syncserver:[A-Za-z0-9]+@pg\.ffs-e2e\.invalid:5432/syncserver|POSTGRES_SERVER=pg\.ffs-e2e\.invalid|POSTGRES_SYNC_USER=|TOKENSERVER_DB_HOST=pg\.ffs-e2e\.invalid)"?$' \
@@ -1088,7 +1136,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
       extdb_admin < database-setup.sql
     fi
   }
-  # answers as above, no accounts, then: your own server? host, port, the databases and users
+  # answers as above, no accounts, not invite-only, then: your own server? host, port, the databases and users
   # (MariaDB, MySQL: tokenserver database and user, storage database and user; PostgreSQL: the
   # database and its user), the alerts' destination, the nightly backups: yes
   rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
@@ -1097,7 +1145,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   # the account ffs_sync_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
   ext_bootstrap=()
   [ -n "${DB_BOOTSTRAP:-}" ] && ext_bootstrap=(y "" "")
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n y "${EXTDB}" "" "${ext_names[@]}" "" y "${ext_bootstrap[@]}" \
+  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n "" y "${EXTDB}" "" "${ext_names[@]}" "" y "${ext_bootstrap[@]}" \
     | ./prepare_environment.sh > setup-external.log 2>&1
   check "$?" 0 "prepare_environment.sh (quadlets, your own ${SYNC_DB} server)"
   check "$(env_of SYNC_DB_CONTAINERS) $(ls "${QUADLET_DIR}"/firefox-sync-*-db.* 2> /dev/null | wc -l)" "0 0" "SYNC_DB_CONTAINERS=0, no database quadlets"

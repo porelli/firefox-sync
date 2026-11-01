@@ -266,7 +266,7 @@ check "$(DOCKER_HOST=unix:///run/user/1000/podman/podman.sock compose_on_podman 
 mkdir -p "${WORK}/named" && printf 'COMPOSE_PROJECT_NAME=kept\n' > "${WORK}/named/.env"
 check "$(unset COMPOSE_PROJECT_NAME; SCRIPT_DIR=${WORK}/named compose_project)" kept "compose_project: COMPOSE_PROJECT_NAME of .env"
 
-echo "== setup/validate.sh: limits, database names, hosts, ports (valid_limit, valid_name, valid_host, valid_port)"
+echo "== setup/validate.sh: limits, database names, hosts, ports, uids (valid_limit, valid_name, valid_host, valid_port, valid_uids)"
 for v in 0 1 2147483647 unlimited; do check "$( (valid_limit "max users" "${v}") && echo ok)" ok "valid_limit accepts ${v}"; done
 for v in "" -1 1.5 initial:4 2147483648 99999999999 lots; do
   check "$( (valid_limit "max users" "${v}") > /dev/null; echo $?)" 1 "valid_limit refuses '${v}' (exit 1)"
@@ -280,6 +280,12 @@ for v in "" localhost 127.0.0.1 0.0.0.0 ::1 fe80::1 "db example" 'db;x'; do
   check "$( (valid_host "${v}") > /dev/null; echo $?)" 1 "valid_host refuses '${v}'"
 done
 check "$( (valid_port 3306) && echo ok) $( (valid_port "") > /dev/null; echo $?) $( (valid_port 33a) > /dev/null; echo $?)" "ok 1 1" "valid_port: digits only"
+# the uids of SYNC_ALLOWED_ACCOUNTS without the admin UI: as the init container takes them, lowercase, no spaces
+U1=0123456789abcdef0123456789abcdef U2=fedcba9876543210fedcba9876543210
+check "$(valid_uids "${U1}") $(valid_uids " ${U1}, FEDCBA9876543210FEDCBA9876543210 ,")" "${U1} ${U1},${U2}" "valid_uids: lowercase, without spaces"
+for v in "" " , " "${U1},abc" "${U1}0" "g${U1:1}" "${U1};drop"; do
+  check "$(valid_uids "${v}" 2> /dev/null; echo $?)" 1 "valid_uids refuses '${v}'"
+done
 
 echo "== setup/databases.sh: database-setup.sql of your own server (render_sync_sql, db/db-setup.sh print)"
 mkdir -p "${WORK}/sql" && cp -r "${CODE}/db" "${WORK}/sql/"

@@ -71,7 +71,8 @@ class Admin:
         page = self.get(path)
         action = re.search(r'<form method="post" action="([^"]+)" id="confirm">', page)
         assert action and 'id="cancel">Cancel</a>' in page, page[:3000]
-        fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', page.split('id="confirm">')[1]))
+        # (as a browser reads them: a note with a quote is &#39; in the page)
+        fields = {k: html.unescape(v) for k, v in re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', page.split('id="confirm">')[1])}
         res = self.http.post(f"{ADMIN}{action.group(1).replace('&amp;', '&')}", data={**fields, **form}, timeout=60)
         assert res.status_code == 200, res.text[:500]
         if ok:

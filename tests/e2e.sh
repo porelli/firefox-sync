@@ -1415,6 +1415,93 @@ check "$?" 0 "admin UI sign-in tests"
 check "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'X-Test-Email: admin@ffs-e2e.invalid' \
   "http://127.0.0.1:$((PORT + 20))/")" "303 http://127.0.0.1:$((PORT + 20))/login" "admin UI ignores the header of an untrusted peer"
 
+echo "== invite-only Sync (SYNC_ALLOWED_ACCOUNTS): the mock FxA's accounts by their uids, the admin UI"
+# (the uids of tests/test_sync_allowlist.py)
+LISTED_UID=$(printf 'a1%.0s' $(seq 16))
+allowed_on() { sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts';"; }
+allowed_list() { sql "SELECT uid FROM sync_allowed_accounts ORDER BY uid;" | paste -sd' '; }
+redeploy_allowed() { set_env SYNC_ALLOWED_ACCOUNTS "$1"; dc up -d > /dev/null 2>&1; INIT_CODE=$(wait_init); }
+users_triggers() { sql "SELECT COUNT(*) FROM information_schema.triggers WHERE event_object_table = 'users';"; }
+check "$(allowed_on) $(users_triggers)" "off 1" \
+  "off by default (SYNC_ALLOWED_ACCOUNTS empty): no trigger of it, max users' alone (no table it could write that is not transactional)"
+MAX_BEFORE=$(max_users)
+sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users';" > /dev/null
+admin_pytest "/tests/test_sync_allowlist.py -k sync_while_off"
+check "$?" 0 "an account syncs before the allowlist"
+redeploy_allowed "initial:${LISTED_UID}"
+check "${INIT_CODE} $(allowed_on) $(allowed_list) $(users_triggers)" "0 on ${LISTED_UID} 2" "SYNC_ALLOWED_ACCOUNTS=initial:<uid>: on, the uid on the list, its trigger next to that of max users"
+# the refusals' table: Aria on MariaDB (crash-safe), MyISAM on the stack's MySQL (no binary
+# logging, myisam_recover_options), InnoDB on your own MySQL with binary logging (not recorded)
+if [ "${BACKEND}" = mysql ]; then
+  refused_engine=Aria
+  [ "${DATABASE_SERVER}" = MySQL ] && refused_engine=MyISAM
+  [ -n "${EXTDB}" ] && refused_engine=InnoDB
+  check "$(sql "SELECT engine FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sync_refused_accounts';")" "${refused_engine}" \
+    "the refusals kept in ${refused_engine}"
+  [ "${DATABASE_SERVER}" = MySQL ] && [ -z "${EXTDB}" ] && check "$(sql "SELECT @@myisam_recover_options;")" "BACKUP,FORCE" "the stack's MySQL recovers MyISAM tables after a crash"
+fi
+check "$(dc logs tokenserver_db_init 2>&1 | grep -c "SYNC_ALLOWED_ACCOUNTS=initial:${LISTED_UID}: invite-only, 1 accounts allowed, managed in the admin UI")" 1 "the init container says so"
+check "$(hb) $(admin_healthy)" "200 healthy" "/__heartbeat__ and the admin UI with the allowlist"
+# InnoDB (your own MySQL here): refused, not recorded, and said
+no_pending=0
+[ "${refused_engine:-}" = InnoDB ] && no_pending=1
+check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'accounts refused by SYNC_ALLOWED_ACCOUNTS are refused but not listed')" "${no_pending}" \
+  "the init container warns when the refusals cannot be recorded (here: ${no_pending})"
+admin_pytest "/tests/test_sync_allowlist.py -k 'not read_only and not sync_while_off'"
+check "$?" 0 "invite-only Sync tests (listed, refused and pending, approved, keys change, from before, reject, allow and remove, max users, the node's load)"
+# initial: kept what the page changed
+rerun_init > /dev/null
+check "$(allowed_list | wc -w)" 4 "initial:<uid> keeps the uids approved in the admin UI on a restart"
+# initial: once: a uid of it removed in the admin UI stays removed, also after off and on again
+sql "DELETE FROM sync_allowed_accounts WHERE uid = '${LISTED_UID}';" > /dev/null
+redeploy_allowed ""
+redeploy_allowed "initial:${LISTED_UID}"
+check "${INIT_CODE} $(allowed_on) $(allowed_list | grep -c "${LISTED_UID}")" "0 on 0" "initial:<uid> applies once: a uid removed since is not added again"
+# the node's load counted again at every start (a refused try counts in it)
+node_load() { sql "SELECT n.current_load - (SELECT COUNT(DISTINCT u.email) FROM users u WHERE u.nodeid = n.id AND u.replaced_at IS NULL) FROM nodes n WHERE n.node = '${SYNC_PUBLIC_URL}';"; }
+sql "UPDATE nodes SET current_load = current_load + 3 WHERE node = '${SYNC_PUBLIC_URL}';" > /dev/null
+check "$(node_load) $(rerun_init) $(node_load)" "3 0 0" "the init container counts the node's load again from its accounts"
+# a plain list: set on every start, the others go; read-only in the admin UI
+redeploy_allowed "${LISTED_UID}"
+check "${INIT_CODE} $(allowed_on) $(allowed_list)" "0 on ${LISTED_UID}" "SYNC_ALLOWED_ACCOUNTS=<uid>: exactly that list, set on every start"
+admin_pytest "/tests/test_sync_allowlist.py -k read_only"
+check "$?" 0 "admin UI: the allowlist read-only with a plain list, Reject works"
+echo "== SYNC_ALLOWED_ACCOUNTS not valid: the init container fails, nothing changes"
+for bad in "fixed:" "xyz" "${LISTED_UID},12345" "initial:${LISTED_UID}0" "admin,${LISTED_UID}"; do
+  set_env SYNC_ALLOWED_ACCOUNTS "${bad}"
+  check "$(rerun_init)" 1 "init container fails with SYNC_ALLOWED_ACCOUNTS=${bad}"
+done
+check "$(dc logs tokenserver_db_init 2>&1 | grep -c "SYNC_ALLOWED_ACCOUNTS='admin,${LISTED_UID}' is not valid: 'admin' is not an account id")" 1 "init container says why"
+check "$(allowed_on) $(allowed_list)" "on ${LISTED_UID}" "the allowlist unchanged by a SYNC_ALLOWED_ACCOUNTS not valid"
+echo "== a database that ran 6356fcd (this branch's first version): its refusals' table without reported_at and id"
+LEGACY_PENDING=$(printf 'a3%.0s' $(seq 16)) LEGACY_UID=$(printf 'a2%.0s' $(seq 16))
+legacy_table="CREATE TABLE sync_refused_accounts (uid VARCHAR(64) PRIMARY KEY, first_at BIGINT NOT NULL, last_at BIGINT NOT NULL,
+  attempts INT NOT NULL DEFAULT 1, rejected_at BIGINT NULL, rejected_by VARCHAR(255) NULL)"
+legacy_rows="INSERT INTO sync_refused_accounts VALUES ('${LEGACY_PENDING}', 1, 2, 3, NULL, NULL); DELETE FROM config WHERE config_key = 'allowed_accounts_initial';"
+if [ "${BACKEND}" = mysql ]; then
+  sql "DROP TRIGGER IF EXISTS BeforeInsertAllowedUser; DROP TABLE sync_refused_accounts; ${legacy_table} ENGINE=MyISAM DEFAULT CHARSET=utf8mb4; ${legacy_rows}" > /dev/null
+  columns() { sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'sync_refused_accounts' AND column_name IN ('reported_at', 'id');"; }
+else
+  sync_role_sql "DROP TRIGGER IF EXISTS before_insert_allowed_user ON users; DROP TABLE sync_refused_accounts; ${legacy_table}; ${legacy_rows}" > /dev/null
+  columns() { sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sync_refused_accounts' AND column_name IN ('reported_at', 'id');"; }
+fi
+check "$? $(columns)" "0 0" "the table of 6356fcd made again, with a pending refusal"
+# (its allowlist had uids then: LISTED_UID, of the plain list above)
+redeploy_allowed "initial:${LEGACY_UID}"
+check "${INIT_CODE} $(columns) $(sql "SELECT COUNT(*) FROM sync_refused_accounts WHERE uid = '${LEGACY_PENDING}';") $(allowed_list | grep -c "${LEGACY_UID}")" "0 2 1 0" \
+  "the new init adds reported_at and id, keeps the refusal, and does not take initial: as new there"
+legacy_events() { admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'sign-up refused' AND detail LIKE 'Sync: account ${LEGACY_PENDING} %';"; }
+for _ in $(seq 1 30); do [ "$(legacy_events)" = 1 ] && break; sleep 1; done
+check "$(legacy_events) $(metrics_show "ffs_sync_pending_accounts $(sql "SELECT COUNT(*) FROM sync_refused_accounts WHERE uid <> '*dropped*' AND rejected_at IS NULL;")")" "1 yes" \
+  "the admin UI reads it: its refusal reported once, the pending ones counted"
+sql "DELETE FROM sync_refused_accounts WHERE uid = '${LEGACY_PENDING}';" > /dev/null
+# off again, max users as it was: every account gets in
+redeploy_allowed ""
+check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 off 1" "SYNC_ALLOWED_ACCOUNTS empty again: off, its trigger gone"
+sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_users';" > /dev/null
+# (the admin UI recreated: settled, its checks seeing the Sync server, before the next phase)
+check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1')" "200 healthy yes" "/__heartbeat__ and the admin UI after the allowlist"
+
 echo "== admin UI sees the Sync server go down and back up"
 health_events() { admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'health' AND detail LIKE '$1';"; }
 # the start already has one of each (the admin UI starts first): more than before
