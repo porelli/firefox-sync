@@ -28,7 +28,7 @@ Environment="PUSHBOX_MYSQL_HOST=%FXA_MYSQL_HOST%"
 Environment="PUSHBOX_MYSQL_PORT=%FXA_MYSQL_PORT%"
 Environment="PUSHBOX_MYSQL_USERNAME=%FXA_MYSQL_USER%"
 Environment="PUSHBOX_MYSQL_PASSWORD=%FXA_MYSQL_PASSWORD%"
-Exec=sh -c 'cd /fxa/packages/db-migrations && for i in $$(seq 1 60); do node bin/patcher.mjs && exit 0; sleep 5; done; exit 1'
+Exec=sh -c 'cd /fxa/packages/db-migrations && for i in $$(seq 1 60); do out=$$(node bin/patcher.mjs 2>&1) && { echo "$$out"; exit 0; }; echo "$$out"; case "$$out" in *"Access denied for user"*) echo "the accounts database refused the user or its grants: not retried" >&2; exit 1 ;; esac; sleep 5; done; exit 1'
 
 AutoUpdate=registry
 

@@ -574,6 +574,14 @@ fxa_objects_lint() {
     and (.spec.initContainers[] | select(.name == "policy") | .args == ["fxa-init"] and .image == "ghcr.io/porelli/firefox-sync:admin-latest")
     and (.metadata.annotations | (.["checksum/fxa-config"] | test("^[0-9a-f]{64}$")) and (.["checksum/secrets"] | test("^[0-9a-f]{64}$")))' <<< "${out}" > /dev/null \
     || fail "auth: working dirs, probe, policy or checksums: ${out}"
+  # the migrations' command: compose's and the Quadlet's, verbatim (retried while the server
+  # does not answer, not after a refused sign-in)
+  local mig
+  mig=$(jq -r '.spec.initContainers[] | select(.name == "migrations") | .args[2]' <<< "${out}")
+  [[ "${mig}" == *'"Access denied for user"*) '* ]] || fail "auth's migrations retry a refused sign-in: ${mig}"
+  grep -qF -- "command: [sh, -c, '${mig}']" "${REPO_ROOT}/compose/fxa.yml" || fail "auth's migrations are not compose's fxa-migrations: ${mig}"
+  grep -qF -- "Exec=sh -c 'cd /fxa/packages/db-migrations && ${mig}'" "${REPO_ROOT}/config/quadlet/fxa/firefox-sync-fxa-migrations.container" \
+    || fail "auth's migrations are not the Quadlet's firefox-sync-fxa-migrations: ${mig}"
   [[ "$(fxa_auth_pod --set existingSecret=mine | jq -r '.metadata.annotations | has("checksum/secrets")')" == false ]] || fail "existingSecret: checksum/secrets of a Secret the chart does not have"
   # the policy: your own server's policy user and its password, else FxA's user's pair
   fxa_policy_env() { jq -c '[.spec.initContainers[] | select(.name == "policy") | .env[] | select(.name | test("^FXA_(DB_ROOT|SIGNUP|MAX)"))
@@ -1241,12 +1249,17 @@ fxa_e2e_main() {
   good=$(kubectl get secret "${SECRET}" -o jsonpath='{.data.FXA_MYSQL_PASSWORD}')
   kubectl patch secret "${SECRET}" --type merge -p "{\"data\":{\"FXA_MYSQL_PASSWORD\":\"$(printf wrong | base64)\"}}"
   kubectl delete pod -l "${POD_SELECTOR}" --wait=true
-  # (the first failure, after the migrations' 60 tries, is rerun at once: Init:Error lasts a
-  # moment, then Init:2/5 again, Init:CrashLoopBackOff from the second one on)
-  # (your own server: db-bootstrap, which signs in first as the accounts' user, stops it there)
-  local failing=migrations
+  # (a refused sign-in is not retried: the migrations fail at their first try, Init:Error
+  # for a moment, then Init:CrashLoopBackOff as Kubernetes reruns them; your own server:
+  # db-bootstrap, which signs in first as the accounts' user, stops it there)
+  local failing=migrations t0=${SECONDS}
   [[ -z ${external} ]] || failing="db-bootstrap"
-  wait_init_failed "${failing}" 600 || fail "the auth pod's ${failing} did not fail"
+  wait_init_failed "${failing}" 120 || fail "the auth pod's ${failing} did not fail within 120 s (a refused sign-in retried?)"
+  if [[ -z ${external} ]]; then
+    # (this run's log, or the last one's once Kubernetes reruns them)
+    mig_log() { { kubectl logs -l "${POD_SELECTOR}" -c migrations --tail=20; kubectl logs -l "${POD_SELECTOR}" -c migrations --tail=20 --previous; } 2> /dev/null; }
+    mig_log | grep -q "not retried" || fail "the migrations' log does not say the refused sign-in is not retried: $(mig_log)"
+  fi
   [[ "$(pod_status)" =~ ^Init: ]] || fail "the auth pod is $(pod_status), not in its init containers"
   MATCHED_STATUS=$(pod_status)
   inits=$(kubectl get pods -l "${POD_SELECTOR}" -o json | jq -r '.items[0].status.initContainerStatuses[]
@@ -1260,7 +1273,7 @@ fxa_e2e_main() {
     sleep 5
   done
   [[ "$(pod_status)" =~ ^Init: ]] || fail "the auth pod is $(pod_status) 30 s later, not in its init containers"
-  check "wrong FXA_MYSQL_PASSWORD: auth in ${MATCHED_STATUS} (${inits}), no ready endpoint for 30 s"
+  check "wrong FXA_MYSQL_PASSWORD: ${failing} stops at the refused sign-in, not retried ($((SECONDS - t0)) s), auth in ${MATCHED_STATUS} (${inits}), no ready endpoint for 30 s"
   kubectl patch secret "${SECRET}" --type merge -p "{\"data\":{\"FXA_MYSQL_PASSWORD\":\"${good}\"}}"
   kubectl delete pod -l "${POD_SELECTOR}" --wait=true
   kubectl wait --for=condition=Ready pod -l "${POD_SELECTOR}" --timeout=15m || fail "auth not Ready after restoring the password"
