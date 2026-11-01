@@ -71,7 +71,7 @@ class Branch(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         git(self.root, "init", "-q", "-b", "main")
-        commit(self.root, {"admin/web.go": "package main\n", "docs/a.md": "# A\n"}, "init")
+        commit(self.root, {"admin/web.go": "package main\n", "docs/a.txt": "# A\n"}, "init")
         git(self.root, "checkout", "-q", "-b", "topic")
 
     def tearDown(self):
@@ -86,7 +86,7 @@ class Branch(unittest.TestCase):
 
     def test_docs_in_another_commit(self):
         commit(self.root, {"admin/web.go": "package main // x\n"}, "feat: x")
-        commit(self.root, {"docs/a.md": "# A\nmore\n"}, "docs: x")
+        commit(self.root, {"docs/a.txt": "# A\nmore\n"}, "docs: x")
         self.assertEqual(run(self.root), (0, ""))
 
     def test_docs_none(self):
@@ -95,7 +95,7 @@ class Branch(unittest.TestCase):
 
     def test_push_range(self):
         # the base of a push: only what that push brought; the docs of an earlier push do not count
-        commit(self.root, {"docs/a.md": "# A\nmore\n"}, "docs: x")
+        commit(self.root, {"docs/a.txt": "# A\nmore\n"}, "docs: x")
         git(self.root, "tag", "pushed")
         commit(self.root, {".env-example": "X=1\n"}, "feat: x")
         code, out = run(self.root, "--base", "pushed")
