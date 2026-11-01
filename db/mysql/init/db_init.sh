@@ -33,6 +33,7 @@ echo "Firefox Sync Database Initialization"
 echo "=========================================="
 echo "Domain: ${DOMAIN}"
 echo "Max Users: ${MAX_USERS:-}"
+echo "Allowed accounts: ${SYNC_ALLOWED_ACCOUNTS:-(everyone)}"
 echo "Database: ${MARIADB_DATABASE}"
 echo "=========================================="
 
@@ -76,6 +77,84 @@ if ! parse_max_users "${MAX_USERS:-}"; then
   exit 1
 fi
 [ "${MAX_USERS_MODE}" = fixed ] && MAX_USERS_FIXED=1 || MAX_USERS_FIXED=0
+
+# SYNC_ALLOWED_ACCOUNTS (docs/limits.md#sync_allowed_accounts), invite-only Sync: empty is off,
+# everyone gets in. uid,uid... or fixed:uid,...: the list, set again on every start (read-only
+# in the admin UI). initial:uid,... (admin: initial: with none): those added when the allowlist
+# turns on (first start, new database), then managed in the admin UI. A uid is 32 hexadecimal
+# characters (lowercased here). Anything else stops here, like SYNC_MAX_USERS
+parse_allowed_accounts() {
+  local value=${1//[[:space:]]/} list uid parts=()
+  ALLOWED_MODE=off ALLOWED_UIDS=() ALLOWED_BAD=""
+  case "${value}" in
+    "") return 0 ;;
+    admin) ALLOWED_MODE=initial; return 0 ;;
+    initial:*) ALLOWED_MODE=initial; list=${value#initial:} ;;
+    fixed:*) ALLOWED_MODE=fixed; list=${value#fixed:} ;;
+    *) ALLOWED_MODE=fixed; list=${value} ;;
+  esac
+  IFS=, read -r -a parts <<< "${list}"
+  for uid in ${parts[@]+"${parts[@]}"}; do
+    [ -n "${uid}" ] || continue
+    uid=${uid,,}
+    [[ "${uid}" =~ ^[0-9a-f]{32}$ ]] || { ALLOWED_BAD=${uid}; return 1; }
+    ALLOWED_UIDS+=("${uid}")
+  done
+  [ "${ALLOWED_MODE}" = initial ] || [ "${#ALLOWED_UIDS[@]}" -gt 0 ]
+}
+
+if ! parse_allowed_accounts "${SYNC_ALLOWED_ACCOUNTS:-}"; then
+  if [ -n "${ALLOWED_BAD}" ]; then
+    echo "✗ ERROR: SYNC_ALLOWED_ACCOUNTS='${SYNC_ALLOWED_ACCOUNTS}' is not valid: '${ALLOWED_BAD}' is not an account id"
+    echo "  (32 hexadecimal characters, docs/limits.md#find-the-uid-of-an-account)"
+  else
+    echo "✗ ERROR: SYNC_ALLOWED_ACCOUNTS='${SYNC_ALLOWED_ACCOUNTS}' lists no account id: give the uids, comma-separated,"
+    echo "  admin to approve them in the admin UI, or leave it empty to let everyone in"
+  fi
+  exit 1
+fi
+
+# allowed_sql: the statements of SYNC_ALLOWED_ACCOUNTS, after allowlist.sql. The list and on or
+# off in one transaction (sync_allowed_accounts is InnoDB): fixed: exactly these uids; initial:
+# these uids once, the first time an initial: list is applied (allowed_accounts_initial records
+# it, as max_users' row does for SYNC_MAX_USERS=initial:; admin and fixed: do not set it). The trigger only while it is on (with it off,
+# no trigger that could write a non-transactional table), created once and kept (its body only
+# calls ffs_check_allowed_account): no start leaves the users table without it. Then the
+# nodes' load counted again (every start, the allowlist on or off)
+allowed_sql() {
+  local uid rows="" now="CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS SIGNED)" first
+  for uid in ${ALLOWED_UIDS[@]+"${ALLOWED_UIDS[@]}"}; do
+    rows="${rows:+${rows} UNION ALL }SELECT '${uid}' AS uid"
+  done
+  first="NOT EXISTS (SELECT 1 FROM config WHERE config_key = 'allowed_accounts_initial')"
+  # the trigger first: DDL commits by itself, and an 'on' committed before it would let an
+  # unlisted account in, for good (it then has a row). Early it checks nothing: its procedure
+  # reads allowed_accounts
+  if [ "${ALLOWED_MODE}" != off ] && [ "${ALLOWED_TRIGGER}" = 0 ]; then
+    printf '%s\n' "DELIMITER //" "CREATE TRIGGER BeforeInsertAllowedUser BEFORE INSERT ON users FOR EACH ROW PRECEDES BeforeInsertUser" \
+      "BEGIN CALL ffs_check_allowed_account(NEW.email); END //" "DELIMITER ;"
+  fi
+  echo "START TRANSACTION;"
+  if [ "${ALLOWED_MODE}" = fixed ]; then
+    echo "DELETE FROM sync_allowed_accounts WHERE uid NOT IN ($(printf "'%s'," "${ALLOWED_UIDS[@]}" | sed 's/,$//'));"
+    echo "INSERT IGNORE INTO sync_allowed_accounts (uid, note, added_at, added_by) SELECT v.uid, '', ${now}, 'SYNC_ALLOWED_ACCOUNTS' FROM (${rows}) v;"
+  elif [ -n "${rows}" ]; then
+    echo "INSERT IGNORE INTO sync_allowed_accounts (uid, note, added_at, added_by) SELECT v.uid, '', ${now}, 'SYNC_ALLOWED_ACCOUNTS' FROM (${rows}) v WHERE ${first};"
+  fi
+  # (initial: with uids; admin is initial: without)
+  if [ "${ALLOWED_MODE}" = initial ] && [ -n "${rows}" ]; then
+    echo "INSERT IGNORE INTO config (config_key, config_value) VALUES ('allowed_accounts_initial', 'applied');"
+  fi
+  echo "INSERT INTO config (config_key, config_value) VALUES ('allowed_accounts', '$([ "${ALLOWED_MODE}" = off ] && echo off || echo on)')"
+  echo "  ON DUPLICATE KEY UPDATE config_value = VALUES(config_value);"
+  echo "COMMIT;"
+  if [ "${ALLOWED_MODE}" = off ]; then
+    echo "DROP TRIGGER IF EXISTS BeforeInsertAllowedUser;"
+  else
+    [ -z "${rows}" ] || echo "DELETE FROM sync_refused_accounts WHERE uid IN (SELECT uid FROM sync_allowed_accounts);"
+  fi
+  echo "CALL ffs_resync_node_load(NULL);"
+}
 
 # MARIADB_TLS_VERIFY=false: MySQL's certificate is self-signed, which this client refuses
 # by default; syncstorage-rs itself connects without TLS (docs/databases.md#server-requirements)
@@ -202,6 +281,88 @@ SQL
 }
 record_setup || { echo "✗ ERROR: Failed to record the setup migrations"; exit 1; }
 
+# the allowlist (allowlist.sql, then SYNC_ALLOWED_ACCOUNTS). With it on, the refusals are kept
+# in a table whose rows outlive the SIGNAL that refuses the account: Aria on MariaDB (crash-safe),
+# MyISAM on MySQL when it is safe there, else InnoDB, where the accounts are refused but not
+# listed as pending (docs/limits.md#sync_allowed_accounts):
+# - MySQL with binary logging and enforce_gtid_consistency (on by default with binary logging
+#   in MySQL 9; the stack's MySQL has none) refuses every INSERT into users once a trigger could
+#   write MyISAM;
+# - MyISAM is not crash-safe: only with myisam_recover_options set (the stack's MySQL has
+#   BACKUP,FORCE), and checked and repaired here;
+# - a server that gives another engine (enforce_storage_engine, disabled_storage_engines), or
+#   any of these that cannot be read: InnoDB.
+# Checked on every start: a table of before changes engine.
+echo "Applying the allowlist (SYNC_ALLOWED_ACCOUNTS)..."
+# a table of before (6356fcd, the allowlist on or off then): its columns since, and its initial:
+# uids, if any, added then, not again (it had no allowed_accounts_initial)
+column_of() { db "${MARIADB_DATABASE}" -sN -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'sync_refused_accounts' AND column_name = '$1';"; }
+if [ "$(db "${MARIADB_DATABASE}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sync_refused_accounts';")" = 1 ]; then
+  if [ "$(column_of reported_at)" = 0 ]; then
+    echo "  sync_refused_accounts of before: reported_at added"
+    db "${MARIADB_DATABASE}" -e "INSERT IGNORE INTO config (config_key, config_value) SELECT 'allowed_accounts_initial', 'applied' FROM DUAL WHERE EXISTS (SELECT 1 FROM sync_allowed_accounts);
+      ALTER TABLE sync_refused_accounts ADD COLUMN reported_at BIGINT NULL;" || { echo "✗ ERROR: Failed to add reported_at to sync_refused_accounts"; exit 1; }
+  fi
+  if [ "$(column_of id)" = 0 ]; then
+    db "${MARIADB_DATABASE}" -e "ALTER TABLE sync_refused_accounts ADD COLUMN id BIGINT NOT NULL AUTO_INCREMENT UNIQUE;" \
+      || { echo "✗ ERROR: Failed to add id to sync_refused_accounts"; exit 1; }
+  fi
+fi
+engine_of() { db "${MARIADB_DATABASE}" -sN -e "SELECT engine FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sync_refused_accounts';" 2> /dev/null; }
+ALLOWED_TRIGGER=0
+if [ "${ALLOWED_MODE}" != off ]; then
+  refused_engine=InnoDB why=""
+  if [ "$(db "${MARIADB_DATABASE}" -sN -e "SELECT VERSION() LIKE '%MariaDB%';" 2> /dev/null)" = 1 ]; then
+    refused_engine=Aria
+  elif [ "$(db "${MARIADB_DATABASE}" -sN -e "SELECT (@@log_bin = 0 OR @@enforce_gtid_consistency = 'OFF') AND @@myisam_recover_options <> 'OFF';" 2> /dev/null)" = 1 ]; then
+    refused_engine=MyISAM
+  else
+    why="MySQL with binary logging and enforce_gtid_consistency, or without myisam_recover_options"
+  fi
+  refused_table="CREATE TABLE IF NOT EXISTS sync_refused_accounts (uid VARCHAR(64) PRIMARY KEY, first_at BIGINT NOT NULL,
+    last_at BIGINT NOT NULL, attempts INT NOT NULL DEFAULT 1, rejected_at BIGINT NULL, rejected_by VARCHAR(255) NULL, reported_at BIGINT NULL,
+    id BIGINT NOT NULL AUTO_INCREMENT UNIQUE)"
+  db "${MARIADB_DATABASE}" -e "${refused_table} ENGINE=${refused_engine} DEFAULT CHARSET=utf8mb4;" 2> /dev/null \
+    || db "${MARIADB_DATABASE}" -e "${refused_table} DEFAULT CHARSET=utf8mb4;" || { echo "✗ ERROR: Failed to create sync_refused_accounts"; exit 1; }
+  refused_now=$(engine_of)
+  if [ "${refused_now,,}" != "${refused_engine,,}" ]; then
+    db "${MARIADB_DATABASE}" -e "ALTER TABLE sync_refused_accounts ENGINE=${refused_engine};" 2> /dev/null || true
+    refused_now=$(engine_of)
+  fi
+  if [ "${refused_now,,}" != "${refused_engine,,}" ]; then
+    # (the server substituted another engine, or refused it)
+    why="the server gives ${refused_now:-another engine} for ${refused_engine}"
+    [ "${refused_now,,}" = innodb ] || db "${MARIADB_DATABASE}" -e "ALTER TABLE sync_refused_accounts ENGINE=InnoDB;" \
+      || { echo "✗ ERROR: Failed to move sync_refused_accounts to InnoDB"; exit 1; }
+    refused_now=InnoDB
+  fi
+  if [ "${refused_now,,}" = innodb ]; then
+    [ -n "${why}" ] || why="the server has neither Aria nor a safe MyISAM"
+    echo "WARNING: ${why}: accounts refused by SYNC_ALLOWED_ACCOUNTS are refused but not listed"
+    echo "  as pending in the admin UI (allow them by their uid, docs/limits.md#sync_allowed_accounts)"
+  else
+    # not crash-safe (MyISAM) or crash-recovered (Aria): checked, repaired, else made again (it
+    # only holds refusals)
+    if [ "$(db "${MARIADB_DATABASE}" -sN -e "CHECK TABLE sync_refused_accounts;" | awk -F'\t' '$3 == "status" { print $4 }')" != OK ]; then
+      echo "WARNING: sync_refused_accounts (${refused_now}) did not pass CHECK TABLE: repairing it"
+      db "${MARIADB_DATABASE}" -e "REPAIR TABLE sync_refused_accounts;" > /dev/null || true
+      if [ "$(db "${MARIADB_DATABASE}" -sN -e "CHECK TABLE sync_refused_accounts;" | awk -F'\t' '$3 == "status" { print $4 }')" != OK ]; then
+        echo "WARNING: sync_refused_accounts could not be repaired: made again, its refusals lost"
+        db "${MARIADB_DATABASE}" -e "DROP TABLE sync_refused_accounts; ${refused_table} ENGINE=${refused_now} DEFAULT CHARSET=utf8mb4;" \
+          || { echo "✗ ERROR: Failed to create sync_refused_accounts again"; exit 1; }
+      fi
+    fi
+  fi
+  echo "  refusals kept in ${refused_now}"
+  ALLOWED_TRIGGER=$(db "${MARIADB_DATABASE}" -sN -e "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = DATABASE() AND trigger_name = 'BeforeInsertAllowedUser';")
+fi
+if { cat /scripts/allowlist.sql; allowed_sql; } | db "${MARIADB_DATABASE}"; then
+  echo "✓ Allowlist applied"
+else
+  echo "✗ ERROR: Failed to apply the allowlist (SYNC_ALLOWED_ACCOUNTS)"
+  exit 1
+fi
+
 # Display current status
 current_users=$(db "${MARIADB_DATABASE}" -sN -e 'SELECT COUNT(DISTINCT email) FROM users;')
 
@@ -226,6 +387,12 @@ fi
 echo "After changing SYNC_MAX_USERS in .env:"
 echo "  docker compose up -d   (the init container and the admin UI)"
 echo "  (Quadlets: systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-admin.service)"
+allowed_in_db=$(db "${MARIADB_DATABASE}" -sN -e 'SELECT COUNT(*) FROM sync_allowed_accounts;')
+case "${ALLOWED_MODE}" in
+  off) echo "SYNC_ALLOWED_ACCOUNTS empty: every account can sync (invite-only Sync is off)" ;;
+  fixed) echo "SYNC_ALLOWED_ACCOUNTS: invite-only, the ${allowed_in_db} accounts listed (set on every start, read-only in the admin UI)" ;;
+  initial) echo "SYNC_ALLOWED_ACCOUNTS=${SYNC_ALLOWED_ACCOUNTS//[[:space:]]/}: invite-only, ${allowed_in_db} accounts allowed, managed in the admin UI" ;;
+esac
 echo "=========================================="
 
 exit 0
