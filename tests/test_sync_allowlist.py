@@ -96,12 +96,18 @@ def node_load(db):
         {"node": os.environ["SYNC_PUBLIC_URL"].rstrip("/")}).first())
 
 
-def sync_now(uid, **token):
-    """a token, and a write with it: the account syncs"""
+def sync_now(uid, write=True, **token):
+    """a token, and a write with it: the account syncs. write=False: a read. A second write of
+    the same collection right after one (tens of ms) is refused by the storage server as a
+    conflict (503, body 0, Retry-After: upstream's "do not move the collection's timestamp
+    backwards", which Firefox waits out); a check that an account still syncs reads"""
     res = login(uid, **token)
     assert res.status_code == 200, res.text
     storage = Storage(res.json())
-    res = storage.request("PUT", "/storage/meta/global", {"id": "global", "payload": "{}"})
+    if write:
+        res = storage.request("PUT", "/storage/meta/global", {"id": "global", "payload": "{}"})
+    else:
+        res = storage.request("GET", "/info/collections")
     assert res.status_code == 200, res.text
 
 
@@ -200,8 +206,8 @@ def test_allow_a_uid_and_remove_it(db, admin):
     page, done = admin.confirm(f"/sync/allowlist/remove?uid={BY_HAND}")
     assert "If it syncs already, it keeps working" in page and f"Removed Sync account {BY_HAND} from the allowlist" in done
     assert f'data-uid="{BY_HAND}"' not in table_of(done, "sync-allowed")
-    # it has its rows: it keeps syncing
-    sync_now(BY_HAND)
+    # it has its rows: it keeps syncing (a token, and a read: its write was just now)
+    sync_now(BY_HAND, write=False)
     # a uid that is not one: refused by the form, nothing listed
     res = admin.http.get(f"{ADMIN}/sync/allowlist/allow?uid=bob", timeout=30)
     assert "an account id is 32 hexadecimal characters" in res.text
