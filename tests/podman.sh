@@ -1515,7 +1515,6 @@ if [ -z "${SKIP_FXA:-}" ]; then
   journalctl --user -u firefox-sync-fxa-policy.service --no-pager 2> /dev/null | grep -m1 "sign-ups:"
   check "$(journalctl --user -u firefox-sync-fxa-policy.service --no-pager 2> /dev/null | grep -q 'max accounts: unlimited (FXA_MAX_ACCOUNTS=initial:unlimited' && echo yes)" yes \
     "fxa-policy set max accounts (quadlets)"
-  check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"email":"someone@example.org","authPW":"00"}' http://127.0.0.1:${GATE_PORT}/v1/account/create)" 400 "sign-up gate refuses an email not on the allowlist (quadlets)"
   # the gate reaches the accounts API by its network alias: give it the same time as the checks above
   gate=""
   for _ in $(seq 1 30); do
@@ -1525,6 +1524,8 @@ if [ -z "${SKIP_FXA:-}" ]; then
   done
   check "${gate}" 200 "sign-up gate forwards to the accounts API (quadlets)"
   [ "${gate}" = 200 ] || journalctl --user -u firefox-sync-admin.service --no-pager | tail -15
+  # (once the gate answers its heartbeat: before, a refusal can come back as 503)
+  check "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"email":"someone@example.org","authPW":"00"}' http://127.0.0.1:${GATE_PORT}/v1/account/create)" 400 "sign-up gate refuses an email not on the allowlist (quadlets)"
   # the admin UI with the accounts: grants, Redis, the internal URLs of the health checks
   check "$(metrics_show "${SYNC_UP[@]}" 'ffs_up{component="Storage database"} 1' 'ffs_up{component="Accounts API"} 1' \
     'ffs_up{component="Accounts pages"} 1' 'ffs_up{component="Profile server"} 1' 'ffs_up{component="Accounts database"} 1' \
