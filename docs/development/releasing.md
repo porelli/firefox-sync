@@ -13,6 +13,7 @@ Every image is published to `ghcr.io/<owner>/<repository>` only after its tests 
 | admin UI | [admin.yml](/.github/workflows/admin.yml) | every change of `admin/` | the candidate `admin-<sha12>`, tested as published, then tagged `admin-latest`. A newer push cancels an older run, so an older candidate never overwrites `admin-latest` |
 
 - syncstorage-rs.yml reuses an identical image (same upstream tag, same patches, same build revision) instead of building it again. The weekly run, a manual run with `rebuild`, and a release start from scratch, to pick up the base images' security updates. Bump `APP_BUILD_REVISION` in the workflow when the way the image is built changes.
+- On a branch, a newer push cancels the older run of syncstorage-rs.yml, fxa.yml and helm.yml: only the latest commit of a branch is tested. Runs of the default branch, of tags and the scheduled ones always finish.
 - A tagged commit on the default branch also gets a GitHub release from syncstorage-rs.yml. Its notes come from [release-notes.sh](/.github/scripts/release-notes.sh): this repository's commits since the previous release, then the upstream changelog of the syncstorage-rs version that was built.
 
 ## The Helm chart

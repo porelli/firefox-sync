@@ -49,10 +49,11 @@ on:
       # the local VM's script (docs/development/testing.md#local-vm): CI does not run it
       - 'tests/vm/**'
 
-# one run at a time per branch: a branch never cancels or waits for main's runs
+# one run at a time per branch: a branch never cancels or waits for main's runs. A newer push to
+# a branch cancels its older run; main's runs (and tags') always finish
 concurrency:
   group: syncstorage-rs-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' }}
 
 env:
   # repository variables

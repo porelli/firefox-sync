@@ -34,9 +34,10 @@ on:
       - .github/scripts/upstream-patches.py
 
 concurrency:
-  # per branch: a branch run never cancels or waits for main's
+  # per branch: a branch run never cancels or waits for main's. A newer push to a branch cancels
+  # its older run; main's runs (and tags') always finish
   group: fxa-mono-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' }}
 
 env:
   REPOSITORY_REGISTRY: ghcr.io
