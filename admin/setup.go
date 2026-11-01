@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Setup checks of the overview: settings that must agree with each other, with what
@@ -102,6 +103,16 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 	}
 	if a.syncDomain != "" && status != nil {
 		checks = append(checks, nodeCheck(a.deployment, a.syncDomain, status.Nodes))
+	}
+	if a.health != nil {
+		if c, ok := a.health.nodeLoadCheck(time.Now()); ok {
+			checks = append(checks, c)
+		}
+	}
+	if a.sync != nil {
+		if c, ok := a.droppedCheck(ctx, time.Now()); ok {
+			checks = append(checks, c)
+		}
 	}
 	// the old names of .env: none with the Helm chart, which has no .env
 	if c, ok := oldNamesCheck(os.Getenv("FFS_OLD_ENV_NAMES")); ok && a.deployment.Kubernetes() == nil {

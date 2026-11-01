@@ -124,6 +124,13 @@ func newRecorder(ctx context.Context, db *SyncDB) (*Recorder, error) {
 // Event records something worth showing in the activity log; the error: not recorded (also
 // logged as "event log: ...")
 func (r *Recorder) Event(kind, detail string) error {
+	_, err := r.EventWritten(kind, detail)
+	return err
+}
+
+// EventWritten: Event, and whether it is in the log: false without an error when the kind is
+// over maxEventsPerMinute (dropped)
+func (r *Recorder) EventWritten(kind, detail string) (bool, error) {
 	// rune-safe: a cut inside a character is invalid UTF-8 and the INSERT fails
 	detail = oneLine(detail, 509)
 	r.mu.Lock()
@@ -135,7 +142,7 @@ func (r *Recorder) Event(kind, detail string) error {
 	over := kind != "admin" && r.eventsCount[kind] > maxEventsPerMinute
 	r.mu.Unlock()
 	if over {
-		return nil
+		return false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -144,7 +151,7 @@ func (r *Recorder) Event(kind, detail string) error {
 	if err != nil {
 		log.Printf("event log: %v", err)
 	}
-	return err
+	return err == nil, err
 }
 
 func (r *Recorder) now() time.Time {

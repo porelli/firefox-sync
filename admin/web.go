@@ -115,6 +115,9 @@ type App struct {
 	// MAX_USERS=initial:N: max users is set on the dashboard, otherwise by .env; the same
 	// for FXA_MAX_ACCOUNTS (also when not given: initial:unlimited)
 	maxUsersEditable, maxAccountsEditable bool
+	// SYNC_ALLOWED_ACCOUNTS=admin or initial:...: the allowlist of Sync is managed on the
+	// overview, otherwise by .env (allowlist.go)
+	allowlistEditable bool
 	// BACKUP_TIME, BACKUP_KEEP of the backup service, for its help on the overview
 	backupTime string
 	backupKeep int
@@ -213,6 +216,7 @@ func serve(ctx context.Context) error {
 	app := &App{sync: syncDB, storage: storageDB, fxa: fxaDB, rec: rec, auth: auth, sessions: map[string]*session{},
 		staleDays: staleDays, unconfirmedHours: unconfirmedHours, maxUsersEditable: maxUsersEditable(os.Getenv("MAX_USERS")),
 		maxAccountsEditable: limitEditable(os.Getenv("FXA_MAX_ACCOUNTS"), true),
+		allowlistEditable:   allowlistEditableEnv(),
 		backupTime:          env("BACKUP_TIME", "03:00"), backupKeep: envInt("BACKUP_KEEP", 7), deployment: deploy,
 		gateProbe: randomToken(), syncDomain: strings.TrimSuffix(env("SYNCSTORAGE_DOMAIN", ""), "/"),
 		emailDomain: strings.ToLower(env("FXA_EMAIL_DOMAIN", "")), pairingURL: env("FXA_PAIRING_URL", ""),
@@ -297,6 +301,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /users/{uid}/sessions/{ref}/sign-out", a.authenticated(a.signOutSession))
 	mux.HandleFunc("GET /metrics", a.prometheus)
 	mux.HandleFunc("POST /sync/max-users", a.authenticated(a.setMaxUsers))
+	mux.HandleFunc("POST /sync/allowlist/{action}", a.authenticated(a.changeAllowlist))
 	mux.HandleFunc("POST /accounts/signups", a.authenticated(a.setSignups))
 	mux.HandleFunc("POST /accounts/max-accounts", a.authenticated(a.setMaxAccounts))
 	mux.HandleFunc("POST /accounts/{uid}/disable", a.authenticated(a.setDisabled(true)))
@@ -328,6 +333,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /accounts/unconfirmed", a.authenticated(a.confirmUnconfirmed))
 	mux.HandleFunc("GET /maintenance/prune", a.authenticated(a.confirmPrune))
 	mux.HandleFunc("GET /accounts/allowlist/remove", a.authenticated(a.confirmAllowlistRemove))
+	mux.HandleFunc("GET /sync/allowlist/{action}", a.authenticated(a.confirmAllowlist))
 	return securityHeaders(a.errorPages(mux))
 }
 
@@ -548,6 +554,13 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	data["Sync"], data["MaxUsersEditable"] = status, a.maxUsersEditable
 	// the limit's form opens by itself once it is close
 	data["NearMaxUsers"] = nearMaxUsers(status)
+	// SYNC_ALLOWED_ACCOUNTS: the pending accounts, the allowed ones
+	pending := 0
+	if l, err := a.syncAllowlist(ctx); err != nil {
+		errs = append(errs, "Invite-only Sync: "+err.Error())
+	} else if l != nil {
+		data["SyncAllowlist"], pending = l, len(l.Pending)
+	}
 	// FXA_MAX_ACCOUNTS, the accounts against it
 	var accountLimit *Limit
 	if a.fxa != nil {
@@ -617,7 +630,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	}
 
 	in := attentionInput{now: now, components: components, certs: certs, status: status, backups: backups, fxa: a.fxa != nil,
-		staleDays: a.staleDays, alerts: alerts, accountLimit: accountLimit, deployment: a.deployment}
+		staleDays: a.staleDays, alerts: alerts, accountLimit: accountLimit, deployment: a.deployment, pending: pending}
 	if a.health != nil {
 		in.setup = a.health.Setup()
 	}

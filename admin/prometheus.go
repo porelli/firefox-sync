@@ -57,6 +57,13 @@ func (a *App) prometheus(w http.ResponseWriter, r *http.Request) {
 		gauge("ffs_sync_near_max_users", "1 when 90% of max users or more are taken", flag(nearMaxUsers(st)))
 		gauge("ffs_sync_full", "1 when every place of max users is taken: new accounts are refused", flag(st.Limit().State() == limitFull))
 	}
+	// SYNC_ALLOWED_ACCOUNTS on
+	if n := a.pendingCount(ctx); n >= 0 {
+		gauge("ffs_sync_pending_accounts", "Accounts refused by the allowlist of Sync (SYNC_ALLOWED_ACCOUNTS), waiting for an approval", int64(n))
+		if dropped, _, err := a.sync.DroppedRefusals(ctx); err == nil {
+			gauge("ffs_sync_refusals_dropped", "Refusals of the allowlist of Sync not recorded: its list of 1000 was full", int64(dropped))
+		}
+	}
 	if a.storage != nil {
 		if totals, err := a.storage.Totals(ctx); err == nil {
 			var items, bytes int64

@@ -93,6 +93,10 @@ type Health struct {
 	schemaErr string
 	// the setup migrations of the database servers (setupmigrations.go)
 	setup []SetupStatus
+	// the load of the Sync node, counted again (nodeload.go): the last recount, the last
+	// one that corrected a drift of nodeLoadDrift or more
+	loadResynced  time.Time
+	loadCorrected *loadCorrection
 	// the last alert of a burst of sign-ups (maintenance.go)
 	burstAlerted time.Time
 	// the runs of the backups (backup.go)
@@ -254,6 +258,8 @@ func (h *Health) run(ctx context.Context) {
 		h.checkAll(ctx)
 		h.watchAccounts(ctx)
 		h.watchSignupBurst(ctx, time.Now())
+		h.watchRefusals(ctx)
+		h.watchNodeLoad(ctx, time.Now())
 		h.watchBlocks(ctx)
 		h.watchSecurityEvents(ctx)
 		h.watchSchema(ctx)

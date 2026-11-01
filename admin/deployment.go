@@ -209,6 +209,8 @@ var chartValues = map[string]string{
 	"FXA_MYSQL_HOST": "fxa.database.external.host", "FXA_MYSQL_PORT": "fxa.database.external.port",
 	"FXA_SMTP_HOST": "smtp.host", "FXA_SMTP_PORT": "smtp.port", "FXA_SMTP_USER": "smtp.user", "FXA_SMTP_PASS": "smtp.password",
 	"FXA_SMTP_SECURE": "smtp.secure", "FXA_SMTP_SENDER": "smtp.sender", "ADMIN_SMTP_INSECURE_AUTH": "smtp.insecureAuth",
+	// and invite-only Sync's
+	"SYNC_ALLOWED_ACCOUNTS": "allowedAccounts",
 }
 
 // valueName: a variable of .env as this deployment sets it: with the chart, the accounts'

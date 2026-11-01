@@ -39,7 +39,7 @@ var configVars = map[string]bool{
 	"FXA_MYSQL_PASSWORD":    true,
 
 	// the Sync server and its databases
-	"SYNCSTORAGE_DOMAIN": false, "SYNCSTORAGE_URL": false, "SYNC_DB": false, "MAX_USERS": false,
+	"SYNCSTORAGE_DOMAIN": false, "SYNCSTORAGE_URL": false, "SYNC_DB": false, "MAX_USERS": false, "SYNC_ALLOWED_ACCOUNTS": false,
 	// the old names of the Sync settings in .env (compose, setup.go)
 	"FFS_OLD_ENV_NAMES":   false,
 	"TOKENSERVER_DB_TYPE": false, "TOKENSERVER_DB_HOST": false, "TOKENSERVER_DB_PORT": false, "TOKENSERVER_DB_NAME": false,
@@ -470,6 +470,8 @@ func (a *App) configPage(w http.ResponseWriter, r *http.Request, s *session) {
 	limits := configGroup{ID: "limits", Title: "Limits", Intro: "In force now, as the databases have them."}
 	limits.Rows = append(limits.Rows, fact("Max users", limitValue(syncLimit),
 		limitNote("SYNC_MAX_USERS", configLookup("MAX_USERS"), "", "on the overview"), "SYNC_MAX_USERS"))
+	limits.Rows = append(limits.Rows, fact("Invite-only Sync", a.allowlistValue(), allowlistNote(a.deployment.valueName("SYNC_ALLOWED_ACCOUNTS"),
+		configLookup("SYNC_ALLOWED_ACCOUNTS")), "SYNC_ALLOWED_ACCOUNTS"))
 	if fxa {
 		limits.Rows = append(limits.Rows, fact("Max accounts", limitValue(accountLimit),
 			limitNote(a.deployment.valueName("FXA_MAX_ACCOUNTS"), configLookup("FXA_MAX_ACCOUNTS"), "initial:unlimited", "on the overview"), "FXA_MAX_ACCOUNTS"))

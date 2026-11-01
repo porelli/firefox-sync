@@ -191,6 +191,47 @@
 </section>
 {{end}}
 
+{{with .SyncAllowlist}}
+<section class="card" aria-labelledby="sync-allowlist-title" id="sync-allowlist">
+  <div class="card-head"><h2 id="sync-allowlist-title">Invite-only Sync</h2>{{with .Pending}}<span class="pill warn">{{len .}} pending</span>{{end}}</div>
+  <p class="hint">Only the accounts on this list can start to sync (<code>{{if $.Kubernetes}}allowedAccounts{{else}}SYNC_ALLOWED_ACCOUNTS{{end}}</code>); the accounts that already sync keep working. {{if .Editable}}Managed here.{{else}}Read-only: {{if $.Kubernetes}}<code>allowedAccounts</code> in your values sets the list on every start; set <code>allowedAccounts: admin</code> and helm upgrade to manage it here.{{else}}<code>SYNC_ALLOWED_ACCOUNTS</code> in .env sets the list on every start; set <code>SYNC_ALLOWED_ACCOUNTS=admin</code> to manage it here.{{end}}{{end}} How the owner of an account finds its id: docs/limits.md#find-the-uid-of-an-account.</p>
+  <h3 id="pending-title">Pending accounts</h3>
+  <div class="scroll"><table id="sync-pending" aria-labelledby="pending-title">
+    <thead><tr><th>Account id</th><th>Refused</th><th>Tries</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range .Pending}}<tr data-uid="{{.UID}}"><td><code>{{.UID}}</code></td><td>first {{date .FirstAt}}, last {{date .LastAt}}</td><td>{{.Attempts}}</td>
+      <td>{{if and $.SyncAllowlist.Editable .ValidUID}}<a href="/sync/allowlist/allow?uid={{.UID}}" class="quiet-link" aria-label="Approve {{.UID}}…">Approve…</a> {{end}}<a href="/sync/allowlist/reject?uid={{.UID}}" class="quiet-link" aria-label="Reject {{.UID}}…">Reject…</a></td></tr>{{else}}<tr><td colspan="4" class="empty">Nobody waiting.</td></tr>{{end}}</tbody>
+  </table></div>
+  {{if not .Editable}}{{with .Pending}}<p class="hint">To let one in, add its id to <code>{{if $.Kubernetes}}allowedAccounts{{else}}SYNC_ALLOWED_ACCOUNTS{{end}}</code> and restart the init container (docs/limits.md#switch-between-the-forms).</p>{{end}}{{end}}
+  {{if .Editable}}
+  <form method="get" action="/sync/allowlist/allow" id="allow-uid">
+    <label for="allow-uid-input">Allow a uid</label>
+    <div class="field-row">
+      <input id="allow-uid-input" name="uid" type="text" required pattern="[0-9a-fA-F]{32}" maxlength="32" placeholder="32 hexadecimal characters" autocomplete="off" spellcheck="false">
+      <input id="allow-uid-note" name="note" type="text" maxlength="255" placeholder="note (optional)" aria-label="Note" autocomplete="off">
+      <button type="submit">Allow…</button>
+    </div>
+  </form>
+  {{end}}
+  <details class="fold"{{if $.ListOpen}} open{{end}}>
+  <summary>Allowed accounts<span class="hint"> · {{with .Allowed}}{{len .}}{{else}}none yet{{end}}</span></summary>
+  <div class="scroll"><table id="sync-allowed" aria-label="Allowed accounts">
+    <thead><tr><th>Account id</th><th>Added</th><th>Note</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range .Allowed}}<tr data-uid="{{.UID}}"><td>{{if .Syncs}}<a href="/users/{{.UID}}"><code>{{.UID}}</code></a>{{else}}<code>{{.UID}}</code> <span class="quiet-text">not synced yet</span>{{end}}</td><td>{{date .AddedAt}} by {{.AddedBy}}</td><td>{{.Note}}</td>
+      <td>{{if $.SyncAllowlist.Editable}}<a href="/sync/allowlist/remove?uid={{.UID}}" class="quiet-link" aria-label="Remove {{.UID}}…">Remove…</a>{{end}}</td></tr>{{else}}<tr><td colspan="4" class="empty">Nobody on the list yet.</td></tr>{{end}}</tbody>
+  </table></div>
+  <p class="hint">Removing an account stops it from starting to sync; if it syncs already, it keeps working: delete its Sync data on its page to stop it.</p>
+  </details>
+  {{with .Rejected}}<details class="fold">
+  <summary>Rejected<span class="hint"> · {{len .}}</span></summary>
+  <div class="scroll"><table id="sync-rejected" aria-label="Rejected accounts">
+    <thead><tr><th>Account id</th><th>Rejected</th><th>Tries</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>{{range .}}<tr data-uid="{{.UID}}"><td><code>{{.UID}}</code></td><td>{{date .RejectedAt}} by {{.RejectedBy}}, last try {{date .LastAt}}</td><td>{{.Attempts}}</td>
+      <td>{{if and $.SyncAllowlist.Editable .ValidUID}}<a href="/sync/allowlist/allow?uid={{.UID}}" class="quiet-link" aria-label="Allow {{.UID}}…">Allow…</a>{{end}}</td></tr>{{end}}</tbody>
+  </table></div>
+  </details>{{end}}
+</section>
+{{end}}
+
 <h2 class="group-title">Server</h2>
 
 {{if .Health}}
