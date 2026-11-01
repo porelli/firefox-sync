@@ -141,7 +141,7 @@ The accounts service registers the admin UI as an OAuth client at every start ([
 
 The accounts service has no `email_verified` claim: its ID tokens carry no email, and its userinfo endpoint (`FXA_PROFILE_URL/v1/profile`) returns the email alone. Hence `ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL=true`, which is safe here. The stack lists the admin UI's client in the accounts service's `SERVICES_WITH_EMAIL_VERIFICATION`, so it hands out a sign-in only for a confirmed session (the email code of a new account or a new sign-in), never for a password alone.
 
-The admin UI reaches the accounts by their public URLs (`FXA_CONTENT_URL`, `FXA_AUTH_URL`, `FXA_PROFILE_URL`), through your reverse proxy. The server must be able to reach its own public host names. With a sign-in proxy or client certificates in front of the accounts pages, leave their `/.well-known/openid-configuration` open: see [The open paths](../access-control.md#the-open-paths).
+The admin UI reaches the accounts by their public URLs (`FXA_CONTENT_URL`, `FXA_AUTH_URL`, `FXA_PROFILE_URL`), through your reverse proxy. The server must be able to reach its own public host names. With a sign-in proxy or client certificates in front of the accounts pages, leave their `/.well-known/openid-configuration` open: see [The open paths](../single-sign-on.md#the-open-paths).
 
 ## Trusted header
 

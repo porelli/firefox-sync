@@ -20,7 +20,7 @@ Each install page lists what its platform needs on top of this.
    - [Podman](install/podman.md): Quadlets, or docker compose on the Podman socket
    - [Kubernetes with Helm](install/helm.md)
 1. Point your [reverse proxy](reverse-proxy.md) to it.
-1. Decide [who can use your server](limits.md).
+1. Decide [who can use your server](access-control.md).
 1. [Set up Firefox](firefox.md) on every device.
 1. Turn on the [backups](backups.md).
 
@@ -38,8 +38,9 @@ Setting up:
 - [install/podman.md](install/podman.md): rootless Podman, with Quadlets or docker compose on the Podman socket
 - [install/helm.md](install/helm.md): Kubernetes with the Helm chart
 - [reverse-proxy.md](reverse-proxy.md): host names and ports, request size, the sign-up gate, pairing, the client IP address, publishing the admin UI
-- [access-control.md](access-control.md): single sign-on (Authelia) and client certificates in front of the accounts pages and the admin UI, and why not the other hosts
-- [limits.md](limits.md): who can use your server, `SYNC_MAX_USERS` and `FXA_MAX_ACCOUNTS`
+- [access-control.md](access-control.md): access control, which setting decides who can sync, reach the server and run it
+- [limits.md](limits.md): who can use your server, `SYNC_MAX_USERS`, invite-only Sync (`SYNC_ALLOWED_ACCOUNTS`) and `FXA_MAX_ACCOUNTS`
+- [single-sign-on.md](single-sign-on.md): single sign-on (Authelia) and client certificates in front of the accounts pages and the admin UI, and why not the other hosts
 - [firefox.md](firefox.md): Firefox on desktop, Android and iOS, with Mozilla's accounts or yours
 - [accounts.md](accounts.md): self-hosted Mozilla accounts
 - [databases.md](databases.md): choosing a backend, the supported versions, your own database server

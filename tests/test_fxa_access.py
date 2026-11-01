@@ -1,4 +1,4 @@
-"""Access control in front of the public hosts (docs/access-control.md), from outside.
+"""Access control in front of the public hosts (docs/single-sign-on.md), from outside.
 
 tests/e2e-fxa.sh runs these first, in tests/browser, with CLIENT_CERT=1 (FFS_ACCESS=mtls)
 or SSO=authelia (FFS_ACCESS=authelia), in Caddy (tests/caddy/<FFS_ACCESS>/);

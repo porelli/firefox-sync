@@ -181,7 +181,7 @@ jobs:
             fxa_db: mariadb
             external_db: "1"
           # client certificates, then Authelia, in front of the accounts pages and the admin UI
-          # (docs/access-control.md), without the prepare_environment.sh checks of the others
+          # (docs/single-sign-on.md), without the prepare_environment.sh checks of the others
           - arch: amd64
             runner: ubuntu-latest
             fxa_db: mysql

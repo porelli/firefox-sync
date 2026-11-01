@@ -118,7 +118,7 @@ Sessions, plain HTTP and signing in: see [Admin UI](admin/README.md#set-up) and 
 
 ## Single sign-on and client certificates
 
-A sign-in proxy (such as Authelia) or client certificates fit in front of the accounts pages and the admin UI only: Firefox calls the other hosts in the background, without cookies or a certificate. See [Single sign-on and client certificates](access-control.md).
+A sign-in proxy (such as Authelia) or client certificates fit in front of the accounts pages and the admin UI only: Firefox calls the other hosts in the background, without cookies or a certificate. See [Single sign-on and client certificates](single-sign-on.md).
 
 ## Kubernetes
 

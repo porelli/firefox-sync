@@ -17,7 +17,7 @@ Mozilla publishes its Sync server, but not a supported way to run it yourself. T
 
 - **Sync on your server**: Mozilla's [syncstorage-rs](https://github.com/mozilla-services/syncstorage-rs) and its tokenserver, with the data encrypted by Firefox before it leaves the device.
 - **Your own accounts, optionally**: [Mozilla accounts](https://github.com/mozilla/fxa) on your server as well, so that signing in and the account keys stay with you too.
-- **Control who uses it**: a limit on the accounts that can use Sync and, with your own accounts, open sign-ups, an allowlist of emails and domains, or none.
+- **Control who uses it**: invite-only Sync (only the accounts you approve), a limit on the accounts that can use Sync and, with your own accounts, open sign-ups, an allowlist of emails and domains, or none. See [Access control](docs/access-control.md).
 - **An admin UI**: accounts, storage, health, setup checks, an event log and Prometheus metrics.
 - **Alerts** by email, or to Slack, Discord, Teams, ntfy, Gotify, Telegram, Matrix or any webhook, without an SMTP server.
 - **Nightly backups** of every database, watched by the admin UI.

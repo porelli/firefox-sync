@@ -393,11 +393,11 @@ For Traefik, its Helm chart labels the pods `app.kubernetes.io/name: traefik`, i
 
 ### Access control
 
-What can go behind a sign-in proxy or client certificates, and why the rest cannot: [Single sign-on and client certificates](../access-control.md). These notes for ingress-nginx follow its docs and Authelia's ([Authelia with ingress-nginx](https://www.authelia.com/integration/kubernetes/nginx-ingress/)); the chart's e2e does not run them.
+What can go behind a sign-in proxy or client certificates, and why the rest cannot: [Single sign-on and client certificates](../single-sign-on.md). These notes for ingress-nginx follow its docs and Authelia's ([Authelia with ingress-nginx](https://www.authelia.com/integration/kubernetes/nginx-ingress/)); the chart's e2e does not run them.
 
 - **Not in `fxa.ingress.annotations`.** They go on all the accounts' Ingresses, the API's too, which must stay open.
 - **The admin UI** has an Ingress of its own: its `admin.ingress.annotations` can take Authelia's (`nginx.ingress.kubernetes.io/auth-url`, `auth-signin`, `auth-method`, `auth-response-headers`, with `admin.trustedHeader.*`, see [Trusted header](../admin/signing-in.md#trusted-header)), or a client certificate: `nginx.ingress.kubernetes.io/auth-tls-secret: <namespace>/<Secret with ca.crt>` and `auth-tls-verify-client: "on"`.
-- **The accounts pages behind Authelia:** set `fxa.ingress.enabled: false` and publish the hosts with Ingresses of your own, as the table of [The accounts' Ingresses](../reverse-proxy.md#the-accounts-ingresses). For the pages' host, two Ingresses: one at `/` with Authelia's annotations, one without them for [the open paths](../access-control.md#the-open-paths), each `Exact`. ingress-nginx merges the Ingresses of one host, and applies the auth annotations to the paths of their own Ingress.
+- **The accounts pages behind Authelia:** set `fxa.ingress.enabled: false` and publish the hosts with Ingresses of your own, as the table of [The accounts' Ingresses](../reverse-proxy.md#the-accounts-ingresses). For the pages' host, two Ingresses: one at `/` with Authelia's annotations, one without them for [the open paths](../single-sign-on.md#the-open-paths), each `Exact`. ingress-nginx merges the Ingresses of one host, and applies the auth annotations to the paths of their own Ingress.
 - **The accounts pages with client certificates:** ingress-nginx applies its `auth-tls-*` annotations to a whole host, so it cannot leave the open paths without one. Use another proxy in front for that host, as the [nginx example](/config/nginx/access-control-example.conf).
 
 ## Backups and upgrades

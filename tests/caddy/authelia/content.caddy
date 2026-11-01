@@ -1,5 +1,5 @@
 # SSO=authelia of tests/e2e-fxa.sh, the accounts pages: an Authelia sign-in first, but on the
-# paths that Firefox and the servers fetch on their own (docs/access-control.md#what-firefox-sends)
+# paths that Firefox and the servers fetch on their own (docs/single-sign-on.md#what-firefox-sends)
 @sso not path /.well-known/fxa-client-configuration /.well-known/openid-configuration /__heartbeat__ /__lbheartbeat__
 forward_auth @sso authelia:9091 {
 	uri /api/authz/forward-auth

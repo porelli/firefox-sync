@@ -84,8 +84,10 @@ nav:
       - Podman: install/podman.md
       - Kubernetes with Helm: install/helm.md
       - Reverse proxy: reverse-proxy.md
-      - Single sign-on and client certificates: access-control.md
-      - Who can use your server: limits.md
+      - Access control:
+          - access-control.md
+          - Who can use your server: limits.md
+          - Single sign-on and client certificates: single-sign-on.md
       - Set up Firefox: firefox.md
       - Self-hosted accounts: accounts.md
       - Databases: databases.md

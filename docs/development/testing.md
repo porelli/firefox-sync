@@ -161,7 +161,7 @@ Our builds are in the registry of the repository whose fxa.yml built them; the e
 
 ### Access control
 
-`CLIENT_CERT=1` or `SSO=authelia` put Caddy's access control of [tests/caddy](/tests/caddy) in front of the accounts pages and the admin UI, as [Single sign-on and client certificates](../access-control.md) describes. [test_fxa_access.py](/tests/test_fxa_access.py) runs first, then the usual tests through it ([tests/conftest.py](/tests/conftest.py) gives their requests the certificate or the cookie):
+`CLIENT_CERT=1` or `SSO=authelia` put Caddy's access control of [tests/caddy](/tests/caddy) in front of the accounts pages and the admin UI, as [Single sign-on and client certificates](../single-sign-on.md) describes. [test_fxa_access.py](/tests/test_fxa_access.py) runs first, then the usual tests through it ([tests/conftest.py](/tests/conftest.py) gives their requests the certificate or the cookie):
 
 - `CLIENT_CERT=1`: a test client CA (made by the script with OpenSSL), its certificate in each Firefox profile (`pk12util`, `security.default_personal_cert`). The pages answer `403` without it, the admin UI's host refuses the handshake, a certificate of another CA is refused, the open paths and the other hosts answer anybody. A Firefox probe checks that its background requests send no client certificate: when that changes, the page needs to.
 - `SSO=authelia`: an Authelia container (`authelia/authelia:latest`, one user), forward auth on the pages but the open paths, every Firefox signs in to Authelia first. The admin UI also signs in with Authelia's header on `admin-sso.fxa.test` (`ADMIN_AUTH_HEADER`, `ADMIN_TRUSTED_PROXIES` the address of Caddy), and ignores a forged one on `admin.fxa.test`.

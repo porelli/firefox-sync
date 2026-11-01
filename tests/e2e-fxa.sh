@@ -184,7 +184,7 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
 elif [ -n "${DB_BOOTSTRAP:-}" ]; then
   echo "DB_BOOTSTRAP=1 is for EXTERNAL_DB"; exit 2
 fi
-# the access control in front of the public hosts (docs/access-control.md), in Caddy:
+# the access control in front of the public hosts (docs/single-sign-on.md), in Caddy:
 # tests/caddy/<FFS_ACCESS>/
 if [ -n "${CLIENT_CERT:-}" ] && [ -n "${SSO:-}" ]; then echo "CLIENT_CERT or SSO, not both"; exit 2; fi
 FFS_ACCESS=none
