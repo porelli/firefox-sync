@@ -281,6 +281,51 @@ python3 -I tests/test_check_markdown_links.py
 
 `--external` also fetches every `http(s)` link of `docs/` and `README.md` and lists those that don't end in a 2xx after redirects; a 401, 403 or 429 is only a warning, since it is often a bot wall. It needs the network, so CI does not run it: run it when you edit the docs' links. It only says that a page answers, not that it still says what the sentence claims.
 
+## Docs coverage
+
+[tests/check_docs_coverage.py](/tests/check_docs_coverage.py) checks that what the stack offers is on the page that documents it:
+
+| What | From | Page |
+|---|---|---|
+| every Helm value, at every depth | the keys of [values.yaml](/charts/firefox-sync/values.yaml) | [Settings](../reference/settings.md) |
+| every Prometheus metric of the admin UI | `# TYPE ffs_...` and `gauge("ffs_...")` in `admin/*.go` | [Prometheus](../admin/monitoring.md#prometheus) |
+| every event kind | `eventKinds`, `event("<kind>", ...)` and `Event{Kind: ...}` | [Event log](../admin/monitoring.md#event-log) |
+| every alert kind | `alertKinds`, `alert("<kind>", ...)`, `Event{Kind: ...}` and `Alert{Kind: ...}` | [Webhook schema](../admin/alerts.md#webhook-schema) |
+| every setup check | `setupCheck{Name: ...}`, its name up to ` (` | [Setup checks](../admin/monitoring.md#setup-checks), in bold |
+
+A Helm value is found by its dotted path in a code span (`` `fxa.signupAllowlist` ``). A span that starts with a dot goes on from the path before it on the same line (`` `database.persistence.size`, `.storageClass` ``), and `` `fxa.resources.*` `` covers everything under it. A map is covered by its keys. A value the chart hands to Kubernetes as it is, such as `resources` or `annotations`, is covered by its own path. The items of a list are not values of their own.
+
+It prints each gap as the file and line of the code, what is missing and the page that should have it:
+
+```text
+admin/setup.go:158: setup check Old setting names is not in docs/admin/monitoring.md#setup-checks
+```
+
+```bash
+python3 -I tests/check_docs_coverage.py
+python3 -I tests/test_check_docs_coverage.py
+```
+
+[docs.yml](/.github/workflows/docs.yml) runs both on every push.
+
+### Docs with the features
+
+A change to a feature should come with its docs. [tests/check_docs_changed.py](/tests/check_docs_changed.py) warns when a branch changes a feature but no file under `docs/` and no `README.md`. The features are `.env-example`, the chart's `values.yaml`, `admin/templates/`, `admin/*.go` (but the tests), `db/`, `compose/`, `config/quadlet/` and `setup/`.
+
+On a push to another branch than the default one, docs.yml compares the push with the commit before it (with main for a new branch). The warning is an annotation of the run: it never fails it. By hand, it compares with the merge base of main:
+
+```bash
+python3 -I tests/check_docs_changed.py
+python3 -I tests/check_docs_changed.py --base HEAD~3
+python3 -I tests/test_check_docs_changed.py
+```
+
+When a change needs no docs (a refactor, a fix that changes nothing anybody sees), say so in a commit message of the push, on a line of its own, with the reason:
+
+```text
+Docs: none (a log line reworded)
+```
+
 ## Docs site
 
 The pages of `docs/` are also a website, built with MkDocs and the Material theme from [mkdocs.yml](/mkdocs.yml). The markdown stays written for GitHub. [docs/hooks/repo_links.py](/docs/hooks/repo_links.py) bridges what MkDocs reads differently: it turns links to the code into GitHub URLs, re-indents the lists to 4 spaces, and renders `<details>` as collapsed blocks.

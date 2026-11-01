@@ -5,6 +5,11 @@ name: docs
 # migrations against db/setup-manifest (tests/setup_migrations.sh). On every push, with no
 # paths filter: it takes seconds and needs no image. See docs/development/testing.md#links.
 #
+# The coverage of the docs (tests/check_docs_coverage.py): every Helm value, Prometheus
+# metric, event and alert kind and setup check of the admin UI on its page. And on a push to
+# another branch than the default one, a warning (never a failure) when it changes a feature
+# but no docs (tests/check_docs_changed.py). See docs/development/testing.md#docs-coverage.
+#
 # The docs site (mkdocs.yml): built with --strict on every push, so a broken link, a missing
 # #anchor or a page left out of the nav fails here; published on GitHub Pages from main only.
 # See docs/development/testing.md#docs-site.
@@ -26,12 +31,33 @@ jobs:
         run: python3 -I tests/test_check_markdown_links.py
       - name: Links
         run: python3 -I tests/check_markdown_links.py --code --settings
+      - name: Self-test of the coverage checks
+        run: |
+          python3 -I tests/test_check_docs_coverage.py
+          python3 -I tests/test_check_docs_changed.py
+      - name: Docs coverage
+        run: python3 -I tests/check_docs_coverage.py
       # db/setup-manifest: every setup migration with its checksum, those of main unchanged
       # (docs/databases.md#setup-migrations)
       - name: Setup migrations
         run: |
           git fetch --no-tags --depth=50 origin main:refs/remotes/origin/main || echo "no main to compare with"
           bash tests/setup_migrations.sh
+  # a feature changed without its docs in this push: a warning, unless a commit says
+  # "Docs: none (<reason>)" (docs/development/testing.md#docs-with-the-features)
+  changed:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # the commit before the push and main, for a new branch
+          fetch-depth: 0
+      - name: Docs with the features
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: python3 -I tests/check_docs_changed.py --base "$BEFORE"
   site:
     runs-on: ubuntu-latest
     env:
