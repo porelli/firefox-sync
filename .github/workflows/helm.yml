@@ -173,7 +173,8 @@ jobs:
   e2e:
     needs: version
     # GitHub has no -latest label for arm (actions/runner-images): the newest Ubuntu
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-latest' }}
+    # the heavy jobs: self-hosted runners labelled ffs-ec2 with FFS_RUNNERS=ec2, GitHub's otherwise
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || (matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-latest') }}
     permissions:
       contents: read
       # this repository's syncstorage images (private ones too)
@@ -250,7 +251,7 @@ jobs:
     needs: version
     name: e2e-fxa (${{ matrix.config }}, ${{ matrix.part }})
     # (arm64 as in e2e)
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || (matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-latest') }}
     permissions:
       contents: read
       # this repository's accounts and syncstorage images

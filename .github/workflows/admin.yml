@@ -50,7 +50,8 @@ jobs:
 
   build:
     needs: unit
-    runs-on: ubuntu-latest
+    # the heavy jobs: self-hosted runners labelled ffs-ec2 with FFS_RUNNERS=ec2, GitHub's otherwise
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -107,7 +108,7 @@ jobs:
           - database_backend: mysql
             external_db: ""
             sync_db: mysql
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -190,7 +191,7 @@ jobs:
             runner: ubuntu-latest
             fxa_db: mysql
             sso: authelia
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.runner }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -250,7 +251,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     # the accounts phase pulls a 5 GB image and takes up to 20 minutes to start
     timeout-minutes: 75
     steps:

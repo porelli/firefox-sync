@@ -163,7 +163,8 @@ jobs:
           - arch: arm64
             # GitHub has no -latest label for arm (actions/runner-images): the newest Ubuntu
             runner: ubuntu-26.04-arm
-    runs-on: ${{ matrix.runner }}
+    # the heavy jobs: self-hosted runners labelled ffs-ec2 with FFS_RUNNERS=ec2, GitHub's otherwise
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout the pairing server ${{ needs.prepare.outputs.pairing_version }}
@@ -258,7 +259,7 @@ jobs:
           - arch: arm64
             # GitHub has no -latest label for arm (actions/runner-images): the newest Ubuntu
             runner: ubuntu-26.04-arm
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.runner }}
     timeout-minutes: 120
     steps:
       - name: Checkout Mozilla accounts ${{ needs.prepare.outputs.version }}
@@ -392,7 +393,7 @@ jobs:
           - arch: amd64
             runner: ubuntu-latest
             mysql_image: mysql:8
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.runner }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -495,7 +496,7 @@ jobs:
       fail-fast: false
       matrix:
         mariadb_image: ["mariadb:lts", "mariadb:11"]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -591,7 +592,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 50
     steps:
       - name: Checkout
@@ -704,7 +705,7 @@ jobs:
           - arch: arm64
             # GitHub has no -latest label for arm (actions/runner-images): the newest Ubuntu
             runner: ubuntu-26.04-arm
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.arch == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.runner }}
     # compose (MariaDB, PostgreSQL), quadlets, then the 5 GB accounts image and its
     # quadlets (up to 20 minutes to start)
     timeout-minutes: 75

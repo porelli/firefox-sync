@@ -174,7 +174,8 @@ jobs:
             # GitHub has no -latest label for arm (actions/runner-images): the newest Ubuntu
             github_runner_image: ubuntu-26.04-arm
 
-    runs-on: ${{ matrix.github_runner_image }}
+    # the heavy jobs: self-hosted runners labelled ffs-ec2 with FFS_RUNNERS=ec2, GitHub's otherwise
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON(matrix.docker_architecture == 'arm64' && '["self-hosted","ffs-ec2","linux","ARM64"]' || '["self-hosted","ffs-ec2","linux","X64"]') || matrix.github_runner_image }}
 
     steps:
       - name: Prepare variables
@@ -482,7 +483,7 @@ jobs:
             external_db: ""
             sync_db: mariadb
             pg_major_move: "1"
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
 
     steps:
@@ -519,7 +520,7 @@ jobs:
       contents: read
       packages: read
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
 
     # the defaults (Sync on MariaDB, the accounts on MySQL), Sync on MySQL and on PostgreSQL,
@@ -609,7 +610,7 @@ jobs:
       contents: read
       packages: read
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
 
     steps:
