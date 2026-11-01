@@ -1258,7 +1258,10 @@ fxa_e2e_main() {
   if [[ -z ${external} ]]; then
     # (this run's log, or the last one's once Kubernetes reruns them)
     mig_log() { { kubectl logs -l "${POD_SELECTOR}" -c migrations --tail=20; kubectl logs -l "${POD_SELECTOR}" -c migrations --tail=20 --previous; } 2> /dev/null; }
-    mig_log | grep -q "not retried" || fail "the migrations' log does not say the refused sign-in is not retried: $(mig_log)"
+    # (the log in a variable: grep -q would stop reading early, and pipefail fail the pipe)
+    local log
+    log=$(mig_log)
+    [[ "${log}" == *"not retried"* ]] || fail "the migrations' log does not say the refused sign-in is not retried: ${log}"
   fi
   [[ "$(pod_status)" =~ ^Init: ]] || fail "the auth pod is $(pod_status), not in its init containers"
   MATCHED_STATUS=$(pod_status)
