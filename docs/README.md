@@ -7,7 +7,7 @@ This is the index of every page. New here: read [What you need](#what-you-need),
 ## What you need
 
 - **A server** that runs containers: Docker with the compose plugin, Podman, or a Kubernetes cluster.
-- **A host name with HTTPS** for the Sync server, for example `sync.example.com`, behind your reverse proxy or an Ingress. See [Reverse proxy](reverse-proxy.md).
+- **A host name with HTTPS** for the Sync server, for example `sync.example.com`, behind your reverse proxy (the setup writes its configuration, or runs a bundled Caddy) or an Ingress. See [Reverse proxy](reverse-proxy.md).
 - **A database.** By default the stack runs its own MariaDB containers. It can run MySQL or PostgreSQL instead, or use a server you already run: see [Databases](databases.md).
 - **For self-hosted accounts only**: more host names, more memory and an SMTP server. See [their requirements](accounts.md#requirements).
 
@@ -19,7 +19,7 @@ Each install page lists what its platform needs on top of this.
    - [Docker compose](install/compose.md)
    - [Podman](install/podman.md): Quadlets, or docker compose on the Podman socket
    - [Kubernetes with Helm](install/helm.md)
-1. Point your [reverse proxy](reverse-proxy.md) to it.
+1. Point your [reverse proxy](reverse-proxy.md) to it, with the configuration the setup wrote into `proxy/`, or let the bundled Caddy do it.
 1. Decide [who can use your server](access-control.md).
 1. [Set up Firefox](firefox.md) on every device.
 1. Turn on the [backups](backups.md).

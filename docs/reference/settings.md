@@ -21,7 +21,7 @@ How to read the tables:
 | `SYNC_EXPORT_PORT` | – (the Service, port `syncstorage.service.port`, `8000`) | `127.0.0.1:5000` | where the host publishes the Sync server for your reverse proxy: `[address:]port`. A port alone in `.env` publishes it on every interface: [Host names and ports](../reverse-proxy.md#host-names-and-ports) | `CONTAINER_EXPORT_PORT` |
 | `FXA_OAUTH_SERVER_URL` | `fxa.oauthServerUrl` | `https://oauth.accounts.firefox.com/v1` | where the tokenserver checks the sign-in tokens. Self-hosted accounts: `http://fxa-auth:9000/v1` (Helm: the chart sets it with `fxa.enabled`) | |
 | `FXA_EMAIL_DOMAIN` | `fxa.emailDomain` | `api.accounts.firefox.com` | the tokenserver keeps each account as `<uid>@FXA_EMAIL_DOMAIN`. Self-hosted accounts: the host of `FXA_AUTH_URL` (Helm: set by the chart). A new value makes every account a new one | |
-| `COMPOSE_FILE` | – | unset: `docker-compose.yml`, Sync on MariaDB (installs from before `compose/`) | the compose files, separated by `:`: `compose/sync.yml`, the Sync database's, the accounts' ([The compose files](../install/compose.md#the-compose-files)) | |
+| `COMPOSE_FILE` | – | unset: `docker-compose.yml`, Sync on MariaDB (installs from before `compose/`) | the compose files, separated by `:`: `compose/sync.yml`, the Sync database's, the accounts', the reverse proxy's ([The compose files](../install/compose.md#the-compose-files)) | |
 | `COMPOSE_PROJECT_NAME` | – | unset: the directory of the first compose file | the compose project, which names the containers and volumes: `prepare_environment.sh` writes the checkout's directory, as compose names it (lowercase, `a-z 0-9 _ -`, no `_` or `-` first), and keeps a name already there. A copy of the checkout keeps the name of the original, and its `docker compose down -v` removes the original's volumes: a copy, or a second stack, needs a name of its own here. The setup and `--upgrade` warn when the name is not the directory's ([The compose files](../install/compose.md#the-compose-files)) | |
 | `COMPOSE_PROFILES` | `admin.enabled`, `backup.enabled` | unset: none | the optional services that run, the whole list comma-separated: `admin`, `backup`, `pairing` (self-hosted accounts), see [Optional services](../install/compose.md#optional-services) | |
 
@@ -214,6 +214,23 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `FXA_PAIRING_EXPORT_PORT` | – (`-fxa-pairing`, 8000) | `127.0.0.1:8058` | the pairing server | |
 
 Which host name goes to which port: [Host names and ports](../reverse-proxy.md#host-names-and-ports).
+
+## Reverse proxy
+
+What `prepare_environment.sh` writes into `proxy/` from `.env`, the configuration of the reverse proxy, takes these too ([Reverse proxy](../reverse-proxy.md)): after a change, `./prepare_environment.sh --render-proxy`. The Helm chart has its Ingresses instead ([Kubernetes](../reverse-proxy.md#kubernetes)).
+
+| `.env` | Helm | Default | Meaning | Old name |
+|---|---|---|---|---|
+| `PROXY` | – | `own` | which reverse proxy: `own` (yours, with the file of `proxy/`), `caddy` ([the bundled Caddy](../reverse-proxy.md#the-bundled-caddy): `compose/caddy.yml` in `COMPOSE_FILE`, or its Quadlet) or `traefik` ([labels for your Traefik](../reverse-proxy.md#traefik-labels): `proxy/traefik-compose.yml` in `COMPOSE_FILE`). `--upgrade` puts the file of `PROXY` in `COMPOSE_FILE`, and takes out the other's | |
+| `PROXY_ADMIN_ALLOW` | – | `127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | who reaches the admin UI's public address (`ADMIN_OIDC_REDIRECT_URL`) through the proxy: addresses and CIDRs, comma-separated; empty: anybody ([The admin UI](../reverse-proxy.md#the-admin-ui)) | |
+| `CADDY_IMAGE` | – | `caddy:latest` | `PROXY=caddy`: its image | |
+| `CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT` | – | `80`, `443` | `PROXY=caddy`: the ports of this host it listens on ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)) | |
+| `CADDY_ACME_CA` | – | `letsencrypt` | `PROXY=caddy`: where its certificates come from, `letsencrypt`, `staging` (Let's Encrypt's test CA) or `internal` (Caddy's own CA) | |
+| `CADDY_ACME_EMAIL` | – | empty: none | `PROXY=caddy`: the email Let's Encrypt writes to about the certificates | |
+| `TRAEFIK_NETWORK` | – | `traefik` | the Docker network your Traefik watches: with `PROXY=traefik` the public containers join it | |
+| `TRAEFIK_ENTRYPOINTS` | – | `websecure` | the routers' HTTPS entry points, comma-separated (also of `proxy/traefik.yml`) | |
+| `TRAEFIK_HTTP_ENTRYPOINT` | – | `web` | the HTTP entry point redirected to HTTPS; empty: no redirect | |
+| `TRAEFIK_CERTRESOLVER` | – | empty: Traefik's default certificate | the certificate resolver of the routers | |
 
 ## Generated passwords and secrets
 

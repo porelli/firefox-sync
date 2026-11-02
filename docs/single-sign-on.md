@@ -99,9 +99,9 @@ None of them is behind the gate when you follow this page. The backups connect t
 
 ### nginx
 
-The first server of [access-control-example.conf](/config/nginx/access-control-example.conf) replaces the accounts pages' server of `config/nginx/fxa.conf`. It asks for the certificate at the handshake (`ssl_verify_client optional`), lets the open paths through, and answers `403` to the rest without one. A certificate of another CA gets `400`.
+The first server of [access-control-example.conf](/config/nginx/access-control-example.conf) replaces the accounts pages' server of `proxy/nginx.conf` ([Reverse proxy](reverse-proxy.md#nginx)). It asks for the certificate at the handshake (`ssl_verify_client optional`), lets the open paths through, and answers `403` to the rest without one. A certificate of another CA gets `400`.
 
-For the admin UI's host, the whole host, in its server of `fxa.conf`:
+For the admin UI's host, the whole host, in its server of `proxy/nginx.conf`:
 
 ```nginx
 ssl_client_certificate /etc/nginx/client-ca.crt;
@@ -110,7 +110,7 @@ ssl_verify_client on;
 
 ### Caddy
 
-As [the test's](/tests/caddy/mtls/content.caddy), in the accounts pages' site:
+As [the test's](/tests/caddy/mtls/content.caddy), in the accounts pages' site. With `proxy/Caddyfile` (or the bundled Caddy's), put the lines inside the site, without it, into `proxy/caddy.d/content.caddy`, which it imports there and which stays when it is written again ([Caddy](reverse-proxy.md#caddy)):
 
 ```caddyfile
 accounts.example.com {
@@ -163,6 +163,8 @@ session:
 The second server of [access-control-example.conf](/config/nginx/access-control-example.conf), commented out, follows [Authelia's nginx integration](https://www.authelia.com/integration/proxies/nginx/): `auth_request` on every path but the open ones, which go straight to the accounts pages.
 
 ### Caddy
+
+As for the client certificates, with `proxy/Caddyfile` the lines of the site go into `proxy/caddy.d/content.caddy`, and Authelia's own site (`auth.example.com`) into `proxy/caddy.d/sites.caddy`:
 
 ```caddyfile
 accounts.example.com {

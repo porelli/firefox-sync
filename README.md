@@ -53,7 +53,7 @@ cd firefox-sync
 docker compose up -d
 ```
 
-Then [point your reverse proxy to it](docs/reverse-proxy.md) and [set up Firefox](docs/firefox.md).
+Then [point your reverse proxy to it](docs/reverse-proxy.md) (the setup writes its configuration into `proxy/`, or runs a bundled Caddy) and [set up Firefox](docs/firefox.md).
 
 ## Documentation
 

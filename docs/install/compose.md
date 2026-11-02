@@ -5,7 +5,7 @@ This page installs the Sync server with docker compose. Read [What you need](../
 ## Requirements
 
 - Docker with the compose plugin 2.21 or later ([install](https://docs.docker.com/engine/install/)): `docker compose version`.
-- A host name with HTTPS, proxied to the port of the Sync server: see [Reverse proxy](../reverse-proxy.md).
+- A host name with HTTPS, proxied to the port of the Sync server: your reverse proxy, or the bundled Caddy. See [Reverse proxy](../reverse-proxy.md).
 
 ## Install
 
@@ -22,9 +22,9 @@ This page installs the Sync server with docker compose. Read [What you need](../
    ./prepare_environment.sh
    ```
 
-   It asks its questions, one component at a time, shows what it will write, then writes `.env` and the examples of `config/nginx/` with your values. See [What the setup script asks](#what-the-setup-script-asks); to answer from a file instead, [Answers by name](#answers-by-name).
+   It asks its questions, one component at a time, shows what it will write, then writes `.env` and, in `proxy/`, the configuration of your reverse proxy with your values. See [What the setup script asks](#what-the-setup-script-asks); to answer from a file instead, [Answers by name](#answers-by-name).
 
-1. Set up your reverse proxy. With nginx, start from `config/nginx/syncstorage-rs.conf`, which the script wrote: see [Reverse proxy](../reverse-proxy.md).
+1. Set up your reverse proxy: put the file of yours from `proxy/` (`nginx.conf`, `Caddyfile`, `traefik.yml`) into it, see [Your own proxy](../reverse-proxy.md#your-own-proxy). With the bundled Caddy or the labels for Traefik, nothing to do here: `docker compose up -d` runs them ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy), [Traefik labels](../reverse-proxy.md#traefik-labels)).
 
 1. Check the optional services before the first start: the admin UI, the nightly backups and, with self-hosted accounts, your own pairing server. The script asked for each and listed those you chose in `COMPOSE_PROFILES` of `.env`. Only those start: to add or remove one, see [Optional services](#optional-services).
 
@@ -48,13 +48,14 @@ This page installs the Sync server with docker compose. Read [What you need](../
 
 ## What the setup script asks
 
-The questions go one component at a time, in six parts, each with its number (`2/6 The Sync server`), then a review of every answer before anything is written:
+The questions go one component at a time, in seven parts, each with its number (`2/7 The Sync server`), then a review of every answer before anything is written:
 
 1. **Deployment**: the directory of the checkout; with an `.env` there already, upgrade it (keep its passwords, as `--upgrade`) or set it up again; with Podman, Quadlets or docker compose; your domain, which the public addresses below default to (`sync.<domain>`, `accounts.<domain>`...).
 1. **The Sync server**: its public URL, where it listens for your reverse proxy, its image tag, its database (the engine; in containers of the stack or on your own server, then its host, names and users), and how many accounts can use it.
 1. **The accounts**: Mozilla's or self-hosted. With Mozilla's: invite-only Sync. Self-hosted: the public URLs of the accounts pages, API and profile server, their database, the SMTP server for their emails, who can sign up, the most accounts, the security history and the pairing server.
 1. **The admin UI**: on or off, how admins sign in (the password; the self-hosted accounts; another OpenID Connect provider; a header of your reverse proxy), who is an admin, whether a password stays a way in with single sign-on, its public URL when a provider sends you back to it, and where its alerts go.
 1. **Backups**: the nightly backups.
+1. **Reverse proxy**: whether you run one already (its configuration is in `proxy/` in any case), else the bundled Caddy (its certificates, its ports) or the labels for your Traefik (its network, entry points and certificate resolver); who can open the admin UI's public address.
 1. **Review**: what will be written, part by part, with the passwords and secrets the script generates (named, not shown). Write it, change a part (its questions again, the parts after it keep their answers), or quit with nothing written.
 
 At a question:
@@ -69,18 +70,20 @@ At the end the script lists the passwords and secrets it generated, and how to c
 
 | Question | What it changes | More |
 |---|---|---|
-| the public URL of the Sync server | `SYNC_PUBLIC_URL`, the host of `config/nginx/syncstorage-rs.conf` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
+| the public URL of the Sync server | `SYNC_PUBLIC_URL`, its host in `proxy/` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
 | where the Sync server listens, `127.0.0.1:5000` | `SYNC_EXPORT_PORT` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
 | the image tag of the Sync server | `SYNC_IMAGE_TAG` (`latest`) | [Upgrading](../upgrading.md#sync-server) |
 | the engine of the Sync server's database: `mariadb`, `mysql` or `postgres` | `SYNC_DB`, and its file in `COMPOSE_FILE` | [Databases](../databases.md) |
 | the Sync server's database on your own server | `SYNC_DB_CONTAINERS=0`, and a `database-setup.sql` to run there | [Your own server](../databases.md#with-docker-compose) |
 | max users of the Sync server | `SYNC_MAX_USERS` (`initial:` with the admin UI) | [Limits](../limits.md) |
-| Mozilla's or self-hosted accounts | the accounts' section of `.env`, `config/nginx/fxa.conf` | [Self-hosted accounts](../accounts.md#set-up) |
+| Mozilla's or self-hosted accounts | the accounts' section of `.env`, their hosts in `proxy/` | [Self-hosted accounts](../accounts.md#set-up) |
 | invite-only Sync, with Mozilla's accounts | `SYNC_ALLOWED_ACCOUNTS` | [Limits](../limits.md#sync_allowed_accounts) |
 | the admin UI | `admin` in `COMPOSE_PROFILES`, `ADMIN_PASSWORD` | [Admin UI](../admin/README.md#set-up) |
 | how admins sign in, who is an admin | `ADMIN_OIDC_*`, `ADMIN_FXA_CLIENT_ID`, `ADMIN_AUTH_HEADER`, `ADMIN_TRUSTED_PROXIES`, `ADMIN_ALLOWED_USERS`, `ADMIN_ALLOWED_GROUPS` | [Signing in](../admin/signing-in.md) |
 | the nightly backups | `backup` in `COMPOSE_PROFILES` (Quadlets: the backup timer enabled) | [Backups](../backups.md#the-backup-service) |
-| with self-hosted accounts, your own pairing server (not with Quadlets) | `pairing` in `COMPOSE_PROFILES`, `FXA_PAIRING_URL`, its server block in `config/nginx/fxa.conf` | [Pairing](../reverse-proxy.md#pairing) |
+| with self-hosted accounts, your own pairing server (not with Quadlets) | `pairing` in `COMPOSE_PROFILES`, `FXA_PAIRING_URL`, its host in `proxy/` | [Pairing](../reverse-proxy.md#pairing) |
+| your reverse proxy: yours, the bundled Caddy, the labels for Traefik | `PROXY`, `compose/caddy.yml` or `proxy/traefik-compose.yml` in `COMPOSE_FILE`, `CADDY_*`, `TRAEFIK_*` | [Reverse proxy](../reverse-proxy.md) |
+| who can open the admin UI's public address | `PROXY_ADMIN_ALLOW` | [The admin UI](../reverse-proxy.md#the-admin-ui) |
 
 Every setting is in [Settings](../reference/settings.md). Coming from another Sync server: read [Migrating](../migrating.md) before you run the script.
 
@@ -101,7 +104,7 @@ Each component that people or Firefox reach has a public URL of its own: the Syn
 | your own pairing server | `wss://pairing.<domain>` | `FXA_PAIRING_URL` | `wss`, `ws` |
 | the admin UI | `https://admin.<domain>` | `ADMIN_OIDC_REDIRECT_URL` (that URL and `/auth/callback`) | `https`; `http` on `localhost` only |
 
-Firefox needs `https` for all but `localhost`. The nginx examples get the host names; with a port of its own, change their `listen` lines (the script says which).
+Firefox needs `https` for all but `localhost`. The files of `proxy/` get the host names, and listen on the port of a URL that has one ([Host names and ports](../reverse-proxy.md#host-names-and-ports)).
 
 ## Answers by name
 
@@ -174,6 +177,15 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `admin_password` | `accounts`, `oidc`, `header`: keep a password as a fallback? | yes; no: `ADMIN_PASSWORD` empty, single sign-on only | yes |
 | `admin_notify` | where the alerts go too | destination URLs | none |
 | `backups` | nightly backups? | yes, no | no (an install's: its own) |
+| `proxy` | do you already run a reverse proxy? | `own`, `caddy` (the bundled Caddy), `traefik` (labels for your Traefik; not with Quadlets) | `own` (an install's: its own) |
+| `proxy_admin_allow` | with the admin UI's public URL: who can open it | addresses and CIDRs, comma-separated; `anybody` | `127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` |
+| `caddy_email` | `caddy`: the email for Let's Encrypt | an email; empty: none | none |
+| `caddy_ca` | `caddy`: where its certificates come from | `letsencrypt`, `staging`, `internal` | `letsencrypt` |
+| `caddy_http_port`, `caddy_https_port` | `caddy`: its ports on this host | ports | `80`, `443` |
+| `traefik_network` | `traefik`: the Docker network your Traefik watches | a network name | `traefik` |
+| `traefik_entrypoints` | `traefik`: its HTTPS entry points | names, comma-separated | `websecure` |
+| `traefik_http_entrypoint` | `traefik`: its HTTP entry point, redirected to HTTPS | a name; `none` | `web` |
+| `traefik_certresolver` | `traefik`: its certificate resolver | a name; `none`: its default certificate | none |
 | `confirm` | the review: write? | `write`, `quit` | `write` |
 
 ## Optional services
@@ -198,7 +210,7 @@ docker compose rm -sf backup        # with self-hosted accounts: backup backup-f
 
 ## The compose files
 
-They are in [compose/](/compose). An install has `compose/sync.yml`, exactly one file of the Sync database, and with self-hosted accounts `compose/fxa.yml` and exactly one file of their database. Each database file adds its containers, volumes and backup client, and what the other services need of it. The files of one database do not build on another's.
+They are in [compose/](/compose). An install has `compose/sync.yml`, exactly one file of the Sync database, and with self-hosted accounts `compose/fxa.yml` and exactly one file of their database; with the bundled Caddy or the labels for Traefik, their file last. Each database file adds its containers, volumes and backup client, and what the other services need of it. The files of one database do not build on another's.
 
 | File | What it has |
 |---|---|
@@ -210,6 +222,8 @@ They are in [compose/](/compose). An install has `compose/sync.yml`, exactly one
 | [compose/fxa-mysql.yml](/compose/fxa-mysql.yml) | the accounts on MySQL (`FXA_DB=mysql`): `fxa-db` |
 | [compose/fxa-mariadb.yml](/compose/fxa-mariadb.yml) | the accounts on MariaDB (`FXA_DB=mariadb`): `fxa-db` |
 | [compose/podman.yml](/compose/podman.yml) | docker compose on the Podman socket, see [Podman](podman.md) |
+| [compose/caddy.yml](/compose/caddy.yml) | `PROXY=caddy`: the bundled Caddy, see [The bundled Caddy](../reverse-proxy.md#the-bundled-caddy) |
+| `proxy/traefik-compose.yml` | `PROXY=traefik`: the labels for your Traefik, written by the script ([Traefik labels](../reverse-proxy.md#traefik-labels)) |
 
 For example, Sync on PostgreSQL with the accounts on MySQL:
 

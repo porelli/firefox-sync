@@ -6,7 +6,7 @@ This page installs the Sync server with rootless Podman, in one of two ways: Qua
 
 - Podman 4.4 or later ([install](https://podman.io/docs/installation)), set up for rootless use ([Podman's rootless tutorial](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)).
 - For docker compose on the Podman socket: `docker compose`, the version of [docker compose](compose.md#requirements). The Docker daemon is not needed.
-- A host name with HTTPS, proxied to the port of the Sync server: see [Reverse proxy](../reverse-proxy.md).
+- A host name with HTTPS, proxied to the port of the Sync server: your reverse proxy, or the bundled Caddy. See [Reverse proxy](../reverse-proxy.md).
 
 The stack uses named volumes only, so rootless Podman handles their ownership, and SELinux labels stay on.
 
@@ -60,6 +60,7 @@ Other choices of the setup script, with Quadlets:
 - Your own database server: see [Databases](../databases.md#with-quadlets).
 - The admin UI: see [Admin UI](../admin/README.md#set-up).
 - The nightly backups: answered yes, it enables `firefox-sync-backup.timer`, see [Backups](../backups.md#the-backup-service). The pairing server is not asked: the Quadlets have none.
+- The reverse proxy: its configuration is in `proxy/` ([Your own proxy](../reverse-proxy.md#your-own-proxy)). Answered `caddy`, the bundled Caddy gets a unit of its own, `firefox-sync-caddy.service`, on the host's network: start it with `systemctl --user start firefox-sync-caddy.service`. On ports 80 and 443, rootless Podman needs `net.ipv4.ip_unprivileged_port_start=80`, which the script checks: see [Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024). The labels for Traefik are not offered: they are for docker compose.
 
 ### Self-hosted accounts
 
@@ -159,6 +160,8 @@ Upgrading the images: see [Upgrading](../upgrading.md#quadlets).
    `COMPOSE_FILE` in `.env` has the files of your choices ([The compose files](compose.md#the-compose-files)) and [compose/podman.yml](/compose/podman.yml), which gives the Sync server's healthcheck more time, for slower rootless starts.
 
 Everything else works as in [docker compose](compose.md): logs with `docker compose logs -f`, `docker compose down` to stop.
+
+The bundled Caddy (`PROXY=caddy`) on the Podman socket: on ports 80 and 443 it needs `net.ipv4.ip_unprivileged_port_start=80` ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)), and the port forwarding of rootless Podman hides the clients' addresses from it, which the accounts' limits count on: the Quadlets' Caddy, on the host's network, sees them ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy)). The labels for Traefik work there too, Traefik reading the Podman socket ([Traefik labels](../reverse-proxy.md#traefik-labels)).
 
 ## Why not podman-compose?
 

@@ -133,7 +133,7 @@ connectors:
 
 ### Self-hosted accounts
 
-With [self-hosted accounts](../accounts.md), the accounts service is an OpenID Connect provider too. In `prepare_environment.sh`, choose `accounts` for how admins sign in, then give the admins' emails and the public URL of the admin UI (`https://admin.<your domain>`). It then sets it all up, with an nginx server for that host in `config/nginx/fxa.conf`.
+With [self-hosted accounts](../accounts.md), the accounts service is an OpenID Connect provider too. In `prepare_environment.sh`, choose `accounts` for how admins sign in, then give the admins' emails and the public URL of the admin UI (`https://admin.<your domain>`). It then sets it all up, with that host in the configuration of the reverse proxy, `proxy/` ([The admin UI](../reverse-proxy.md#the-admin-ui)).
 
 By hand:
 
