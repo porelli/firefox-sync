@@ -189,10 +189,20 @@ else
   podman build -q --format docker -t "${REPOSITORY}:admin-latest" admin > build-admin.log 2>&1
 fi
 rc=$?; check "${rc}" 0 "admin UI image"; [ "${rc}" = 0 ] || tail -5 build-admin.log
-# answers: domain, compose dir, port, max users, backend, deploy method, user, image tag, admin UI,
-# accounts, invite-only ($4, default n), your own database server, alerts' destination, nightly
-# backups ($3, default n)
-setup() { printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "$1" "$2" "" "${TAG}" "" "" "${4:-}" "" "" "${3:-n}" | ./prepare_environment.sh > "setup-$1-$2.log" 2>&1; }
+# ffs_setup <log> [id=value...]: prepare_environment.sh with its answers by name
+# (docs/install/compose.md#answers-by-name), set up again over the .env of before, the Sync
+# server at https://ffs-e2e.invalid, the image under test; these answers after them (the last
+# answer of an id counts), the questions not answered on their defaults, nothing on its input
+ffs_setup() {
+  local log=$1
+  shift
+  printf '%s\n' existing=new domain=ffs-e2e.invalid sync_url=ffs-e2e.invalid "sync_image_tag=${TAG}" "$@" > setup.answers
+  ./prepare_environment.sh --answers setup.answers < /dev/null > "${log}" 2>&1
+}
+# the self-hosted accounts under fxa.invalid, an SMTP server (its password: pw)
+fxa_answers=(domain=fxa.invalid accounts=self-hosted smtp_host=mail.invalid smtp_user=test smtp_password=pw)
+# setup <Sync database> <1: quadlets, 2: compose>: the admin UI and Mozilla's accounts, on PORT
+setup() { ffs_setup "setup-$1-$2.log" "sync_listen=${PORT}" "sync_db=$1" "deploy=$([ "$2" = 1 ] && echo quadlets || echo compose)"; }
 admin_up() {
   local c
   for _ in $(seq 1 30); do
@@ -405,8 +415,8 @@ compose_test() {
 compose_test postgres
 
 echo "== where the Sync server listens: on this host only by default (nothing started)"
-# answers as setup, the port: the default, a port alone, another address, not a port
-port_setup() { printf '%s\n' ffs-e2e.invalid "" "$1" 1 mariadb 2 "" "${TAG}" "" "" "" "" "" n | ./prepare_environment.sh > setup-port.log 2>&1; }
+# as setup with compose, the port: the default (empty), a port alone, another address, not a port
+port_setup() { ffs_setup setup-port.log "sync_listen=$1" deploy=compose; }
 rm -f .env .env.before-setup-*
 port_setup ""
 check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5000;$' config/nginx/syncstorage-rs.conf)" "0 127.0.0.1:5000 1" \
@@ -450,17 +460,20 @@ check "$? $([ -L .env ] && echo link) $(grep -c '^ADMIN_DB_NAME=' "${WORK}/secre
   "--upgrade on an .env that is a symlink: the symlink kept, its file written, 0600"
 rm .env && mv "${WORK}/secrets/ffs.env" .env
 echo "== invite-only Sync: asked with Mozilla's accounts, kept by --upgrade (nothing started)"
-# answers as port_setup: admin UI (y: approved there, n: the uids asked), the accounts: no, invite-only: y
-invite_setup() { printf '%s\n' ffs-e2e.invalid "" "" 1 mariadb 2 "" "${TAG}" "$@" "" n | ./prepare_environment.sh > setup-invite.log 2>&1; }
-invite_setup "" "" y ""
+# as port_setup, invite-only: invite_setup admin (approved in the admin UI), or invite_setup list <uids> (no admin UI)
+invite_setup() {
+  if [ "$1" = admin ]; then ffs_setup setup-invite.log deploy=compose sync_invite_only=admin
+  else ffs_setup setup-invite.log deploy=compose admin=no sync_invite_only=list "sync_allowed_accounts=\"$2\""; fi
+}
+invite_setup admin
 check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 admin" "invite-only with the admin UI: SYNC_ALLOWED_ACCOUNTS=admin"
 ./prepare_environment.sh --upgrade < /dev/null > upgrade-invite.log 2>&1
 check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 admin" "--upgrade keeps SYNC_ALLOWED_ACCOUNTS"
-invite_setup n "" y " 0123456789ABCDEF0123456789abcdef, fedcba9876543210fedcba9876543210 "
+invite_setup list " 0123456789ABCDEF0123456789abcdef, fedcba9876543210fedcba9876543210 "
 check "$? $(env_of SYNC_ALLOWED_ACCOUNTS)" "0 0123456789abcdef0123456789abcdef,fedcba9876543210fedcba9876543210" \
   "invite-only without the admin UI: the uids given, lowercase, without spaces"
 cp -p .env "${WORK}/invite.env"
-invite_setup n "" y "0123456789abcdef"
+invite_setup list "0123456789abcdef"
 check "$? $(grep -c "^ERROR: not an account id (32 hexadecimal characters" setup-invite.log) $(cmp -s .env "${WORK}/invite.env" && echo kept)" "1 1 kept" \
   "not an account id: refused, .env as it was"
 port_setup ""
@@ -1081,9 +1094,9 @@ mariadb_sql
 # a new install (the .env of the phase before pins its databases' major, which a setup run
 # again keeps: UPGRADE_FROM's)
 rm -f .env
-# answers as setup, admin UI: n, the accounts and your own server: no, the nightly backups:
-# yes. The Sync server starts without ffs-admin to resolve (the port as address and port)
-printf '%s\n' ffs-e2e.invalid "" "127.0.0.1:${PORT}" 1 mariadb 1 "" "${TAG}" n "" "" "" y | ./prepare_environment.sh > setup-no-admin.log 2>&1
+# as setup, no admin UI, the nightly backups on. The Sync server starts without ffs-admin to
+# resolve (the port as address and port)
+ffs_setup setup-no-admin.log "sync_listen=127.0.0.1:${PORT}" deploy=quadlets admin=no backups=yes
 check "$?" 0 "prepare_environment.sh (quadlets, no admin UI)"
 check "$(env_of COMPOSE_PROFILES) $(systemctl --user is-enabled firefox-sync-backup.timer 2> /dev/null)" "backup enabled" \
   "the nightly backups chosen: COMPOSE_PROFILES=backup, the backup timer enabled (quadlets)"
@@ -1141,18 +1154,18 @@ if [ "${SYNC_DB}" != postgres ]; then
   check "$?" 0 "quadlet generator accepts the PostgreSQL units"
   stop_quadlets
   # with the accounts: their admin UI's unit on the Sync database of PostgreSQL too
-  # (answers as setup, then the accounts' domain, SMTP host, port, user, password, sender, allowlist, admin emails)
+  # (as setup, the accounts under fxa.invalid with an SMTP server, the admin UI's password only)
   rm -f .env
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 postgres 1 "" "${TAG}" "" y fxa.invalid mail.invalid 587 test pw "" "" "" | ./prepare_environment.sh > setup-postgres-fxa.log 2>&1
+  ffs_setup setup-postgres-fxa.log "sync_listen=${PORT}" sync_db=postgres deploy=quadlets "${fxa_answers[@]}" admin_signin=password
   check "$? $(grep -hcxE 'Environment="(TOKENSERVER_DB_TYPE=postgres|TOKENSERVER_DB_HOST=firefox-sync-postgres-db|FXA_DB_HOST=fxa-db)"' "${QUADLET_DIR}/firefox-sync-admin.container") $(env_keys_diff "-f compose/sync.yml -f compose/sync-postgres.yml -f compose/fxa.yml -f compose/fxa-mysql.yml" 'FXA_PAIRING_URL|TOKENSERVER_DB_PASSWORD|FFS_OLD_ENV_NAMES')" "0 3 |" \
     "with the accounts: the admin UI's unit on PostgreSQL and the accounts, every setting of compose's (quadlets rendered)"
   "${QUADLET}" -dryrun -user > quadlet-postgres-fxa-dryrun.log 2>&1
   check "$?" 0 "quadlet generator accepts the PostgreSQL units with the accounts"
   stop_quadlets
   # your own PostgreSQL server: no database unit, nothing depends on one
-  # (answers as setup, then: your own server? host, port, database, user)
+  # (as setup, your own server: its host, the defaults of the rest)
   rm -f .env
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 postgres 1 "" "${TAG}" "" "" "" y pg.ffs-e2e.invalid "" "" "" "" n | ./prepare_environment.sh > setup-postgres-external.log 2>&1
+  ffs_setup setup-postgres-external.log "sync_listen=${PORT}" sync_db=postgres deploy=quadlets sync_db_own=yes sync_db_host=pg.ffs-e2e.invalid
   check "$? $(ls "${QUADLET_DIR}"/firefox-sync-*-db.* 2> /dev/null | wc -l) $(grep -hE '^(After|Requires)=.*-db\.service' "${QUADLET_DIR}"/firefox-sync-* | wc -l)" "0 0 0" \
     "your own PostgreSQL server: no database unit, no dependency on one (quadlets)"
   check "$(unit_count '^Environment="?(SYNC_SYNCSTORAGE__DATABASE_URL=postgres://syncserver:[A-Za-z0-9]+@pg\.ffs-e2e\.invalid:5432/syncserver|POSTGRES_SERVER=pg\.ffs-e2e\.invalid|POSTGRES_SYNC_USER=|TOKENSERVER_DB_HOST=pg\.ffs-e2e\.invalid)"?$' \
@@ -1192,17 +1205,13 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
       extdb_admin < database-setup.sql
     fi
   }
-  # answers as above, no accounts, not invite-only, then: your own server? host, port, the databases and users
-  # (MariaDB, MySQL: tokenserver database and user, storage database and user; PostgreSQL: the
-  # database and its user), the alerts' destination, the nightly backups: yes
+  # as setup, your own server (its host; the port, databases and users: the defaults), the
+  # nightly backups on
   rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
-  if [ "${SYNC_DB}" = postgres ]; then ext_names=("" ""); else ext_names=("" "" "" ""); fi
-  # DB_BOOTSTRAP=1: then the stack applies database-setup.sql itself (the last question: yes,
-  # the account ffs_sync_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
-  ext_bootstrap=()
-  [ -n "${DB_BOOTSTRAP:-}" ] && ext_bootstrap=(y "" "")
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 "${SYNC_DB}" 1 "" "${TAG}" "" n "" y "${EXTDB}" "" "${ext_names[@]}" "" y "${ext_bootstrap[@]}" \
-    | ./prepare_environment.sh > setup-external.log 2>&1
+  # DB_BOOTSTRAP=1: then the stack applies database-setup.sql itself (the account
+  # ffs_sync_bootstrap, a new password), docs/databases.md#let-the-stack-apply-them
+  ffs_setup setup-external.log "sync_listen=${PORT}" "sync_db=${SYNC_DB}" deploy=quadlets sync_db_own=yes "sync_db_host=${EXTDB}" backups=yes \
+    "sync_db_bootstrap=$([ -n "${DB_BOOTSTRAP:-}" ] && echo yes || echo no)"
   check "$?" 0 "prepare_environment.sh (quadlets, your own ${SYNC_DB} server)"
   check "$(env_of SYNC_DB_CONTAINERS) $(ls "${QUADLET_DIR}"/firefox-sync-*-db.* 2> /dev/null | wc -l)" "0 0" "SYNC_DB_CONTAINERS=0, no database quadlets"
   check "$(units_secret_free)" none "no secret of .env in the units of your own server, the secrets in their environment files, 0600"
@@ -1323,9 +1332,9 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   rm -f .env database-setup.sql database-setup.sql.before-upgrade-* database-bootstrap.sql
 
   # the accounts on your own MySQL server: only what is installed (no MySQL here)
-  # answers: ..., admin host, your own server for Sync? the accounts? host, port, user, policy user
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 mariadb 1 "" "${TAG}" "" y fxa.invalid mail.invalid 587 test pw "" "" "" \
-    n y fxa-mysql.invalid "" "" "" | ./prepare_environment.sh > setup-fxa-external.log 2>&1
+  # (as setup, the accounts on your own server: its host, the defaults of the rest)
+  ffs_setup setup-fxa-external.log "sync_listen=${PORT}" sync_db=mariadb deploy=quadlets "${fxa_answers[@]}" admin_signin=password \
+    fxa_db_own=yes fxa_db_host=fxa-mysql.invalid
   check "$?" 0 "prepare_environment.sh (quadlets, accounts on your own server)"
   # (and firefox-sync-fxa-db-bootstrap: its users and grants checked before the migrations)
   check "$(ls "${QUADLET_DIR}"/firefox-sync-fxa-*.{container,volume} 2> /dev/null | wc -l) $(ls "${QUADLET_DIR}"/firefox-sync-fxa-db-bootstrap.container | wc -l)" "12 1" \
@@ -1344,9 +1353,7 @@ FXA_DB=${FXA_DB:-mysql}
 fxa_db_image() { sed -n 's/^Image=//p' "${QUADLET_DIR}/firefox-sync-fxa-db.container" 2> /dev/null; }
 if [ -z "${SKIP_FXA:-}" ] && [ "${FXA_DB}" != mariadb ]; then
   echo "== quadlets with the accounts on MariaDB: only what is installed"
-  # answers: as below, then your own server for Sync? the accounts? the accounts database
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 mariadb 1 "" "${TAG}" "" y fxa.invalid mail.invalid 587 test pw "" "" "" \
-    n n mariadb | ./prepare_environment.sh > setup-fxa-mariadb.log 2>&1
+  ffs_setup setup-fxa-mariadb.log "sync_listen=${PORT}" sync_db=mariadb deploy=quadlets "${fxa_answers[@]}" admin_signin=password fxa_db=mariadb
   check "$?" 0 "prepare_environment.sh (quadlets, accounts on MariaDB)"
   check "$(health_parity "${QUADLET_DIR}" docker compose --env-file .env --profile admin --profile backup --profile pairing -f compose/sync.yml -f compose/sync-mariadb.yml -f compose/fxa.yml -f compose/fxa-mariadb.yml)" same \
     "the Quadlets' healthchecks with the accounts on MariaDB are compose's"
@@ -1392,9 +1399,6 @@ fi
 if [ -z "${SKIP_FXA:-}" ]; then
   echo "== quadlets with self-hosted Mozilla accounts (${FXA_DB})"
   # answers: ..., image tag, admin UI, FxA, FxA domain, SMTP host, port, user, password, sender, allowlist,
-  # admin emails, admin host, [your own server for Sync? the accounts? the accounts database]
-  fxa_db_answers=()
-  [ "${FXA_DB}" = mariadb ] && fxa_db_answers=(n n mariadb)
   # one pull up front, otherwise every unit pulls the 5 GB image at the same time; before
   # prepare_environment.sh, which reads its label (mozilla/fxa#21554: MySQL lts)
   case "$(uname -m)" in aarch64|arm64) fxa_arch=arm64 ;; *) fxa_arch=amd64 ;; esac
@@ -1408,9 +1412,9 @@ if [ -z "${SKIP_FXA:-}" ]; then
   fi
   fxa_pulled=$?
   fxa_image_id=$(podman image inspect -f '{{.Id}}' "${fxa_image}" 2> /dev/null)
-  printf '%s\n' ffs-e2e.invalid "" "${PORT}" 1 mariadb 1 "" "${TAG}" "" y fxa.invalid mail.invalid 587 test 'p%ss|w&rd' "" "@fxa.invalid" \
-    "me@fxa.invalid" "" "${fxa_db_answers[@]}" \
-    | ./prepare_environment.sh > setup-fxa-quadlets.log 2>&1
+  # (the accounts' database FXA_DB; a sign-up allowlist, the admin UI signing in with the accounts)
+  ffs_setup setup-fxa-quadlets.log "sync_listen=${PORT}" sync_db=mariadb deploy=quadlets "${fxa_answers[@]}" smtp_password='p%ss|w&rd' \
+    fxa_signups=@fxa.invalid admin_signin=accounts admin_users=me@fxa.invalid "fxa_db=${FXA_DB}"
   check "$?" 0 "prepare_environment.sh (quadlets with accounts)"
   fxa_compose=(-f compose/sync.yml -f compose/sync-mariadb.yml -f compose/fxa.yml -f "compose/fxa-${FXA_DB}.yml")
   check "$(health_parity "${QUADLET_DIR}" docker compose --env-file .env --profile admin --profile backup --profile pairing "${fxa_compose[@]}")" same \

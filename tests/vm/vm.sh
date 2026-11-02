@@ -1124,6 +1124,9 @@ affected_jobs() { # files...
       tests/e2e-fxa.sh|tests/docker-compose.fxa-test.yml|tests/compose/fxa.yml|tests/Caddyfile.fxa) add e2e-fxa ;;
       tests/docker-compose.admin-build.yml|tests/compose/admin-build.yml) add e2e-mysql e2e-postgres e2e-fxa ;;
       tests/podman.sh) add podman ;;
+      # the questions of the setup: the suites that run it (tests/setup_output.sh needs no VM: CI's docs.yml)
+      setup/questions.sh|setup/setup.sh) add e2e-fxa podman ;;
+      tests/setup_output.sh|tests/setup_tty.py) ;;
       # the chart: its lint, and on kind (one cluster at a time: in one slot, one after another)
       charts/firefox-sync/ci/*) add helm-lint ;;
       charts/firefox-sync/templates/fxa-*|charts/firefox-sync/templates/_fxa.tpl) add helm-lint helm-fxa-mysql "SKIP_BROWSER=1 helm-fxa-mariadb" ;;

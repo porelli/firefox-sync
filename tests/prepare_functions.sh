@@ -392,6 +392,34 @@ render external
 check "$(ls "${R}/units/firefox-sync-fxa-db.container" "${R}/units/firefox-sync-fxa-db.env" 2> /dev/null | wc -l | tr -d ' ') $(grep -c '^  - firefox-sync-fxa-db\.env (removed)$' "${WORK}/render-external.log")" "0 1" \
   "a unit no longer installed: its environment file removed with it"
 
+echo "== setup/questions.sh: the menus' keys, the public URLs, the answers by id (menu_key, menu_select, public_url, answer_given)"
+check "$(menu_key $'\e[B' 0 3) $(menu_key $'\e[A' 0 3) $(menu_key j 2 3) $(menu_key k 1 3) [$(menu_key '' 1 3)] [$(menu_key $'\r' 2 3)] [$(menu_key 3 0 3)] [$(menu_key 4 0 3)] $(menu_key '<' 0 3) [$(menu_key x 0 3)]" \
+  "1 2 0 0 [pick 1] [pick 2] [pick 2] [] back []" "menu_key: up and down (arrows, k j, around the ends), Enter (also a CR), a number of the list, < back; other keys nothing"
+# the keys on stdin as a terminal sends them: down, down, j (around to the first), up (around to the last), Enter
+pick() { printf "$1" | { menu_select "$2" 'a|first' 'b|second' 'c|third' > "${WORK}/menu.out"; echo "$?${MENU_PICK:+ ${MENU_PICK}}"; }; }
+check "$(pick '\e[B\e[Bj\e[A\n' 0) $(pick '2' 0) $(pick '\n' 1) $(MENU_PICK=""; pick '<' 0)" "0 2 0 1 0 1 2" \
+  "menu_select: the keys of a terminal move and pick, a number picks, Enter the default, < goes back"
+check "$(pick '\e[B\n' 0 > /dev/null; grep -c '2 b$' "${WORK}/menu.out") $(grep -c '^.\[2K > 2 b$' "${WORK}/menu.out") $(grep -cE '(first|second)$' "${WORK}/menu.out")" "2 1 2" \
+  "menu_select: the list drawn again for each key, the one selected marked, its description under it"
+check "$(public_url sync.example.com https "https http" x) $(public_url 'HTTP://Sync.example.com:8443/' https "https http" x) $(public_url p.example.com wss "wss ws" x)" \
+  "https://sync.example.com http://Sync.example.com:8443 wss://p.example.com" "public_url: a host alone with the default scheme, the scheme lowercase, a / at the end dropped"
+for bad in 'https://sync.example.com/sync' 'ftp://x.example.com' 'https://x.example.com:0' 'https://x.example.com:65536' 'https://user@x.example.com' 'https://x_y.example.com' 'https://x.example.com?a' 'https://' 'https://x.example.com:'; do
+  check "$(public_url "${bad}" https "https http" "Sync URL" 2> "${WORK}/url.err"; echo "$? $(grep -c '^ERROR: the Sync URL: ' "${WORK}/url.err")")" "1 1" "public_url refuses ${bad}"
+done
+check "$(url_host https://a.example.com:8443) $(url_port https://a.example.com:8443) $(url_host wss://p.example.com) [$(url_port wss://p.example.com)]" "a.example.com 8443 p.example.com []" "url_host, url_port"
+printf 'sync_url=https://a.example.com\n# a comment\nsmtp_password='"'"'p w#$x'"'"'\nexport domain=example.org # mine\n' > "${WORK}/answers"
+check "$(FFS_ANSWERS=${WORK}/answers; answer_given sync_url && echo "${ANSWER}") $(FFS_ANSWERS=${WORK}/answers; answer_given smtp_password && echo "[${ANSWER}]") $(FFS_ANSWERS=${WORK}/answers; answer_given domain && echo "${ANSWER}") $(FFS_ANSWERS=${WORK}/answers; answer_given sync_db || echo none)" \
+  'https://a.example.com [p w#$x] example.org none' "answer_given: the answers file read as compose reads .env (quotes, export, comments)"
+check "$(FFS_ANSWERS=${WORK}/answers FFS_SETUP_SYNC_URL=https://b.example.com bash -c 'source "$0" && FFS_ANSWERS=$1 && answer_given sync_url && echo "${ANSWER}"' "${CODE}/prepare_environment.sh" "${WORK}/answers")" \
+  "https://b.example.com" "answer_given: FFS_SETUP_<ID> of the environment before the file"
+printf 'sync_url=x\nsync_ulr=y\nnot an answer\n' > "${WORK}/answers-bad"
+check "$( (FFS_ANSWERS=${WORK}/answers-bad; check_answers) > "${WORK}/answers.log" 2>&1; echo "$? $(grep -cE '^  (sync_ulr|not id=value: not an answer)$' "${WORK}/answers.log")")" "2 2" \
+  "check_answers: an id of no question, a line that is no answer: refused"
+check "$( (FFS_SETUP_DOMIAN=x; export FFS_SETUP_DOMIAN; check_answers) > "${WORK}/answers.log" 2>&1; echo "$? $(grep -c 'FFS_SETUP_DOMIAN (environment)' "${WORK}/answers.log")")" "2 1" \
+  "check_answers: an FFS_SETUP_ of no question refused"
+check "$(setup_ids | wc -l | tr -d ' ') $(setup_ids | sort | uniq -d | wc -l | tr -d ' ') $(for id in $(setup_ids); do type -t "step_${id}"; done | sort -u)" "$(grep -c '^step_[a-z_]*() {' "${CODE}/setup/questions.sh") 0 function" \
+  "every question id has its step, once"
+
 echo "== setup/upgrade.sh: --upgrade of an .env from before (upgrade_env)"
 mkdir -p "${WORK}/up" && cp -r "${CODE}/.env-example" "${CODE}/db" "${WORK}/up/"
 sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|s3cret|' -e 's|<REPLACE_WITH_YOUR_DOMAIN>|sync.example.org|' \

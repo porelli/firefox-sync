@@ -309,19 +309,27 @@ if [ -z "${RERUN:-}" ]; then
 if [ -z "${DEMO:-}" ] && [ -z "${SKIP_SETUP:-}" ]; then
 echo "== prepare_environment.sh with self-hosted accounts"
 SETUP=${WORK}/setup${SLOT_SUFFIX} && mkdir -p "${SETUP}" && cp -r "${CODE}/." "${SETUP}/" && rm -f "${SETUP}/.env"
-# answers: domain, compose dir, port, max users, backend, [deploy method], user, image tag, admin UI,
-# FxA, FxA domain, SMTP host, port, user, password, sender, sign-up allowlist, admin emails, admin host
-answers=(sync.example.org "${SETUP}" 5000 2 mariadb)
-command -v podman > /dev/null && answers+=(2)
-# docker compose on the Podman socket (answer 2): compose/podman.yml in COMPOSE_FILE too
+# the answers by name (docs/install/compose.md#answers-by-name): set up again over the .env of
+# the run before, the self-hosted accounts with an SMTP server, a sign-up allowlist, the admin
+# UI signing in with them; docker compose on the Podman socket where Podman is (compose/podman.yml
+# in COMPOSE_FILE too). The questions not answered take their defaults
+answers=(existing=new "dir=${SETUP}" domain=example.org sync_url=sync.example.org sync_listen=5000 sync_max_users=2 sync_db=mariadb
+  deploy=compose accounts=self-hosted smtp_host=smtp.example.org smtp_user=mailer "smtp_password='p@ss|w&rd\#1 \$x'"
+  "fxa_signups=alice@example.org, @example.net" admin_signin=accounts admin_users=admin@example.org)
 PODMAN_FILE=$(command -v podman > /dev/null && echo :compose/podman.yml)
-admin_answer=$((${#answers[@]} + 2))
-answers+=("" latest "" y "" smtp.example.org 587 mailer 'p@ss|w&rd\#1 $x' "" "alice@example.org, @example.net" "admin@example.org" "")
+# prepare <log> [id=value...]: prepare_environment.sh with the answers above and these (the last
+# answer of an id counts), nothing else on its input
+prepare() {
+  local log=$1
+  shift
+  printf '%s\n' "${answers[@]}" "$@" > "${WORK}/setup.answers"
+  (cd "${SETUP}" && ./prepare_environment.sh --answers "${WORK}/setup.answers" < /dev/null) > "${log}" 2>&1
+}
 # compose as configured by .env: only what prepare_environment.sh wrote, not this shell's
 # stack settings (compose prefers the environment to .env)
 setup_compose() { (cd "${SETUP}" && env -i PATH="${PATH}" HOME="${HOME}" ${DOCKER_HOST:+DOCKER_HOST="${DOCKER_HOST}"} docker compose "$@" 2> /dev/null); }
-# the last questions: your own database servers for Sync and the accounts (no, no), the accounts database (mysql), max accounts
-printf '%s\n' "${answers[@]}" "" "" "" 5 | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup.log" 2>&1
+# and the most accounts
+prepare "${WORK}/setup.log" fxa_max_accounts=5
 check "$?" 0 "prepare_environment.sh with self-hosted accounts"
 # the project as before compose/: the directory's name (compose/ first in COMPOSE_FILE would name it "compose")
 setup_project=$(basename "${SETUP}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
@@ -348,25 +356,25 @@ check "$(grep -c '^COMPOSE_PROFILES=admin$' "${SETUP}/.env")" 1 "admin UI enable
 check "$(grep -c '^SYNC_MAX_USERS=initial:2$' "${SETUP}/.env")" 1 "max users managed in the admin UI (SYNC_MAX_USERS=initial:2)"
 check "$(grep -c '^FXA_SIGNUPS=allowlist$' "${SETUP}/.env") $(grep -c '^FXA_SIGNUP_ALLOWLIST=alice@example.org,@example.net$' "${SETUP}/.env")" "1 1" "sign-up allowlist"
 check "$(grep -c '^FXA_MAX_ACCOUNTS=initial:5$' "${SETUP}/.env")" 1 "max accounts managed in the admin UI (FXA_MAX_ACCOUNTS=initial:5)"
-# the security history, the last question: not answered, off
+# the security history: not answered, off (asked: its question said why, on no input the default)
 check "$(grep -c '^FXA_ACCOUNT_EVENTS=false$' "${SETUP}/.env") $(grep -c 'kept with its IP address' "${WORK}/setup.log")" "1 1" "no security history by default, the question says why"
 check "$(cd "${SETUP}" && env -i PATH="${PATH}" HOME="${HOME}" ${DOCKER_HOST:+DOCKER_HOST="${DOCKER_HOST}"} docker compose config 2> /dev/null | sed -n '/^  fxa-policy:/,/^  [a-z]/p' | grep -cE '^ +FXA_MAX_ACCOUNTS: "?initial:5"?$')" 1 \
   "fxa-policy gets FXA_MAX_ACCOUNTS"
 # not a number: refused before anything is written
 rm -f "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" "" "" "" lots | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bad-max.log" 2>&1
+prepare "${WORK}/setup-bad-max.log" fxa_max_accounts=lots
 check "$? $(grep -c "max accounts must be a number or unlimited, got 'lots'" "${WORK}/setup-bad-max.log")" "1 1" "prepare_environment.sh refuses max accounts lots"
-# and the last questions: a destination of the alerts, written as given, said without its token
-# (separated by a space; Slack's https:// URL as pasted, turned into slack://: yes), then the
-# nightly backups and your own pairing server, both on
-notify_answers=("${answers[@]}" "" "" "" 5 y 'ntfy://tk_ffsSECRET@ntfy.example.org/ffs-topic https://hooks.slack.com/services/T0/B0/ffsSECRET2' "")
-printf '%s\n' "${notify_answers[@]}" y y | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup.log" 2>&1
+# the security history on, the destinations of the alerts, written as given, said without their
+# token (separated by a space; Slack's https:// URL as pasted, turned into slack://), the nightly
+# backups and your own pairing server, both on
+notify_answers=(fxa_max_accounts=5 fxa_account_events=yes "admin_notify='ntfy://tk_ffsSECRET@ntfy.example.org/ffs-topic https://hooks.slack.com/services/T0/B0/ffsSECRET2'")
+prepare "${WORK}/setup.log" "${notify_answers[@]}" backups=yes pairing=yes
 check "$(grep -c '^COMPOSE_PROFILES=admin,backup,pairing$' "${SETUP}/.env") $(grep -c '^FXA_PAIRING_URL=wss://pairing.example.org$' "${SETUP}/.env") $(setup_compose config --services | grep -cxE 'backup|backup-fxa|fxa-pairing')" \
   "1 1 3" "the backups and the pairing server chosen: COMPOSE_PROFILES=admin,backup,pairing, FXA_PAIRING_URL, their services"
 check "$(grep -cx 'server {' "${SETUP}/config/nginx/fxa.conf") $(grep -cxE '  server_name pairing\.example\.org;|    proxy_pass http://127\.0\.0\.1:8058;|  ssl_certificate /etc/letsencrypt/live/pairing\.example\.org/fullchain\.pem;' "${SETUP}/config/nginx/fxa.conf") $(grep -c '<PAIRING_HOST>\|^#   ' "${SETUP}/config/nginx/fxa.conf")" \
   "$(($(grep -cx 'server {' "${SETUP}/config/nginx/fxa-example.conf") + 1)) 3 0" "the pairing server's block in the nginx example, uncommented"
 # run again on that install, the two questions not answered: what its .env has
-printf '%s\n' "${notify_answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-again.log" 2>&1
+prepare "${WORK}/setup-again.log" "${notify_answers[@]}"
 check "$? $(grep -c '^COMPOSE_PROFILES=admin,backup,pairing$' "${SETUP}/.env") $(grep -c '^FXA_PAIRING_URL=wss://pairing.example.org$' "${SETUP}/.env")" "0 1 1" \
   "run again: the backups and the pairing server of its .env are the defaults"
 check "$(grep -c '^FXA_ACCOUNT_EVENTS=true$' "${SETUP}/.env")" 1 "security history turned on (y)"
@@ -379,7 +387,7 @@ check "$(cd "${SETUP}" && env -u ADMIN_NOTIFY docker compose config 2> /dev/null
 cp "${SETUP}/.env" "${WORK}/setup.env"
 for notify in 'webhook://bot:ffs1234#abcd@example.com/x' 'webhook://alice:ffss3cr/et@example.com/hook' 'ntfy://user:ffspa?ss@host.example.org/topic'; do
   rm -f "${SETUP}/.env"
-  printf '%s\n' "${answers[@]}" "" "" "" 5 y "${notify}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-notify.log" 2>&1
+  prepare "${WORK}/setup-notify.log" "admin_notify=${notify}"
   check "$? $(grep -c '://…: an @ after the host, percent-encode / ? # in the user or password' "${WORK}/setup-notify.log") $(grep -c 'ffs1234\|ffss3cr\|ffspa\|abcd' "${WORK}/setup-notify.log")" "1 1 0" \
     "prepare_environment.sh refuses ${notify%%:*}:// with an @ after the host, without naming it"
 done
@@ -400,24 +408,24 @@ check "$(grep -c 'server_name admin.example.org;' "${SETUP}/config/nginx/fxa.con
 # (this shell has the stack's ADMIN_FXA_CLIENT_ID, which compose would prefer)
 check "$(cd "${SETUP}" && env -u ADMIN_FXA_CLIENT_ID docker compose config 2> /dev/null | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep -cE "^ +SERVICES_WITH_EMAIL_VERIFICATION: .*,$(env_value ADMIN_FXA_CLIENT_ID)$")" 1 \
   "the accounts always ask the sign-in code for the admin UI"
-# the same with PostgreSQL, then without the admin UI (the answers after the backend
-# are the same); compose as configured by .env (setup_compose), not by this shell's COMPOSE_PROFILES
+# the same with PostgreSQL, then without the admin UI; compose as configured by .env
+# (setup_compose), not by this shell's COMPOSE_PROFILES. prepare_again <Sync database>
+# <admin UI: yes or no> [password: the admin UI's password only]
 prepare_again() {
   rm -f "${SETUP}/.env"
-  answers[4]=$1; answers[admin_answer]=$2; answers[admin_answer+9]=${3-admin@example.org}
-  printf '%s\n' "${answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-$1-$2.log" 2>&1
+  prepare "${WORK}/setup-$1-$2.log" "sync_db=$1" "admin=$2" $([ "${3:-}" = password ] && echo admin_signin=password)
 }
-prepare_again postgres ""
+prepare_again postgres yes
 check "$?" 0 "prepare_environment.sh with PostgreSQL and self-hosted accounts"
 check "$(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-postgres.yml:compose/fxa.yml:compose/fxa-mysql.yml${PODMAN_FILE}" "${SETUP}/.env")" 1 "PostgreSQL compose files with the accounts"
 check "$(setup_compose config --services | grep -cxE 'postgres_db|fxa-auth|fxa-policy|ffs-admin')" 4 "compose stack with PostgreSQL, the accounts and the admin UI"
 # the major of postgres:latest now, pinned (a new major cannot open the data)
 pg_major=$(docker run --rm --entrypoint postgres postgres:latest --version 2> /dev/null | sed -n 's/^postgres (PostgreSQL) \([0-9]*\)[^0-9].*/\1/p')
-check "$(env_value SYNC_POSTGRES_IMAGE) $(setup_compose --profile backup config | awk '/^  [a-z]/ { on = ($1 == "postgres_db:" || $1 == "backup:") } on' | grep -cE "^ +image: postgres:${pg_major}$") $(grep -c "^SYNC_POSTGRES_IMAGE=postgres:${pg_major}: PostgreSQL ${pg_major}, the major of postgres:latest" "${WORK}/setup-postgres-.log")" \
+check "$(env_value SYNC_POSTGRES_IMAGE) $(setup_compose --profile backup config | awk '/^  [a-z]/ { on = ($1 == "postgres_db:" || $1 == "backup:") } on' | grep -cE "^ +image: postgres:${pg_major}$") $(grep -c "^SYNC_POSTGRES_IMAGE=postgres:${pg_major}: PostgreSQL ${pg_major}, the major of postgres:latest" "${WORK}/setup-postgres-yes.log")" \
   "postgres:${pg_major} 2 1" "PostgreSQL pinned to the major of postgres:latest (${pg_major}), for the database and its backups, and said"
 check "$(setup_compose config | sed -n '/^  ffs-admin:/,/^  [a-z]/p' | grep -cE '^ +(TOKENSERVER_DB_TYPE: postgres|FXA_DB_HOST: fxa-db|MAX_USERS: "?initial:2"?)$')" 3 "admin UI for PostgreSQL and the accounts, with SYNC_MAX_USERS"
 # Sync on MySQL containers (SYNC_DB=mysql), the same mysql images
-prepare_again mysql ""
+prepare_again mysql yes
 check "$?" 0 "prepare_environment.sh with MySQL for Sync and self-hosted accounts"
 check "$(env_value SYNC_DB) $(env_value SYNC_DB_TLS_VERIFY) $(env_value SYNC_MYSQL_IMAGE) $(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-mysql.yml:compose/fxa.yml:compose/fxa-mysql.yml${PODMAN_FILE}" "${SETUP}/.env")" \
   "mysql false mysql:lts 1" "Sync on MySQL lts in .env, with the accounts"
@@ -425,7 +433,7 @@ check "$(setup_compose config | sed -n '/^  tokenserver_db:/,/^  [a-z]/p' | grep
   "tokenserver_db on MySQL lts without binary logging, in its own volume, the image chosen"
 # an install from before SYNC_MYSQL_IMAGE: run again, or --upgrade, it stays on MySQL 8
 sed -i '/^SYNC_MYSQL_IMAGE=/d' "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-mysql-again.log" 2>&1
+prepare "${WORK}/setup-mysql-again.log" sync_db=mysql
 check "$? $(env_value SYNC_MYSQL_IMAGE) $(grep -c 'Sync databases of this install stay on MySQL 8' "${WORK}/setup-mysql-again.log")" "0 mysql:8 1" \
   "prepare_environment.sh again on an install with Sync on MySQL 8 keeps it there"
 sed -i '/^SYNC_MYSQL_IMAGE=/d' "${SETUP}/.env"
@@ -437,7 +445,7 @@ sed -i '/^SYNC_MYSQL_IMAGE=/d' "${SETUP}/.env"
 check "$(setup_compose config | sed -n '/^  tokenserver_db:/,/^  [a-z]/p' | grep -cE '^ +(image: mysql:lts|FFS_MYSQL_IMAGE: ""|- /ffs-db/keep-major.sh)$')" 3 \
   "without SYNC_MYSQL_IMAGE: mysql:lts, the major of the data checked (db/mysql/keep-major.sh)"
 check "$(setup_compose config | sed -n '/^  tokenserver_db_init:/,/^  [a-z]/p' | grep -cE '^ +MARIADB_TLS_VERIFY: "?false"?$')" 1 "init container does not check MySQL's self-signed certificate"
-prepare_again mariadb "" ""
+prepare_again mariadb yes password
 check "$?" 0 "prepare_environment.sh with the admin UI, no admin emails (password only)"
 check "$(grep -cE 'server_name admin\.|<ADMIN_' "${SETUP}/config/nginx/fxa.conf")" 0 "no admin UI host in the nginx example, password only"
 check "[$(env_value ADMIN_FXA_CLIENT_ID)] [$(env_value ADMIN_OIDC_ISSUER)] [$(env_value ADMIN_OIDC_REDIRECT_URL)]" "[] [] []" "no admin UI sign-in with the accounts, password only"
@@ -445,7 +453,7 @@ check "[$(env_value ADMIN_FXA_CLIENT_ID)] [$(env_value ADMIN_OIDC_ISSUER)] [$(en
 setup_config=$(cd "${SETUP}" && env -u COMPOSE_PROFILES -u ADMIN_FXA_CLIENT_ID -u ADMIN_FXA_CLIENT_SECRET -u ADMIN_OIDC_REDIRECT_URL docker compose config 2> /dev/null)
 check "$(echo "${setup_config}" | sed -n '/^  ffs-admin:/,/^  [a-z]/p' | grep -cE '^ +ADMIN_OIDC_(ISSUER|CLIENT_ID|NAME): ""$')" 3 "admin UI without OpenID Connect, password only"
 check "$(echo "${setup_config}" | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep -cE '^ +SERVICES_WITH_EMAIL_VERIFICATION: .*,$')" 1 "no admin UI client for the accounts, password only"
-prepare_again mariadb n
+prepare_again mariadb no
 check "$?" 0 "prepare_environment.sh with self-hosted accounts, without the admin UI"
 check "$(grep -cE 'ADMIN_GATE_EXPORT_PORT|8091' "${SETUP}/config/nginx/fxa.conf")" 0 "no sign-up gate in the nginx example without the admin UI"
 check "$(grep -cE 'server_name admin\.|<ADMIN_' "${SETUP}/config/nginx/fxa.conf") [$(env_value ADMIN_FXA_CLIENT_ID)]" "0 []" "no admin UI sign-in without the admin UI"
@@ -454,13 +462,11 @@ check "$(grep -c '^SYNC_MAX_USERS=2$' "${SETUP}/.env")" 1 "plain SYNC_MAX_USERS=
 check "$(grep -c '^FXA_MAX_ACCOUNTS=unlimited$' "${SETUP}/.env")" 1 "max accounts unlimited by default, plain without the admin UI"
 check "$(setup_compose config --services | grep -cxE 'fxa-policy|ffs-admin')" 1 "sign-up policy without the admin UI"
 check "$(setup_compose config --services | grep -cx ffs-admin)" 0 "no admin UI service"
-# your own servers for Sync and the accounts: the questions after all the others
-# (database server? host, port, tokenserver database and user, storage database and user;
-# the accounts? host, port, user, policy user)
-answers[4]=mariadb; answers[admin_answer]=""; answers[admin_answer+9]=admin@example.org
-external_answers=("${answers[@]}" y db.example.org "" "" "" sync_storage "" y "" 3307 "" "")
+# your own servers for Sync (its storage database named sync_storage) and the accounts (on the
+# same host, port 3307)
+external_answers=(sync_db_own=yes sync_db_host=db.example.org sync_storage_db_name=sync_storage fxa_db_own=yes fxa_db_port=3307)
 rm -f "${SETUP}/.env"
-printf '%s\n' "${external_answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-external.log" 2>&1
+prepare "${WORK}/setup-external.log" "${external_answers[@]}"
 check "$?" 0 "prepare_environment.sh with your own database servers"
 check "$(env_value SYNC_DB_CONTAINERS) $(env_value SYNC_DB_TLS_VERIFY) $(env_value SYNC_TOKENSERVER_DB_HOST):$(env_value SYNC_TOKENSERVER_DB_PORT) $(env_value SYNC_STORAGE_DB_HOST) $(env_value SYNC_STORAGE_DB_NAME)" \
   "0 false db.example.org:3306 db.example.org sync_storage" "Sync on your own server in .env"
@@ -490,63 +496,56 @@ check "$(echo "${external_config}" | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep 
 check "$(echo "${external_config}" | sed -n '/^  syncstorage:/,/^  [a-z]/p' | grep -cE '^ +SYNC_(SYNCSTORAGE|TOKENSERVER)__DATABASE_URL: mysql://[a-z]+:[A-Za-z0-9]+@db\.example\.org:3306/')" 2 "the Sync server connects to your server"
 check "$(env_value FXA_DB) $(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-mariadb.yml:compose/fxa.yml:compose/fxa-mysql.yml${PODMAN_FILE}" "${SETUP}/.env")" "mysql 1" "the accounts on MySQL by default"
 # localhost is the container itself: refused
-external_answers[admin_answer+12]=localhost
 rm -f "${SETUP}/.env"
-printf '%s\n' "${external_answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-localhost.log" 2>&1
+prepare "${WORK}/setup-localhost.log" "${external_answers[@]}" sync_db_host=localhost
 check "$? $(grep -c "would be the container itself" "${WORK}/setup-localhost.log")" "1 1" "prepare_environment.sh refuses localhost as the database host"
 # unbracketed in the database URLs: refused
-external_answers[admin_answer+12]=fd00::10
 rm -f "${SETUP}/.env"
-printf '%s\n' "${external_answers[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-ipv6.log" 2>&1
+prepare "${WORK}/setup-ipv6.log" "${external_answers[@]}" sync_db_host=fd00::10
 check "$? $(grep -c "no IPv6 address" "${WORK}/setup-ipv6.log")" "1 1" "prepare_environment.sh refuses an IPv6 address as the database host"
 # answers that would break the quoting of .env or add lines to it: refused, no .env
+# (refused <id> <answer> <message>)
 refused() {
-  local at=$1 value=$2 message=$3 log="${WORK}/setup-refused-$1.log" bad=("${answers[@]}")
-  bad[at]=${value}
+  local log="${WORK}/setup-refused-$1.log"
   rm -f "${SETUP}/.env"
-  printf '%s\n' "${bad[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${log}" 2>&1
-  check "$? $(grep -c "${message}" "${log}") [$(ls "${SETUP}/.env" 2> /dev/null)]" "1 1 []" "prepare_environment.sh refuses ${value} (${message})"
+  prepare "${log}" "$1=$2"
+  check "$? $(grep -c "${3}" "${log}") [$(ls "${SETUP}/.env" 2> /dev/null)]" "1 1 []" "prepare_environment.sh refuses ${2} (${3})"
 }
-refused $((admin_answer + 6)) "it's" "cannot contain a single quote"
-refused $((admin_answer + 8)) "alice@example.org;rm" "not a list of emails and domains"
-refused $((admin_answer + 9)) 'admin@example.org$(id)' "not a list of emails and domains"
-refused $((admin_answer + 10)) "admin.example.org/x" "not a host name"
-refused 3 ten "max users must be a number"
-refused 4 sqlite "unknown database backend"
+refused smtp_password "\"it's\"" "cannot contain a single quote"
+refused fxa_signups "alice@example.org;rm" "not a list of emails and domains"
+refused admin_users 'admin@example.org$(id)' "not a list of emails and domains"
+refused admin_url "admin.example.org/x" "only https://host or https://host:port, not 'admin.example.org/x'"
+refused sync_url "https://sync.example.org/sync" "only https://host or https://host:port"
+refused sync_max_users ten "max users must be a number"
+refused sync_db sqlite "one of mariadb, mysql, postgres, not 'sqlite'"
 # answers about your own server that end up unquoted in database-setup.sql (run as
 # root) and in the database URLs: refused, no .env, no SQL
-external_answers[admin_answer+12]=db.example.org
-external_at=$((admin_answer + 12))
+# (refused_external <id> <answer> <message>)
 refused_external() {
-  local at=$1 value=$2 message=$3 log="${WORK}/setup-refused-external-$1.log" bad=("${external_answers[@]}")
-  bad[at]=${value}
+  local log="${WORK}/setup-refused-external-$1.log"
   rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql
-  printf '%s
-' "${bad[@]}" | (cd "${SETUP}" && ./prepare_environment.sh) > "${log}" 2>&1
-  check "$? $(grep -c "${message}" "${log}") [$(ls "${SETUP}/.env" "${SETUP}"/database-setup*.sql 2> /dev/null)]" "1 1 []" "prepare_environment.sh refuses '${value}' (${message})"
+  prepare "${log}" "${external_answers[@]}" "$1=$2"
+  check "$? $(grep -c "${3}" "${log}") [$(ls "${SETUP}/.env" "${SETUP}"/database-setup*.sql 2> /dev/null)]" "1 1 []" "prepare_environment.sh refuses '${2}' for ${1} (${3})"
 }
-refused_external $((external_at + 2)) "tokenserver;drop" "not a valid database or user name"
-refused_external $((external_at + 5)) "Sync-User" "not a valid database or user name"
-refused_external $((external_at + 4)) "tokenserver" "need two databases"
-refused_external $((external_at + 1)) "33o6" "not a port"
+refused_external sync_tokenserver_db_name "tokenserver;drop" "not a valid database or user name"
+refused_external sync_storage_db_user "Sync-User" "not a valid database or user name"
+refused_external sync_storage_db_name "tokenserver" "need two databases"
+refused_external sync_db_port "33o6" "not a port"
 # the admin UI's names (db/db-setup.sh tells its problems apart by them): never Sync's or the accounts'
-refused_external $((external_at + 3)) "ffs_admin_sync" "admin UI's own users or database"
-refused_external $((external_at + 2)) "ffs_admin" "admin UI's own users or database"
-refused_external $((external_at + 9)) "ffs_admin_ui" "admin UI's own users or database"
-refused_external "${external_at}" "" "database host is required"
-# the accounts on MariaDB: the last question (EOF above: mysql)
-external_answers[admin_answer+12]=db.example.org
+refused_external sync_tokenserver_db_user "ffs_admin_sync" "admin UI's own users or database"
+refused_external sync_tokenserver_db_name "ffs_admin" "admin UI's own users or database"
+refused_external fxa_db_user "ffs_admin_ui" "admin UI's own users or database"
+refused_external sync_db_host "" "database host is required"
+# the accounts on MariaDB
 rm -f "${SETUP}/.env"
-printf '%s\n' "${external_answers[@]}" mariadb | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-external-mariadb.log" 2>&1
+prepare "${WORK}/setup-external-mariadb.log" "${external_answers[@]}" fxa_db=mariadb
 check "$?" 0 "prepare_environment.sh with your own MariaDB server for the accounts"
 check "$(grep -c "'fxa'@'%' IDENTIFIED VIA mysql_native_password USING PASSWORD('$(env_value FXA_MYSQL_PASSWORD)')" "${SETUP}/database-setup-fxa.sql") $(grep -c 'mariadb -h db.example.org -P 3307 -u root -p < database-setup-fxa.sql' "${WORK}/setup-external-mariadb.log")" \
   "2 1" "database-setup-fxa.sql for MariaDB"
-# the stack applies the SQL itself (docs/databases.md#let-the-stack-apply-them): the questions
-# after the last one of above (the accounts' server, max accounts, the security history, the
-# alerts, the backups, the pairing server), for Sync (the account's name by default, a new
-# password) and for the accounts (a name given)
+# the stack applies the SQL itself (docs/databases.md#let-the-stack-apply-them), for Sync (the
+# account's name by default, a new password) and for the accounts (a name given)
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
-printf '%s\n' "${external_answers[@]}" "" "" "" "" "" "" y "" "" y fxa_boot "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap.log" 2>&1
+prepare "${WORK}/setup-bootstrap.log" "${external_answers[@]}" sync_db_bootstrap=yes fxa_db_bootstrap=yes fxa_db_bootstrap_user=fxa_boot
 check "$?" 0 "prepare_environment.sh with your own servers, the stack applying their SQL"
 check "$(env_value SYNC_DB_BOOTSTRAP_USER) $(env_value SYNC_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$') $(env_value FXA_DB_BOOTSTRAP_USER) $(env_value FXA_DB_BOOTSTRAP_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$')" \
   "ffs_sync_bootstrap 1 fxa_boot 1" "the bootstrap accounts (Sync's of the default name) and their generated passwords in .env"
@@ -558,20 +557,17 @@ check "$(setup_compose config | sed -n '/^  db-bootstrap:/,/^  [a-z]/p' | grep -
   "1 1" "db-bootstrap and fxa-db-bootstrap get their accounts"
 # one bootstrap name for both: on two servers (3306, 3307) two accounts, fine; on one server refused
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
-printf '%s\n' "${external_answers[@]}" "" "" "" "" "" "" y "" "" y ffs_sync_bootstrap "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap-same-name.log" 2>&1
+prepare "${WORK}/setup-bootstrap-same-name.log" "${external_answers[@]}" sync_db_bootstrap=yes fxa_db_bootstrap=yes fxa_db_bootstrap_user=ffs_sync_bootstrap
 check "$? $(env_value SYNC_DB_BOOTSTRAP_USER) $(env_value FXA_DB_BOOTSTRAP_USER)" "0 ffs_sync_bootstrap ffs_sync_bootstrap" \
   "prepare_environment.sh: the same bootstrap name for Sync and the accounts on two servers"
-one_server=("${external_answers[@]}")
-one_server[external_at + 8]=""
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql "${SETUP}"/database-bootstrap*.sql
-printf '%s\n' "${one_server[@]}" "" "" "" "" "" "" y "" "" y ffs_sync_bootstrap "" | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-bootstrap-same-server.log" 2>&1
+prepare "${WORK}/setup-bootstrap-same-server.log" "${external_answers[@]}" fxa_db_port=3306 sync_db_bootstrap=yes fxa_db_bootstrap=yes fxa_db_bootstrap_user=ffs_sync_bootstrap
 check "$? $(grep -c "is Sync's bootstrap account already, on the same server" "${WORK}/setup-bootstrap-same-server.log") [$(ls "${SETUP}/.env" 2> /dev/null)]" "1 1 []" \
   "prepare_environment.sh: the same bootstrap name for Sync and the accounts on one server refused"
 rm -f "${SETUP}"/database-bootstrap*.sql
 # Sync on your own PostgreSQL server (host, port, database, user), the accounts built in
-answers[4]=postgres
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql
-printf '%s\n' "${answers[@]}" y db.example.org "" "" "" n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-external-postgres.log" 2>&1
+prepare "${WORK}/setup-external-postgres.log" sync_db=postgres sync_db_own=yes sync_db_host=db.example.org
 check "$?" 0 "prepare_environment.sh with your own PostgreSQL server"
 check "$(env_value SYNC_DB_CONTAINERS) $(env_value SYNC_POSTGRES_HOST):$(env_value SYNC_POSTGRES_PORT) $(env_value SYNC_POSTGRES_NAME) $(env_value SYNC_POSTGRES_USER) $(env_value FXA_DB_CONTAINERS)" \
   "0 db.example.org:5432 syncserver syncserver 1" "Sync on your own PostgreSQL server in .env"
@@ -582,9 +578,8 @@ check "$(grep -c "ROLE ffs_admin_\(ui\|sync\) .*PASSWORD '$(env_value ADMIN_DB_P
 check "$(grep -c 'psql -h db.example.org -p 5432 -U postgres -f database-setup.sql' "${WORK}/setup-external-postgres.log")" 1 "prepare_environment.sh says how to run the SQL (PostgreSQL)"
 check "$(setup_compose config | sed -n '/^  postgres_db:/,/^  [a-z]/p' | grep -cE '^ +replicas: 0$') $(setup_compose config | sed -n '/^  syncstorage:/,/^  [a-z]/p' | grep -cE '^ +SYNC_(SYNCSTORAGE|TOKENSERVER)__DATABASE_URL: postgres(ql)?://syncserver:[A-Za-z0-9]+@db\.example\.org:5432/syncserver$')" \
   "1 2" "no postgres_db container, the Sync server connects to your server"
-answers[4]=mariadb
 rm -f "${SETUP}/.env" "${SETUP}"/database-setup*.sql
-printf '%s\n' "${answers[@]}" n n mariadb | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-mariadb.log" 2>&1
+prepare "${WORK}/setup-mariadb.log" fxa_db=mariadb
 check "$?" 0 "prepare_environment.sh with the accounts on MariaDB"
 check "$(env_value FXA_DB) $(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-mariadb.yml:compose/fxa.yml:compose/fxa-mariadb.yml${PODMAN_FILE}" "${SETUP}/.env")" "mariadb 1" "MariaDB for the accounts in .env"
 check "$(env_value FXA_MARIADB_IMAGE) $(setup_compose config | sed -n '/^  fxa-db:/,/^  [a-z]/p' | grep -cE '^ +(image: mariadb:lts|source: fxa-db-mariadb|- mariadbd)$')" "mariadb:lts 3" "fxa-db on MariaDB lts for a new install, in its own volume"
@@ -593,10 +588,10 @@ check "$(setup_compose --profile backup config | sed -n '/^  backup-fxa:/,/^  [a
 # (docs/upgrading.md#the-database-majors-of-an-install-from-before says so), run again it is pinned to 11 and stays there
 sed -i '/^FXA_MARIADB_IMAGE=/d' "${SETUP}/.env"
 check "$(setup_compose --profile backup config | awk '/^  [a-z]/ { on = ($1 == "fxa-db:" || $1 == "backup-fxa:") } on' | grep -cE '^ +image: mariadb:lts$')" 2 "without FXA_MARIADB_IMAGE: fxa-db and its backups on MariaDB lts"
-printf '%s\n' "${answers[@]}" n n mariadb | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-mariadb-again.log" 2>&1
+prepare "${WORK}/setup-mariadb-again.log" fxa_db=mariadb
 check "$? $(env_value FXA_MARIADB_IMAGE) $(grep -c 'stays on MariaDB 11\.' "${WORK}/setup-mariadb-again.log")" "0 mariadb:11 1" "prepare_environment.sh again on an install on MariaDB 11 keeps it there"
 check "$(setup_compose config | sed -n '/^  fxa-db:/,/^  [a-z]/p' | grep -cE '^ +image: mariadb:11$')" 1 "fxa-db on MariaDB 11 after running it again"
-printf '%s\n' "${answers[@]}" n n mariadb | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-mariadb-again2.log" 2>&1
+prepare "${WORK}/setup-mariadb-again2.log" fxa_db=mariadb
 check "$? $(env_value FXA_MARIADB_IMAGE) $(grep -c 'stays on MariaDB 11\.' "${WORK}/setup-mariadb-again2.log")" "0 mariadb:11 0" "and again: FXA_MARIADB_IMAGE kept, nothing to say"
 # --upgrade of an install from before
 sed -i '/^FXA_MARIADB_IMAGE=/d' "${SETUP}/.env"
@@ -623,14 +618,14 @@ fixed_in
 rm -f "${SETUP}/.env" "${SETUP}"/.env.before-upgrade-* "${SETUP}"/.env.before-setup-*
 # the accounts on MySQL, an install from before FXA_MYSQL_IMAGE (mysql:8 with mysql_native_password):
 # run again, or --upgrade, it stays there, whatever the accounts image
-printf '%s\n' "${answers[@]}" n n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-fxa-mysql.log" 2>&1
+prepare "${WORK}/setup-fxa-mysql.log"
 check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)]" "0 ${SETUP_MYSQL}" "prepare_environment.sh: the accounts on MySQL"
 check "$(setup_compose --profile backup config | awk '/^  [a-z]/ { on = ($1 == "fxa-db:" || $1 == "backup-fxa:") } on' | grep -cE "^ +image: ${SETUP_MYSQL_IMAGE}$") $(setup_compose config | sed -n '/^  fxa-db:/,/^  [a-z]/p' | grep -cE "^ +(- --event-scheduler=ON|FFS_MYSQL_IMAGE: ${SETUP_MYSQL_IMAGE}|- /ffs-db/keep-major.sh)$")" \
   "2 3" "fxa-db and its backups on ${SETUP_MYSQL_IMAGE}, the image chosen"
 check "$(setup_compose config | sed -n '/^  fxa-db:/,/^  [a-z]/p' | grep -cE '^ +- --(mysql-native-password=ON|authentication-policy=mysql_native_password)$')" "$([ -n "${SETUP_MYSQL2}" ] && echo 0 || echo 2)" \
   "FXA_MYSQL_ARGS: fxa-db's options, $([ -n "${SETUP_MYSQL2}" ] && echo none || echo mysql_native_password)"
 sed -i -e '/^FXA_MYSQL_IMAGE=/d' -e '/^FXA_MYSQL_ARGS=/d' "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" n n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-fxa-mysql-again.log" 2>&1
+prepare "${WORK}/setup-fxa-mysql-again.log"
 check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c 'of this install stays on MySQL 8 with mysql_native_password' "${WORK}/setup-fxa-mysql-again.log")" "0 mysql:8 [${NATIVE_ARGS}] 1" \
   "prepare_environment.sh again on an install with the accounts on MySQL 8 keeps it there, with mysql_native_password"
 check "$(setup_compose config | sed -n '/^  fxa-db:/,/^  [a-z]/p' | grep -cE '^ +(image: mysql:8|- --mysql-native-password=ON|- --authentication-policy=mysql_native_password)$')" 3 "fxa-db on MySQL 8 with mysql_native_password after running it again"
@@ -654,13 +649,13 @@ rm -f "${SETUP}/.env" "${SETUP}"/.env.before-upgrade-* "${SETUP}"/.env.before-se
 # a new setup over the MySQL volume of an earlier install (its .env gone): kept on 8, native
 volume="$(basename "${SETUP}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_fxa-db"
 docker volume create "${volume}" > /dev/null
-printf '%s\n' "${answers[@]}" n n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-fxa-mysql-volume.log" 2>&1
+prepare "${WORK}/setup-fxa-mysql-volume.log"
 check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c "found the accounts database$" "${WORK}/setup-fxa-mysql-volume.log") $(grep -c "earlier install (docker volume ${volume})" "${WORK}/setup-fxa-mysql-volume.log")" \
   "0 mysql:8 [${NATIVE_ARGS}] 1 1" "prepare_environment.sh keeps MySQL 8 with mysql_native_password for the volume of an earlier install"
 # the same volume already on MySQL 9 (its mysql_upgrade_history): lts, no way back to 8
 docker run --rm -v "${volume}:/v" --entrypoint sh mysql:lts -c 'mkdir -p /v/mysql && echo "{\"file_format\":\"1\",\"upgrade_history\":[{\"version\":\"8.4.11\"},{\"version\":\"9.7.2\"}]}" > /v/mysql_upgrade_history'
 rm -f "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" n n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-fxa-mysql9-volume.log" 2>&1
+prepare "${WORK}/setup-fxa-mysql9-volume.log"
 check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c "on\$" "${WORK}/setup-fxa-mysql9-volume.log") $(grep -c 'MySQL 9 already: it stays on lts' "${WORK}/setup-fxa-mysql9-volume.log")" \
   "0 mysql:lts [] 1 1" "prepare_environment.sh keeps a volume of an earlier install already on MySQL 9 on lts"
 # keep-major.sh: that data under mysql:8 without FXA_MYSQL_IMAGE would be a downgrade, under lts
@@ -684,9 +679,8 @@ docker volume rm "ffs-e2e-keep-major${SLOT_SUFFIX}" > /dev/null
 pg_volume="$(basename "${SETUP}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_postgres-db"
 docker volume create "${pg_volume}" > /dev/null
 docker run --rm -v "${pg_volume}:/v" --entrypoint sh postgres:latest -c 'mkdir -p /v/17/docker && echo 17 > /v/17/docker/PG_VERSION'
-answers[4]=postgres
 rm -f "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" n n | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-postgres-volume.log" 2>&1
+prepare "${WORK}/setup-postgres-volume.log" sync_db=postgres
 check "$? $(env_value SYNC_POSTGRES_IMAGE) $(grep -c "found the Sync database of an earlier install (docker volume ${pg_volume})" "${WORK}/setup-postgres-volume.log")" \
   "0 postgres:17 1" "prepare_environment.sh pins PostgreSQL to the major of the volume of an earlier install (17)"
 keep=$(docker run --rm -v "${pg_volume}:/var/lib/postgresql" -v "${CODE}/db/postgres/keep-major.sh:/k.sh:ro" \
@@ -694,18 +688,17 @@ keep=$(docker run --rm -v "${pg_volume}:/var/lib/postgresql" -v "${CODE}/db/post
 check "$? $(grep -c 'keep-major.sh: this database is PostgreSQL 17 (/var/lib/postgresql/17/docker), the image is PostgreSQL' <<< "${keep}") $(grep -c 'Set SYNC_POSTGRES_IMAGE to the major of the data, postgres:17' <<< "${keep}")" \
   "1 1 1" "db/postgres/keep-major.sh refuses PostgreSQL 17 data on latest, says what to set"
 docker volume rm "${pg_volume}" > /dev/null
-answers[4]=mariadb
 rm -f "${SETUP}/.env"
 # a new setup over the MariaDB volume of an earlier install (its .env gone): kept on 11
 volume="$(basename "${SETUP}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')_fxa-db-mariadb"
 docker volume create "${volume}" > /dev/null
-printf '%s\n' "${answers[@]}" n n mariadb | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-mariadb-volume.log" 2>&1
+prepare "${WORK}/setup-mariadb-volume.log" fxa_db=mariadb
 check "$? $(env_value FXA_MARIADB_IMAGE) $(grep -c "found the accounts database of an earlier install (docker volume ${volume})" "${WORK}/setup-mariadb-volume.log")" "0 mariadb:11 1" \
   "prepare_environment.sh keeps MariaDB 11 for the volume of an earlier install"
 docker volume rm "${volume}" > /dev/null
 rm -f "${SETUP}/.env"
-printf '%s\n' "${answers[@]}" n n postgres | (cd "${SETUP}" && ./prepare_environment.sh) > "${WORK}/setup-fxa-db-wrong.log" 2>&1
-check "$? $(grep -c "ERROR: mysql or mariadb" "${WORK}/setup-fxa-db-wrong.log")" "1 1" "prepare_environment.sh refuses another accounts database"
+prepare "${WORK}/setup-fxa-db-wrong.log" fxa_db=postgres
+check "$? $(grep -c "ERROR: one of mysql, mariadb, not 'postgres'" "${WORK}/setup-fxa-db-wrong.log")" "1 1" "prepare_environment.sh refuses another accounts database"
 fi
 
 echo "== ${PROJECT}: syncstorage ${REPOSITORY} ${TAG}, mozilla/fxa-mono ${FXA_VERSION}, accounts on ${FXA_DB}"
