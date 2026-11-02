@@ -1,0 +1,25 @@
+# TEST_PROXY=nginx of tests/e2e-fxa.sh: nginx:latest with the proxy/nginx.conf prepare_environment.sh
+# writes for the test's .env, the containers by name (render_nginx network, setup/proxy.sh: on
+# the stack's network, Docker's DNS), the certificates of a test CA where it looks for them
+# (FFS_PROXY_DIR/letsencrypt), that CA for the FxA services and the tests (caddy-ca)
+services:
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ${FFS_PROXY_DIR:?}/nginx-network.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${FFS_PROXY_DIR:?}/letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD", "nginx", "-t", "-q"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+      start_interval: 1s
+    networks:
+      default:
+        aliases: [accounts.fxa.test, api.fxa.test, admin.fxa.test, profile.fxa.test, pairing.fxa.test, sync.fxa.test]
+
+  caddy-ca:
+    command: [sh, -c, "cp /test-ca/ca.crt /caddy-ca/root.crt && chmod 644 /caddy-ca/root.crt"]
+    volumes:
+      - ${FFS_PROXY_DIR:?}/test-ca:/test-ca:ro

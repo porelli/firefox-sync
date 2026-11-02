@@ -1,7 +1,7 @@
 # Test-only: the Ingress controller of tests/helm-fxa.sh e2e, Traefik v3 on :443 (TLS on every
 # router, the certificates of the Ingresses' tls), IngressClass traefik. It keeps the
-# X-Forwarded-For of clients from private addresses and appends theirs, as tests/Caddyfile.fxa
-# (trusted_proxies private_ranges) and nginx's $proxy_add_x_forwarded_for
+# X-Forwarded-For of clients from private addresses and appends theirs, as nginx's
+# $proxy_add_x_forwarded_for
 apiVersion: v1
 kind: Namespace
 metadata:

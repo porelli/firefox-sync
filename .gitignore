@@ -28,7 +28,11 @@
 /.env.setup
 # the Quadlet units of before, kept by prepare_environment.sh when it renders them again
 /quadlets.before-*/
+# the configuration of the reverse proxy (docs/reverse-proxy.md), and the nginx examples
+# the setup wrote before it
+/proxy/
 /config/nginx/syncstorage-rs.conf
+/config/nginx/fxa.conf
 /config/systemd/syncstorage-rs.service
 # SQL for your own database server, with passwords (docs/databases.md#create-the-databases-and-users)
 /database-setup*.sql

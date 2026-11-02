@@ -107,6 +107,7 @@ render_units() {
     podman_image FXA_MYSQL_IMAGE mysql:lts
     podman_image SYNC_MYSQL_IMAGE mysql:lts
     podman_image SYNC_POSTGRES_IMAGE postgres:latest
+    podman_image CADDY_IMAGE caddy:latest
     repository=$(env_value IMAGE_REPOSITORY)
     podman_image ADMIN_IMAGE "${repository:-ghcr.io/porelli/firefox-sync}:admin-latest"
     # fxa-db's extra options, none when not set
@@ -176,6 +177,8 @@ render_units() {
         # MySQL's volume, unused (the volume itself is kept)
         [ "${fxa_db:-mysql}" = "mariadb" ] && SKIP_UNITS="${SKIP_UNITS}|^firefox-sync-fxa-db\.volume$"
     fi
+    # the bundled Caddy (PROXY=caddy, caddy/): its units, else none (its volumes are kept)
+    [ "$(proxy_env PROXY)" = caddy ] || SKIP_UNITS="${SKIP_UNITS:+${SKIP_UNITS}|}^firefox-sync-caddy(-data|-config)?\.(container|volume)$"
     # Requires= on a unit that is not installed fails the start: drop those dependencies
     drop_deps() {
         [ -n "${DROP_DEPS}" ] || { cat; return; }
@@ -260,7 +263,7 @@ render_units() {
         done < "${1}"
     }
 
-    QUADLET_SOURCES=("${SCRIPT_DIR}/config/quadlet")
+    QUADLET_SOURCES=("${SCRIPT_DIR}/config/quadlet" "${SCRIPT_DIR}/config/quadlet/caddy")
     # SYNC_DB=mysql: sync-mysql/ replaces the database units of the same name (without the
     # database containers, SKIP_UNITS leaves them out); PostgreSQL: sync-postgres/ replaces
     # the units of the Sync server, its migrations, init and backups, and adds its database

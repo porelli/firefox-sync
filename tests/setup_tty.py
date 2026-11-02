@@ -64,6 +64,8 @@ FLOW = [
     ("Keep a password as a fallback", "\r", None),
     ("Destinations of the alerts", "\r", None),
     ("Enable nightly backups", "\r", None),
+    ("Do you already run a reverse proxy", "\r", None),
+    ("Who can open the admin UI's public address", "\r", None),
     ("write .env and the examples now", "2", "the review: every answer, the secrets it generates named"),
     ("Public URL of the Sync server", "\r", "a part changed from the review: its questions again"),
     ("listens on", "\r", None),

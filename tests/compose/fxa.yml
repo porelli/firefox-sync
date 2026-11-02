@@ -1,8 +1,9 @@
-# Test-only additions to compose/fxa.yml (paths relative to compose/): Caddy serving the public URLs over HTTPS
-# (internal CA), Mailpit catching the verification emails, the admin UI under test
-# (ADMIN_IMAGE, built from admin/ by tests/e2e-fxa.sh unless given), which also signs in
-# with these accounts (OpenID Connect).
-# The containers resolve the public host names to Caddy through network aliases.
+# Test-only additions to compose/fxa.yml (paths relative to compose/): the CA of the reverse proxy
+# serving the public URLs over HTTPS (tests/compose/proxy-<caddy|nginx|traefik>.yml, the
+# configuration prepare_environment.sh writes), Mailpit catching the verification emails, the
+# admin UI under test (ADMIN_IMAGE, built from admin/ by tests/e2e-fxa.sh unless given), which
+# also signs in with these accounts (OpenID Connect).
+# The containers resolve the public host names to the proxy through network aliases.
 
 x-trust-caddy: &trust-caddy
   NODE_EXTRA_CA_CERTS: /caddy-ca/root.crt
@@ -15,27 +16,6 @@ x-health-test: &health-test
   start_interval: 1s
 
 services:
-  caddy:
-    image: caddy:alpine
-    volumes:
-      - ../tests/Caddyfile.fxa:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data/caddy
-      # the access control of a variant (FFS_ACCESS), the test client CA (FFS_CERTS)
-      - ../tests/caddy:/etc/caddy/caddy:ro
-      - ${FFS_CERTS:-../tests/caddy}:/client-certs:ro
-    environment:
-      FFS_ACCESS: ${FFS_ACCESS:-none}
-    # its admin API (only inside the container): Caddy runs with its configuration loaded; the
-    # sites themselves answer only once what they proxy to does
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    networks:
-      default:
-        aliases: [accounts.fxa.test, api.fxa.test, admin.fxa.test, profile.fxa.test, pairing.fxa.test, sync.fxa.test, auth.fxa.test, admin-sso.fxa.test]
-
   # SSO=authelia (COMPOSE_PROFILES): forward auth in front of the accounts pages and of the
   # admin UI's admin-sso.fxa.test, its login page at auth.fxa.test (tests/caddy/authelia)
   authelia:
@@ -45,14 +25,15 @@ services:
       - ../tests/caddy/authelia/configuration.yml:/config/configuration.yml:ro
       - ../tests/caddy/authelia/users.yml:/config/users.yml:ro
 
-  # Caddy keeps its CA private, publish the certificate for the FxA services and the tests
+  # the CA of the reverse proxy under test (tests/compose/proxy-*.yml, TEST_PROXY of
+  # tests/e2e-fxa.sh) for the FxA services and the tests: Caddy keeps its own private (the bundled
+  # Caddy's, in its data volume), nginx and Traefik have a test CA (proxy-nginx.yml, proxy-traefik.yml)
   caddy-ca:
     image: caddy:alpine
     command: [sh, -c, "until [ -f /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done; cp /data/caddy/pki/authorities/local/root.crt /caddy-ca/root.crt && chmod 644 /caddy-ca/root.crt"]
     volumes:
-      - caddy-data:/data/caddy:ro
+      - caddy-data:/data:ro
       - caddy-ca:/caddy-ca
-    depends_on: [caddy]
     restart: "no"
 
   mailpit:

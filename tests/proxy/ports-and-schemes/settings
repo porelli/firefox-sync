@@ -1,0 +1,13 @@
+# public URLs on ports of their own and plain http (a network of your own), the stack on every
+# interface (0.0.0.0, [::], a port alone): your own proxy, no admin UI
+deploy=compose
+SYNC_PUBLIC_URL=http://sync.example.com:8080
+SYNC_EXPORT_PORT=0.0.0.0:5001
+COMPOSE_PROFILES=backup
+COMPOSE_PROJECT_NAME=firefox-sync
+FXA_MYSQL_PASSWORD=not-a-placeholder
+FXA_CONTENT_URL=https://accounts.example.com:8443
+FXA_AUTH_URL=https://api.example.com:4443
+FXA_PROFILE_URL=https://profile.example.com
+FXA_CONTENT_EXPORT_PORT=[::]:3030
+FXA_AUTH_EXPORT_PORT=9000

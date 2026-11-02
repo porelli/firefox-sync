@@ -108,7 +108,7 @@ Environment="ADMIN_GATE_EXPORT_PORT=%ADMIN_GATE_EXPORT_PORT%"
 Environment="FXA_CLIENT_ADDRESS_DEPTH=%FXA_CLIENT_ADDRESS_DEPTH%"
 Environment="FXA_ACCESS_TOKEN_LIFETIME=%FXA_ACCESS_TOKEN_LIFETIME%"
 PublishPort=%ADMIN_EXPORT_PORT%:8080
-# the sign-up gate: POST /v1/account/create of FXA_AUTH_URL (see config/nginx/fxa-example.conf)
+# the sign-up gate: POST /v1/account/create of FXA_AUTH_URL (proxy/, docs/reverse-proxy.md#sign-up-gate)
 PublishPort=%ADMIN_GATE_EXPORT_PORT%:8081
 # exec form: the image has no shell for the default CMD-SHELL
 HealthCmd=["/ffs-admin", "healthcheck"]

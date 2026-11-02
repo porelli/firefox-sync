@@ -1,0 +1,120 @@
+# Firefox Sync behind your Traefik, its Docker provider (PROXY=traefik): a compose file of
+# COMPOSE_FILE, which puts the public containers on Traefik's network (TRAEFIK_NETWORK, which must
+# exist) with the labels of their routers. Applied by docker compose up -d; also on the Podman socket
+# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
+# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+services:
+  syncstorage:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT
+      traefik.http.routers.ffs-sync.rule: "Host(`sync.example.com`)"
+      traefik.http.routers.ffs-sync.entrypoints: https,https6
+      traefik.http.routers.ffs-sync.service: ffs-sync
+      traefik.http.routers.ffs-sync.tls.certresolver: le
+      traefik.http.routers.ffs-sync.middlewares: ffs-sync-body
+      traefik.http.services.ffs-sync.loadbalancer.server.port: "8000"
+      traefik.http.middlewares.ffs-sync-body.buffering.maxrequestbodybytes: "10485760"
+      # HTTP to HTTPS
+      traefik.http.routers.ffs-https.rule: "Host(`sync.example.com`) || Host(`accounts.example.com`) || Host(`api.example.com`) || Host(`profile.example.com`) || Host(`pairing.example.com`) || Host(`admin.example.com`)"
+      traefik.http.routers.ffs-https.entrypoints: http
+      traefik.http.routers.ffs-https.middlewares: ffs-https
+      traefik.http.routers.ffs-https.service: noop@internal
+      traefik.http.middlewares.ffs-https.redirectscheme.scheme: https
+      traefik.http.middlewares.ffs-https.redirectscheme.permanent: "true"
+  fxa-content:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the accounts pages (FXA_CONTENT_URL), to FXA_CONTENT_EXPORT_PORT
+      traefik.http.routers.ffs-content.rule: "Host(`accounts.example.com`)"
+      traefik.http.routers.ffs-content.entrypoints: https,https6
+      traefik.http.routers.ffs-content.service: ffs-content
+      traefik.http.routers.ffs-content.tls.certresolver: le
+      traefik.http.services.ffs-content.loadbalancer.server.port: "3030"
+  ffs-admin:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the sign-up gate of the admin UI: /v1/account/create to ADMIN_GATE_EXPORT_PORT (docs/reverse-proxy.md#sign-up-gate)
+      traefik.http.routers.ffs-gate.rule: "Host(`api.example.com`) && Path(`/v1/account/create`)"
+      traefik.http.routers.ffs-gate.priority: "1000"
+      traefik.http.routers.ffs-gate.entrypoints: https,https6
+      traefik.http.routers.ffs-gate.service: ffs-gate
+      traefik.http.routers.ffs-gate.tls.certresolver: le
+      traefik.http.services.ffs-gate.loadbalancer.server.port: "8081"
+      # the admin UI (ADMIN_OIDC_REDIRECT_URL), to ADMIN_EXPORT_PORT, only from PROXY_ADMIN_ALLOW (docs/reverse-proxy.md#the-admin-ui)
+      traefik.http.routers.ffs-admin.rule: "Host(`admin.example.com`)"
+      traefik.http.routers.ffs-admin.entrypoints: https,https6
+      traefik.http.routers.ffs-admin.service: ffs-admin
+      traefik.http.routers.ffs-admin.tls.certresolver: le
+      traefik.http.services.ffs-admin.loadbalancer.server.port: "8080"
+  fxa-auth:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the accounts API (FXA_AUTH_URL), to FXA_AUTH_EXPORT_PORT
+      traefik.http.routers.ffs-api.rule: "Host(`api.example.com`)"
+      traefik.http.routers.ffs-api.entrypoints: https,https6
+      traefik.http.routers.ffs-api.service: ffs-api
+      traefik.http.routers.ffs-api.tls.certresolver: le
+      traefik.http.services.ffs-api.loadbalancer.server.port: "9000"
+  fxa-profile-static:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the avatars: /img/ to FXA_PROFILE_STATIC_EXPORT_PORT, without /img
+      traefik.http.routers.ffs-img.rule: "Host(`profile.example.com`) && PathPrefix(`/img/`)"
+      traefik.http.routers.ffs-img.priority: "1000"
+      traefik.http.routers.ffs-img.entrypoints: https,https6
+      traefik.http.routers.ffs-img.service: ffs-img
+      traefik.http.routers.ffs-img.tls.certresolver: le
+      traefik.http.routers.ffs-img.middlewares: ffs-img-strip
+      traefik.http.services.ffs-img.loadbalancer.server.port: "1112"
+      traefik.http.middlewares.ffs-img-strip.stripprefix.prefixes: /img
+  fxa-profile:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # the accounts profile server (FXA_PROFILE_URL), to FXA_PROFILE_EXPORT_PORT
+      traefik.http.routers.ffs-profile.rule: "Host(`profile.example.com`)"
+      traefik.http.routers.ffs-profile.entrypoints: https,https6
+      traefik.http.routers.ffs-profile.service: ffs-profile
+      traefik.http.routers.ffs-profile.tls.certresolver: le
+      traefik.http.services.ffs-profile.loadbalancer.server.port: "1111"
+  fxa-pairing:
+    networks:
+      default: {}
+      traefik: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: web-proxy
+      # your own pairing server (FXA_PAIRING_URL), a websocket, to FXA_PAIRING_EXPORT_PORT (docs/reverse-proxy.md#pairing)
+      traefik.http.routers.ffs-pairing.rule: "Host(`pairing.example.com`)"
+      traefik.http.routers.ffs-pairing.entrypoints: https,https6
+      traefik.http.routers.ffs-pairing.service: ffs-pairing
+      traefik.http.routers.ffs-pairing.tls.certresolver: le
+      traefik.http.services.ffs-pairing.loadbalancer.server.port: "8000"
+networks:
+  traefik:
+    name: web-proxy
+    external: true

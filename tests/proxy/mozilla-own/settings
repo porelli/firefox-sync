@@ -1,0 +1,5 @@
+# Mozilla's accounts, your own proxy, the defaults: the Sync server only
+deploy=compose
+SYNC_PUBLIC_URL=https://sync.example.com
+COMPOSE_PROFILES=admin
+COMPOSE_PROJECT_NAME=firefox-sync

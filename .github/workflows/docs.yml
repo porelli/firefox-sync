@@ -3,8 +3,9 @@ name: docs
 # and blob/main URL of the markdown files, and with --code the doc references of the code
 # (the admin UI's help links, the scripts' messages, the chart's NOTES); the setup
 # migrations against db/setup-manifest (tests/setup_migrations.sh); and the files the setup's
-# questions write (tests/setup_output.sh). On every push, with no
-# paths filter: it takes seconds and needs no image. See docs/development/testing.md#links.
+# questions write (tests/setup_output.sh), and the configuration of the reverse proxy
+# (tests/proxy_render.sh: nginx, Caddy and Traefik read it). On every push, with no
+# paths filter: it takes a few minutes and needs no image of ours. See docs/development/testing.md#links.
 #
 # The coverage of the docs (tests/check_docs_coverage.py): every Helm value, Prometheus
 # metric, event and alert kind and setup check of the admin UI on its page. And on a push to
@@ -42,6 +43,10 @@ jobs:
       # same choices (no container runtime: stubs, docs/development/testing.md)
       - name: Setup output
         run: bash tests/setup_output.sh
+      # the configuration of the reverse proxy it writes into proxy/ (setup/proxy.sh): the same as
+      # tests/proxy/<case>/, and read by nginx, Caddy and Traefik themselves (their latest images)
+      - name: Reverse proxy configuration
+        run: CONTAINERS=1 bash tests/proxy_render.sh
       # db/setup-manifest: every setup migration with its checksum, those of main unchanged
       # (docs/databases.md#setup-migrations)
       - name: Setup migrations

@@ -1121,7 +1121,8 @@ def test_smtp_health_and_test_email(admin):
 
 
 def test_public_urls_and_certificates(admin):
-    # through Caddy, with its internal CA (certificates of 30 days, tests/Caddyfile.fxa)
+    # through the reverse proxy under test (TEST_PROXY of tests/e2e-fxa.sh): certificates of 30 days,
+    # Caddy's own CA (CADDY_ACME_CA=internal of proxy/Caddyfile.bundled) or a test CA
     for component, host in (("Public Sync URL", "sync.fxa.test"), ("Public accounts pages", "accounts.fxa.test"),
                             ("Public accounts API", "api.fxa.test"), ("Public profile server", "profile.fxa.test")):
         row = health_row(admin, component)

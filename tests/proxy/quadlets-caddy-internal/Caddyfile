@@ -1,0 +1,56 @@
+# Firefox Sync behind Caddy: put this file as your Caddyfile (or import it from yours), then:
+# caddy reload. Caddy gets the certificates itself (Let's Encrypt), and redirects HTTP to HTTPS.
+# Snippets of yours in caddy.d/ next to it are imported: sites*.caddy beside these sites, <site>*.caddy
+# (sync, content, api, profile, pairing, admin) in that site, public*.caddy in the five Firefox reaches
+# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
+# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+
+import caddy.d/sites*.caddy
+
+# the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT
+sync.example.com {
+	import caddy.d/public*.caddy
+	import caddy.d/sync*.caddy
+	# (docs/reverse-proxy.md#request-size)
+	request_body {
+		max_size 10MB
+	}
+	reverse_proxy 127.0.0.1:5005
+}
+
+# the accounts pages (FXA_CONTENT_URL), to FXA_CONTENT_EXPORT_PORT
+accounts.example.com {
+	import caddy.d/public*.caddy
+	import caddy.d/content*.caddy
+	reverse_proxy 127.0.0.1:3030
+}
+
+# the accounts API (FXA_AUTH_URL), to FXA_AUTH_EXPORT_PORT
+api.example.com {
+	import caddy.d/public*.caddy
+	import caddy.d/api*.caddy
+	# the sign-up gate of the admin UI: /v1/account/create to ADMIN_GATE_EXPORT_PORT (docs/reverse-proxy.md#sign-up-gate)
+	@gate path /v1/account/create
+	reverse_proxy @gate 127.0.0.1:8091
+	reverse_proxy 127.0.0.1:9000
+}
+
+# the accounts profile server (FXA_PROFILE_URL), to FXA_PROFILE_EXPORT_PORT
+profile.example.com {
+	import caddy.d/public*.caddy
+	import caddy.d/profile*.caddy
+	# the avatars: /img/ to FXA_PROFILE_STATIC_EXPORT_PORT, without /img
+	handle_path /img/* {
+		reverse_proxy 127.0.0.1:1112
+	}
+	reverse_proxy 127.0.0.1:1111
+}
+
+# the admin UI (ADMIN_OIDC_REDIRECT_URL), to ADMIN_EXPORT_PORT, only from PROXY_ADMIN_ALLOW (docs/reverse-proxy.md#the-admin-ui)
+admin.example.com {
+	import caddy.d/admin*.caddy
+	# only from PROXY_ADMIN_ALLOW
+	@outside not remote_ip 192.0.2.0/24 2001:db8::/32
+	respond @outside 403
+	reverse_proxy 127.0.0.1:8090
+}

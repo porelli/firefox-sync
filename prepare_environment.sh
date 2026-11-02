@@ -8,9 +8,10 @@
 #   ./prepare_environment.sh --non-interactive  nothing asked: the answers given (FILE, FFS_SETUP_<ID>), defaults for the rest
 #   ./prepare_environment.sh --upgrade          .env (and the Quadlet units) of an install, for this release
 #   ./prepare_environment.sh --render-units [--fresh]  the Quadlet units again from .env
+#   ./prepare_environment.sh --render-proxy     the configuration of the reverse proxy (proxy/) again from .env
 #
 # The code is in setup/ (env.sh, images.sh, databases.sh, validate.sh, quadlets.sh, upgrade.sh,
-# questions.sh, the questions, and setup.sh, what it writes), next to this script's real path
+# proxy.sh, the reverse proxy's configuration, questions.sh, the questions, and setup.sh, what it writes), next to this script's real path
 # (a symlink to it works too).
 # Sourced (tests/prepare_functions.sh, tests/fxa_fix.sh): the functions only, nothing runs.
 
@@ -50,6 +51,8 @@ source "${SELF_DIR}/setup/validate.sh" || { [ -n "${FFS_SOURCED}" ] && return 1;
 source "${SELF_DIR}/setup/quadlets.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/upgrade.sh
 source "${SELF_DIR}/setup/upgrade.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
+# shellcheck source=setup/proxy.sh
+source "${SELF_DIR}/setup/proxy.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/questions.sh
 source "${SELF_DIR}/setup/questions.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 [ -n "${FFS_SOURCED}" ] && return 0
@@ -65,6 +68,7 @@ case "${1:-}" in
             --fresh) RENDER_UNITS=yes RENDER_FRESH=yes upgrade_env ;;
             *) echo "ERROR: --render-units [--fresh], not '${2}'"; exit 2 ;;
         esac ;;
+    --render-proxy) render_proxy_cli ;;
 esac
 
 # the setup's options (read by setup/questions.sh)
@@ -74,8 +78,8 @@ while [ "$#" -gt 0 ]; do
         --answers) [ -n "${2:-}" ] || { echo "ERROR: --answers FILE"; exit 2; }; FFS_ANSWERS=${2}; shift 2 ;;
         --answers=*) FFS_ANSWERS=${1#--answers=}; shift ;;
         --non-interactive) FFS_NONINTERACTIVE=yes; shift ;;
-        -h|--help) sed -n '6,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "ERROR: unknown option '${1}' (--answers FILE, --non-interactive, --upgrade, --render-units [--fresh])"; exit 2 ;;
+        -h|--help) sed -n '6,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "ERROR: unknown option '${1}' (--answers FILE, --non-interactive, --upgrade, --render-units [--fresh], --render-proxy)"; exit 2 ;;
     esac
 done
 # shellcheck source=setup/setup.sh

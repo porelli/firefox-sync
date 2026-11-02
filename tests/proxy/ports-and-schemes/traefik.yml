@@ -1,0 +1,79 @@
+# Firefox Sync behind Traefik: a dynamic configuration of its file provider (providers.file,
+# filename or directory): put this file there, Traefik reads it again by itself. Traefik on this host
+# (the stack's ports are on 127.0.0.1); in a container, see the labels (PROXY=traefik). Entry points:
+# TRAEFIK_ENTRYPOINTS, TRAEFIK_HTTP_ENTRYPOINT; certificates: TRAEFIK_CERTRESOLVER (empty: the default)
+# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
+# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+http:
+  routers:
+    # the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT
+    firefox-sync-sync:
+      rule: "Host(`sync.example.com`)"
+      entryPoints: [web]
+      service: firefox-sync-sync
+      middlewares: [firefox-sync-sync-body]
+    # the accounts pages (FXA_CONTENT_URL), to FXA_CONTENT_EXPORT_PORT
+    firefox-sync-content:
+      rule: "Host(`accounts.example.com`)"
+      entryPoints: [websecure]
+      service: firefox-sync-content
+      tls: {}
+    # the accounts API (FXA_AUTH_URL), to FXA_AUTH_EXPORT_PORT
+    firefox-sync-api:
+      rule: "Host(`api.example.com`)"
+      entryPoints: [websecure]
+      service: firefox-sync-api
+      tls: {}
+    # the avatars: /img/ to FXA_PROFILE_STATIC_EXPORT_PORT, without /img
+    firefox-sync-img:
+      rule: "Host(`profile.example.com`) && PathPrefix(`/img/`)"
+      priority: 1000
+      entryPoints: [websecure]
+      service: firefox-sync-img
+      middlewares: [firefox-sync-img-strip]
+      tls: {}
+    # the accounts profile server (FXA_PROFILE_URL), to FXA_PROFILE_EXPORT_PORT
+    firefox-sync-profile:
+      rule: "Host(`profile.example.com`)"
+      entryPoints: [websecure]
+      service: firefox-sync-profile
+      tls: {}
+    # HTTP to HTTPS
+    firefox-sync-https:
+      rule: "Host(`accounts.example.com`) || Host(`api.example.com`) || Host(`profile.example.com`)"
+      entryPoints: [web]
+      middlewares: [firefox-sync-https]
+      service: noop@internal
+  middlewares:
+    firefox-sync-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    # (docs/reverse-proxy.md#request-size)
+    firefox-sync-sync-body:
+      buffering:
+        maxRequestBodyBytes: 10485760
+    firefox-sync-img-strip:
+      stripPrefix:
+        prefixes: ["/img"]
+  services:
+    firefox-sync-sync:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5001"
+    firefox-sync-content:
+      loadBalancer:
+        servers:
+          - url: "http://[::1]:3030"
+    firefox-sync-api:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:9000"
+    firefox-sync-img:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:1112"
+    firefox-sync-profile:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:1111"

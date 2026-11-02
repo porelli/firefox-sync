@@ -119,8 +119,16 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "s|^FXA_VERSION=.*|FXA_VERSION=${INSTALLED##*:}|" \
     -e "s|^FXA_ARCH=.*|FXA_ARCH=${from_arch}|" \
     -e "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${REPOSITORY}:fxa-channelserver-latest|" \
+    -e "s|^PROXY=.*|PROXY=caddy|" \
+    -e "s|^CADDY_ACME_CA=.*|CADDY_ACME_CA=internal|" \
     -e "/^COMPOSE_FILE=/d" > "${ENV_FILE}"
 slot_fxa_ports "${ENV_FILE}"
+# its proxy: the bundled Caddy (compose/caddy.yml) with the configuration prepare_environment.sh
+# writes for this .env (setup/proxy.sh), its own CA (tests/compose/proxy-caddy.yml)
+FFS_PROXY_DIR=${WORK}/proxy
+echo "FFS_PROXY_DIR=${FFS_PROXY_DIR}" >> "${ENV_FILE}"
+(source "${CODE}/prepare_environment.sh" && SCRIPT_DIR=${CODE} ENV_READ=${ENV_FILE} COMPOSE_PROJECT_NAME=${PROJECT} && ffs_temp_init &&
+  write_proxy compose render "${FFS_PROXY_DIR}" > /dev/null) && chmod -R a+rX "${FFS_PROXY_DIR}" || { echo "FAIL: the configuration of the bundled Caddy"; exit 1; }
 # the database images and options as the env file has them: not empty ones of the caller's
 # environment (CI passes its matrix values, empty for the defaults), which compose would
 # prefer to the file and which would hide its pins from db/mysql/keep-major.sh
@@ -136,7 +144,8 @@ export ADMIN_IMAGE=${ADMIN_IMAGE:-ffs-admin:test}
 
 dc() {
   docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${CODE}/compose/sync.yml" -f "${CODE}/compose/sync-mariadb.yml" \
-    -f "${CODE}/compose/fxa.yml" -f "${CODE}/compose/fxa-${FXA_DB}.yml" -f "${TESTS}/compose/fxa.yml" "$@"
+    -f "${CODE}/compose/fxa.yml" -f "${CODE}/compose/fxa-${FXA_DB}.yml" -f "${TESTS}/compose/fxa.yml" \
+    -f "${CODE}/compose/caddy.yml" -f "${TESTS}/compose/proxy-caddy.yml" "$@"
 }
 FAILED=0
 # compose prefers the environment to --env-file: change both

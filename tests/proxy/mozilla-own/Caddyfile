@@ -1,0 +1,19 @@
+# Firefox Sync behind Caddy: put this file as your Caddyfile (or import it from yours), then:
+# caddy reload. Caddy gets the certificates itself (Let's Encrypt), and redirects HTTP to HTTPS.
+# Snippets of yours in caddy.d/ next to it are imported: sites*.caddy beside these sites, <site>*.caddy
+# (sync, content, api, profile, pairing, admin) in that site, public*.caddy in the five Firefox reaches
+# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
+# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+
+import caddy.d/sites*.caddy
+
+# the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT
+sync.example.com {
+	import caddy.d/public*.caddy
+	import caddy.d/sync*.caddy
+	# (docs/reverse-proxy.md#request-size)
+	request_body {
+		max_size 10MB
+	}
+	reverse_proxy 127.0.0.1:5000
+}

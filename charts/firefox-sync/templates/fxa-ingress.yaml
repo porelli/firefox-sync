@@ -1,11 +1,11 @@
 {{- /*
 The accounts' public hosts (fxa.ingress.enabled), an Ingress each (the pairing server's with
-it), as config/nginx/fxa-example.conf's server blocks: one host failing (its certificate, its
+it), as the server blocks of proxy/nginx.conf (setup/proxy.sh): one host failing (its certificate, its
 rule) leaves the others up, and a certificate each (tls.secretNames.<host>, empty: the
 controller's default) keeps cert-manager's per-host issuance working. The profile host's /img/ goes to img-proxy (port img), which strips
 the prefix as nginx's proxy_pass .../ does, so no controller-specific rewrite is needed. With the
 admin UI, the API host's POST /v1/account/create goes to its sign-up gate (port 8081), as
-fxa-example.conf's location = /v1/account/create: an Exact path for every method, the gate
+proxy/nginx.conf's location = /v1/account/create: an Exact path for every method, the gate
 passes on what is not that POST (OPTIONS preflights) to auth; the database refuses what the
 policy does not allow whatever the routing, the gate makes the refusals readable.
 Each path: (path pathType Service port)

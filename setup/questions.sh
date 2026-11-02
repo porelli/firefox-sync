@@ -30,6 +30,9 @@ SETUP_STEPS=(
     admin_users admin_groups admin_password admin_notify
     "@Backups"
     backups
+    "@Reverse proxy"
+    proxy proxy_admin_allow caddy_email caddy_ca caddy_http_port caddy_https_port traefik_network
+    traefik_entrypoints traefik_http_entrypoint traefik_certresolver
     "@Review"
     confirm
 )
@@ -1211,7 +1214,133 @@ step_backups() {
     BACKUPS=${YN}
 }
 
-# --- 6) Review
+# --- 6) Reverse proxy (setup/proxy.sh writes proxy/ from the answers in .env)
+# previous_setting <name> <default>: the value of the .env of before (run again on an install:
+# its choices are the defaults), else the default
+previous_setting() {
+    if [ -f "${SCRIPT_DIR}/.env" ] && env_has "${1}"; then env_plain "${1}"; else printf '%s' "${2}"; fi
+}
+step_proxy() {
+    local options=() default
+    default=$(previous_setting PROXY own)
+    [ "${default}" = traefik ] && [ "${DEPLOY_METHOD}" = quadlets ] && default=own
+    hint "The stack serves plain HTTP on ports of this host: a reverse proxy adds HTTPS and the public host names."
+    hint "  proxy/ gets its configuration in any case, for nginx, Caddy and Traefik (docs/reverse-proxy.md)"
+    options=("own|I run a reverse proxy already (nginx, Caddy, Traefik, Apache...): I put the file of proxy/ into it")
+    options+=("caddy|no reverse proxy yet: run the bundled Caddy, HTTPS certificates from Let's Encrypt by itself")
+    [ "${DEPLOY_METHOD}" = quadlets ] || options+=("traefik|my Traefik with its Docker provider: labels on the public containers")
+    ask_menu proxy "Do you already run a reverse proxy?" "${default}" "${options[@]}" || return
+    PROXY=${CHOICE}
+}
+step_proxy_admin_allow() {
+    PROXY_ADMIN_ALLOW_V=$(previous_setting PROXY_ADMIN_ALLOW "$(ENV_READ="${SCRIPT_DIR}/.env-example" env_plain PROXY_ADMIN_ALLOW)")
+    [ -n "${ADMIN_URL}" ] || return 0
+    hint "The admin UI's public address (${ADMIN_URL}) only from your own addresses: the proxy refuses the others"
+    hint "  (docs/reverse-proxy.md#the-admin-ui). Addresses and CIDRs, comma-separated; anybody: no restriction"
+    while :; do
+        ask proxy_admin_allow "Who can open the admin UI's public address" "${PROXY_ADMIN_ALLOW_V:-anybody}" || return
+        ANSWER=$(printf '%s' "${ANSWER}" | tr -d ' ')
+        [ "$(lower "${ANSWER}")" = anybody ] && { PROXY_ADMIN_ALLOW_V=""; return 0; }
+        [[ "${ANSWER}" =~ ^[0-9A-Fa-f.:/]+(,[0-9A-Fa-f.:/]+)*$ ]] && { PROXY_ADMIN_ALLOW_V=${ANSWER}; return 0; }
+        echo "ERROR: not a list of addresses or CIDRs (e.g. 192.0.2.0/24,2001:db8::/32): '${ANSWER}'"
+        retry
+    done
+}
+step_caddy_email() {
+    CADDY_ACME_EMAIL_V=$(previous_setting CADDY_ACME_EMAIL "")
+    [ "${PROXY}" = caddy ] || return 0
+    hint "The bundled Caddy (docs/reverse-proxy.md#the-bundled-caddy) gets a certificate for each public host name"
+    hint "  from Let's Encrypt: the host names must resolve to this host, and ports 80 and 443 be reachable from"
+    hint "  the internet. Let's Encrypt writes to this email about them (expiry, changes); empty: none"
+    while :; do
+        ask caddy_email "Email for Let's Encrypt (empty: none)" "${CADDY_ACME_EMAIL_V}" || return
+        [[ "${ANSWER}" =~ ^([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+)?$ ]] && { CADDY_ACME_EMAIL_V=${ANSWER}; return 0; }
+        echo "ERROR: not an email: '${ANSWER}'"
+        retry
+    done
+}
+step_caddy_ca() {
+    CADDY_ACME_CA_V=$(previous_setting CADDY_ACME_CA letsencrypt)
+    [ "${PROXY}" = caddy ] || return 0
+    ask_menu caddy_ca "Where its certificates come from" "${CADDY_ACME_CA_V}" \
+        "letsencrypt|Let's Encrypt, which browsers trust" \
+        "staging|Let's Encrypt's staging CA: no browser trusts them, to try the setup first without its rate limits" \
+        "internal|Caddy's own CA, without the internet: a network of your own, its root certificate installed on your devices" || return
+    CADDY_ACME_CA_V=${CHOICE}
+}
+# ask_caddy_port <id> <question> <setting> <default>: a port, in the variable <setting>_V
+ask_caddy_port() {
+    local value
+    value=$(previous_setting "${3}" "${4}")
+    while :; do
+        ask "${1}" "${2}" "${value}" || return
+        if [[ "${ANSWER}" =~ ^[0-9]{1,5}$ ]] && [ "$((10#${ANSWER}))" -ge 1 ] && [ "$((10#${ANSWER}))" -le 65535 ]; then
+            printf -v "${3}_V" '%s' "$((10#${ANSWER}))"
+            return 0
+        fi
+        echo "ERROR: not a port: '${ANSWER}'"
+        retry
+    done
+}
+step_caddy_http_port() {
+    CADDY_HTTP_PORT_V=$(previous_setting CADDY_HTTP_PORT 80)
+    [ "${PROXY}" = caddy ] || return 0
+    hint "The ports of this host it listens on: 80 and 443 for Let's Encrypt, or others with 80 and 443 forwarded"
+    hint "  to them (your router)"
+    ask_caddy_port caddy_http_port "Its HTTP port" CADDY_HTTP_PORT 80
+}
+step_caddy_https_port() {
+    CADDY_HTTPS_PORT_V=$(previous_setting CADDY_HTTPS_PORT 443)
+    [ "${PROXY}" = caddy ] || return 0
+    ask_caddy_port caddy_https_port "Its HTTPS port" CADDY_HTTPS_PORT 443 || return
+    [ -n "${FFS_REPLAYED_NOW}" ] || caddy_port_checks "${CADDY_HTTP_PORT_V}" "${CADDY_HTTPS_PORT_V}"
+    return 0
+}
+# ask_traefik_name <id> <question> <default> <variable> <none: ok or not> <what>: names,
+# comma-separated; with ok, none (also the default when it is empty) for none
+ask_traefik_name() {
+    local default=${3}
+    [ -z "${default}" ] && [ "${5}" = ok ] && default=none
+    while :; do
+        ask "${1}" "${2}" "${default}" || return
+        ANSWER=$(printf '%s' "${ANSWER}" | tr -d ' ')
+        if [ "$(lower "${ANSWER}")" = none ] && [ "${5}" = ok ]; then printf -v "${4}" '%s' ""; return 0; fi
+        [[ "${ANSWER}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$ ]] && { printf -v "${4}" '%s' "${ANSWER}"; return 0; }
+        echo "ERROR: not ${6}: '${ANSWER}'"
+        retry
+    done
+}
+step_traefik_network() {
+    TRAEFIK_NETWORK_V=$(previous_setting TRAEFIK_NETWORK traefik)
+    [ "${PROXY}" = traefik ] || return 0
+    hint "Your Traefik reads the labels of the containers on the Docker socket (or the Podman one) and reaches them"
+    hint "  on its network: the public containers join it (docs/reverse-proxy.md#traefik-labels)"
+    ask_traefik_name traefik_network "The Docker network Traefik watches" "${TRAEFIK_NETWORK_V}" TRAEFIK_NETWORK_V no "a network name" || return
+    if [ "${CONTAINER_RUNTIME}" != none ] && ! "${CONTAINER_RUNTIME}" network inspect "${TRAEFIK_NETWORK_V}" > /dev/null 2>&1; then
+        echo "NOTE: no network ${TRAEFIK_NETWORK_V} here (yet): Traefik's, which docker compose up needs (docker network create ${TRAEFIK_NETWORK_V})"
+    fi
+    return 0
+}
+step_traefik_entrypoints() {
+    TRAEFIK_ENTRYPOINTS_V=$(previous_setting TRAEFIK_ENTRYPOINTS websecure)
+    [ "${PROXY}" = traefik ] || return 0
+    ask_traefik_name traefik_entrypoints "Its HTTPS entry point(s), comma-separated" "${TRAEFIK_ENTRYPOINTS_V}" TRAEFIK_ENTRYPOINTS_V no "entry point names"
+}
+step_traefik_http_entrypoint() {
+    TRAEFIK_HTTP_ENTRYPOINT_V=$(previous_setting TRAEFIK_HTTP_ENTRYPOINT web)
+    [ "${PROXY}" = traefik ] || return 0
+    hint "HTTP redirected to HTTPS there; none: no redirect (e.g. Traefik redirects all of its HTTP already)"
+    ask_traefik_name traefik_http_entrypoint "Its HTTP entry point (none: no redirect)" "${TRAEFIK_HTTP_ENTRYPOINT_V}" TRAEFIK_HTTP_ENTRYPOINT_V ok "an entry point name"
+}
+step_traefik_certresolver() {
+    TRAEFIK_CERTRESOLVER_V=$(previous_setting TRAEFIK_CERTRESOLVER "")
+    [ "${PROXY}" = traefik ] || return 0
+    hint "The certificate resolver of Traefik's static configuration that gets the certificates (ACME); none:"
+    hint "  its default certificate (a wildcard of yours, or a load balancer in front)"
+    ask_traefik_name traefik_certresolver "Its certificate resolver (none: its default certificate)" "${TRAEFIK_CERTRESOLVER_V}" TRAEFIK_CERTRESOLVER_V ok "a resolver name"
+}
+
+# --- 7) Review
 # secrets_planned: the passwords and secrets the setup generates for these answers, one per
 # line: <setting>|<what it is for>|<how a change works: env (.env alone), reset (.env, set
 # again in the database at the next start), db (the database has it too), key (a key: what a
@@ -1331,6 +1460,14 @@ setup_summary() {
         echo "  4 Admin UI: off"
     fi
     echo "  5 Nightly backups: $([ "${BACKUPS}" = yes ] && echo on || echo off)"
+    local ca="Let's Encrypt"
+    case "${CADDY_ACME_CA_V}" in internal) ca="its own CA" ;; staging) ca="Let's Encrypt's staging CA" ;; esac
+    case "${PROXY}" in
+        own) echo "  6 Reverse proxy: yours, its configuration in proxy/ (nginx, Caddy, Traefik)" ;;
+        caddy) echo "  6 Reverse proxy: the bundled Caddy on ports ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V}, certificates of ${ca}${CADDY_ACME_EMAIL_V:+ (${CADDY_ACME_EMAIL_V})}" ;;
+        traefik) echo "  6 Reverse proxy: your Traefik, labels for its network ${TRAEFIK_NETWORK_V}, entry points ${TRAEFIK_ENTRYPOINTS_V}${TRAEFIK_HTTP_ENTRYPOINT_V:+ (HTTP: ${TRAEFIK_HTTP_ENTRYPOINT_V})}, ${TRAEFIK_CERTRESOLVER_V:+certificate resolver ${TRAEFIK_CERTRESOLVER_V}}${TRAEFIK_CERTRESOLVER_V:-its default certificate}" ;;
+    esac
+    [ -z "${ADMIN_URL}" ] || echo "     the admin UI's public address from: ${PROXY_ADMIN_ALLOW_V:-anybody}"
     secrets_report review
 }
 step_confirm() {
@@ -1343,7 +1480,8 @@ step_confirm() {
     MENU_ALIASES="yes=write y=write no=quit n=quit" ask_menu confirm "Write .env and the examples with these answers?" write \
         "deployment|change the answers of 1 Deployment" "sync|change the answers of 2 Sync server" \
         "accounts|change the answers of 3 Accounts" "admin|change the answers of 4 Admin UI" \
-        "backups|change the answers of 5 Nightly backups" "write|write .env and the examples now" \
+        "backups|change the answers of 5 Nightly backups" "proxy|change the answers of 6 Reverse proxy" \
+        "write|write .env and the examples now" \
         "quit|stop here, nothing written" || return
     case "${CHOICE}" in
         write) return 0 ;;
@@ -1354,7 +1492,7 @@ step_confirm() {
         ui_error "confirm: write or quit, not '${CHOICE}' (a part is changed in the review)"
         exit 2
     fi
-    case "${CHOICE}" in deployment) n=1 ;; sync) n=2 ;; accounts) n=3 ;; admin) n=4 ;; backups) n=5 ;; esac
+    case "${CHOICE}" in deployment) n=1 ;; sync) n=2 ;; accounts) n=3 ;; admin) n=4 ;; backups) n=5 ;; proxy) n=6 ;; esac
     FFS_JUMP=$(section_index "${n}") SECTION_NUMBER_OF_JUMP=${n}
     return 3
 }

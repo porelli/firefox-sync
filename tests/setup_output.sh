@@ -9,14 +9,17 @@
 # the admin UI on or off; your own database servers, with and without the bootstrap; docker
 # compose, Quadlets, compose on the Podman socket): .env, the nginx and systemd examples,
 # database-setup*.sql and database-bootstrap*.sql, the Quadlet units and their environment
-# files, every random value masked (@SETTING@). A difference meant is listed in EXPECTED_DIFF.
+# files, every random value masked (@SETTING@). A difference meant is listed in EXPECTED_DIFF;
+# the configuration of the reverse proxy is the new setup's only (NEW_ONLY: proxy/, which
+# replaces the nginx examples of config/nginx/ of before, OLD_ONLY), its nginx.conf with the
+# same host names and upstreams as those examples.
 # Then the new setup alone:
 # - the interactive flow, its answers on stdin with `<` (back) and a part changed in the
 #   review, writes what its answers file writes;
 # - the passwords and secrets it generated are listed at the end, the admin UI's password not
 #   shown in a log;
 # - what the old setup could not do (other host names and ports, the admin UI's sign-in with
-#   another provider or a header).
+#   another provider or a header, the bundled Caddy, the labels for Traefik).
 # No container runtime is used: docker, podman, skopeo and systemctl are stubs (no image, no
 # volume, postgres:latest is 18), on a PATH without the real ones; HOME and XDG_CONFIG_HOME are
 # temporary (the Quadlet units go there).
@@ -40,7 +43,8 @@ if ! git -C "${CODE}" cat-file -e "${BASE}^{commit}" 2> /dev/null; then
     git -C "${CODE}" fetch -q --depth=1 origin "${BASE}" 2> /dev/null
 fi
 mkdir -p "${WORK}/old"
-git -C "${CODE}" archive "${BASE}" prepare_environment.sh setup | tar -x -C "${WORK}/old" \
+# (and the nginx examples it wrote its config/nginx/*.conf from)
+git -C "${CODE}" archive "${BASE}" prepare_environment.sh setup config/nginx | tar -x -C "${WORK}/old" \
     || { echo "FAIL: the setup of ${BASE} (git archive; BASE=<commit> to choose another)"; exit 1; }
 
 # the programs the setup may run, and nothing else (no interpreter, no tool it did not use
@@ -83,7 +87,7 @@ reset_checkout() { # <old|new>
     rm -rf "${W:?}" "${WORK:?}/home"
     mkdir -p "${W}" "${WORK}/home"
     (cd "${CODE}" && tar -cf - --exclude=.git --exclude=.env --exclude='.env.*' --exclude='database-*.sql' .) | tar -xf - -C "${W}"
-    rm -f "${W}"/config/nginx/syncstorage-rs.conf "${W}"/config/nginx/fxa.conf "${W}"/config/systemd/syncstorage-rs.service
+    rm -rf "${W}"/config/nginx/syncstorage-rs.conf "${W}"/config/nginx/fxa.conf "${W}"/config/systemd/syncstorage-rs.service "${W}/proxy"
     if [ "${1}" = old ]; then rm -rf "${W}/setup" && cp -R "${WORK}/old/." "${W}/"; fi
 }
 # run_setup <docker|podman> <log> <arguments...>: the setup, in the checkout, stdin as it is
@@ -104,6 +108,10 @@ collect() {
     done
     for f in "${WORK}"/home/.config/containers/systemd/* "${WORK}"/home/.config/systemd/user/*; do
         [ -f "${f}" ] && cp "${f}" "${out}/unit_${f##*/}"
+    done
+    # the configuration of the reverse proxy (not what it keeps of before, proxy/.generated/)
+    for f in "${W}"/proxy/*; do
+        [ -f "${f}" ] && cp "${f}" "${out}/proxy_${f##*/}"
     done
     [ -f "${W}/.env" ] || return 0
     sed_file=${WORK}/mask.sed
@@ -300,9 +308,26 @@ accounts=self-hosted
 fxa_db=mariadb
 smtp_host=smtp.example.org'
 
-# the differences meant, per case: "<case> <file>" (none: the same files for the same choices)
+# the differences meant, per case: "<case> <file>" (none: the same files for the same choices);
+# for every case: the files of proxy/, the new setup's only, which replace the nginx examples
+# of before (compared below for their host names and upstreams)
 EXPECTED_DIFF=()
-expected() { local e; for e in ${EXPECTED_DIFF[@]+"${EXPECTED_DIFF[@]}"}; do [ "${e}" = "${1} ${2}" ] && return 0; done; return 1; }
+NEW_ONLY="proxy_*" OLD_ONLY="config_nginx_syncstorage-rs.conf config_nginx_fxa.conf"
+expected() {
+    local e
+    for e in ${EXPECTED_DIFF[@]+"${EXPECTED_DIFF[@]}"}; do [ "${e}" = "${1} ${2}" ] && return 0; done
+    # (a file of one side only)
+    # shellcheck disable=SC2254 # (the patterns of NEW_ONLY)
+    case "${2}" in ${NEW_ONLY}) [ ! -f "${WORK}/out/old/${1}/${2}" ] && return 0 ;; esac
+    case " ${OLD_ONLY} " in *" ${2} "*) [ ! -f "${WORK}/out/new/${1}/${2}" ] && return 0 ;; esac
+    return 1
+}
+# nginx_names <file...>: the host names of their server_name lines and the upstreams of their
+# proxy_pass lines, not commented out, one per line, sorted
+nginx_names() {
+    cat "$@" 2> /dev/null | grep -E '^[[:space:]]*(server_name|proxy_pass)[[:space:]]' \
+        | sed -E 's/^[[:space:]]*(server_name|proxy_pass)[[:space:]]+//; s/;[[:space:]]*$//' | tr ' ' '\n' | grep . | LC_ALL=C sort -u
+}
 
 only=" $* "
 for c in "${CASES[@]}"; do
@@ -341,6 +366,11 @@ for c in "${CASES[@]}"; do
         fi
     done
     check "${same} $(echo "${files}" | wc -w | tr -d ' ')" "yes $(echo "${files}" | wc -w | tr -d ' ')" "${name}: the same files ($(echo ${files} | sed 's/ /, /g'))"
+    # proxy/nginx.conf proxies the host names of before to the upstreams of before
+    nginx_names "${WORK}/out/old/${name}"/config_nginx_*.conf > "${WORK}/names-old"
+    nginx_names "${WORK}/out/new/${name}/proxy_nginx.conf" > "${WORK}/names-new"
+    check "$(diff "${WORK}/names-old" "${WORK}/names-new" > "${WORK}/diff" && echo same) $(grep -c . "${WORK}/names-new")" "same $(grep -c . "${WORK}/names-old")" \
+        "${name}: proxy/nginx.conf has the host names and upstreams of the nginx examples of before" || sed 's/^/    /' "${WORK}/diff"
 done
 
 [ "${only}" = "  " ] || { [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"; exit "${FAILED}"; }
@@ -359,10 +389,10 @@ check "$(grep -cE '^  (SYNC_POSTGRES_PASSWORD|SYNC_DB_BOOTSTRAP_PASSWORD): ' "${
 echo "== the interactive flow, on stdin: < goes back, a part changed in the review"
 # as mozilla-mariadb: dir, container user, domain, Sync URL, listen, image tag, engine, own
 # server, max users (5, then < from the accounts: 2), accounts, invite-only, admin UI, sign-in,
-# alerts, backups; in the review < (back to the backups), then 2 (the Sync server again: its
+# alerts, backups, the reverse proxy; in the review < (back to the proxy), then 2 (the Sync server again: its
 # answers of before as the defaults, < once more), the parts after it replayed, then write
 reset_checkout new
-printf '%s\n' "" "" example.org "" "" "" "" "" 5 "<" 2 "" "" "" "" "" "" \
+printf '%s\n' "" "" example.org "" "" "" "" "" 5 "<" 2 "" "" "" "" "" "" "" \
     "<" "" sync \
     "" "" "" "" "" "<" "" 2 \
     write | run_setup docker "${WORK}/interactive.log"
@@ -370,7 +400,7 @@ rc=$?
 collect "${WORK}/out/interactive"
 check "${rc} $(diff -r "${WORK}/out/interactive" "${WORK}/out/new/mozilla-mariadb" > "${WORK}/diff" 2>&1 && echo same)" "0 same" \
     "the interactive flow with < and a part changed in the review writes what the answers file writes" || head -30 "${WORK}/diff"
-check "$(grep -c '^2/6 The Sync server$' "${WORK}/interactive.log") $(grep -c '^6/6 Review$' "${WORK}/interactive.log") $(grep -c '^Max users of the Sync server, a number or unlimited \[5\] (< back): $' "${WORK}/interactive.log")" "3 3 1" \
+check "$(grep -c '^2/7 The Sync server$' "${WORK}/interactive.log") $(grep -c '^7/7 Review$' "${WORK}/interactive.log") $(grep -c '^Max users of the Sync server, a number or unlimited \[5\] (< back): $' "${WORK}/interactive.log")" "3 3 1" \
     "its parts with their progress, the answer typed before as the default after <"
 # the questions of the parts after the one changed are not asked again
 check "$(grep -c '^Which accounts people sign in with \[mozilla\]' "${WORK}/interactive.log")" 2 "the parts after the one changed: their answers taken again, not asked"
@@ -420,8 +450,12 @@ check "${rc} $(ev SYNC_PUBLIC_URL) $(ev FXA_CONTENT_URL) $(ev FXA_AUTH_URL) $(ev
 check "$(ev ADMIN_OIDC_ISSUER) $(ev ADMIN_OIDC_CLIENT_ID) $(ev ADMIN_OIDC_CLIENT_SECRET) $(ev ADMIN_OIDC_REDIRECT_URL) $(ev ADMIN_OIDC_NAME) [$(ev ADMIN_ALLOWED_USERS)] $(ev ADMIN_ALLOWED_GROUPS) [$(ev ADMIN_FXA_CLIENT_ID)]" \
     "https://auth.example.com/application/o/ffs/ ffs-admin 's3cr3t \"x\"' https://sync-admin.example.com/auth/callback \"Authentik SSO\" [] ffs-admins []" \
     "the admin UI signs in with another OpenID Connect provider, its groups"
-check "$(grep -cxE '  server_name (id|id-api|id-profile|qr|sync-admin)\.example\.com;|  server_name id\.example\.com id-api\.example\.com id-profile\.example\.com;' "${W}/config/nginx/fxa.conf") $(grep -c 'server_name ffs.example.net;' "${W}/config/nginx/syncstorage-rs.conf") $(grep -c '^NOTE: https://.* has a port of its own' "${WORK}/custom.log")" \
-    "$(grep -c 'server_name <' "${CODE}/config/nginx/fxa-example.conf") 2 2" "the nginx examples with the host names (without the ports, which are said)"
+# proxy/: each host its server, on the port of its URL (and the redirect from HTTP to it)
+P=${W}/proxy
+check "$(grep -cxE '  server_name (ffs\.example\.net|id|id-api|id-profile|qr|sync-admin)(\.example\.com)?;' "${P}/nginx.conf") $(grep -cx '  listen 8443 ssl;' "${P}/nginx.conf") $(grep -cx '  listen 4443 ssl;' "${P}/nginx.conf") $(grep -c 'return 301 https://$host:8443$request_uri;' "${P}/nginx.conf")" \
+    "8 1 1 1" "proxy/nginx.conf: every host name, on the ports of the URLs (and the redirects of the two of their own)"
+check "$(grep -cxE '(ffs\.example\.net:8443|id\.example\.com|id-api\.example\.com:4443|id-profile\.example\.com|qr\.example\.com|sync-admin\.example\.com) \{' "${P}/Caddyfile") $(grep -c 'rule: "Host(`id-api.example.com`) && Path(`/v1/account/create`)"' "${P}/traefik.yml")" \
+    "6 1" "proxy/Caddyfile and traefik.yml: the same hosts and the sign-up gate"
 reset_checkout new
 printf 'domain=example.com\nadmin_signin=header\nadmin_trusted_proxies=172.18.0.1/32, 10.0.0.0/8\nadmin_users=alice@example.com\n' > "${WORK}/header.answers"
 run_setup docker "${WORK}/header.log" --answers "${WORK}/header.answers" < /dev/null
@@ -461,6 +495,70 @@ admin_oidc_client_id=x|no admin given, nor a group"; do
     printf '%s\n' "${bad%|*}" > "${WORK}/bad.answers"
     run_setup docker "${WORK}/bad.log" --answers "${WORK}/bad.answers" --non-interactive < /dev/null
     check "$? $(grep -c "${bad##*|}" "${WORK}/bad.log") [$(ls "${W}/.env" 2> /dev/null)]" "$([ "${bad%%=*}" = sync_ulr ] && echo 2 || echo 1) 1 []" "refused: ${bad##*|}"
+done
+
+echo "== the reverse proxy: proxy/ for each answer, the bundled Caddy, the labels for Traefik"
+P=${W}/proxy
+# the bundled Caddy with docker compose: on the stack's network (the containers by name), Let's
+# Encrypt's staging CA, the admin UI's public address from two networks
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com admin_signin=accounts admin_users=me@example.com \
+    proxy=caddy caddy_email=admin@example.com caddy_ca=staging "proxy_admin_allow=192.0.2.0/24, 2001:db8::/32" > "${WORK}/caddy.answers"
+run_setup docker "${WORK}/caddy.log" --answers "${WORK}/caddy.answers" --non-interactive < /dev/null
+check "$? $(ev PROXY) $(ev CADDY_ACME_CA) $(ev CADDY_ACME_EMAIL) $(ev PROXY_ADMIN_ALLOW) $(ev COMPOSE_FILE | grep -c '^compose/sync.yml:.*:compose/caddy.yml$')" \
+    "0 caddy staging admin@example.com 192.0.2.0/24,2001:db8::/32 1" "the bundled Caddy (compose): .env, compose/caddy.yml in COMPOSE_FILE"
+check "$(grep -c '^	acme_ca https://acme-staging-v02' "${P}/Caddyfile.bundled") $(grep -c '^	email admin@example.com$' "${P}/Caddyfile.bundled") $(grep -cE '^	reverse_proxy (@gate ffs-admin:8081|fxa-content:3030|fxa-auth:9000|syncstorage:8000)$' "${P}/Caddyfile.bundled") $(grep -c '^	reverse_proxy 127.0.0.1:3030$' "${P}/Caddyfile") $(grep -c '@outside not remote_ip 192.0.2.0/24 2001:db8::/32$' "${P}/Caddyfile" "${P}/Caddyfile.bundled" | grep -c ':1$') $(grep -cx '  allow 2001:db8::/32;' "${P}/nginx.conf")" \
+    "1 1 4 1 2 1" "Caddyfile.bundled: its CA, the containers by name; Caddyfile, nginx.conf: the ports of this host; the admin UI from PROXY_ADMIN_ALLOW"
+check "$(grep -c '^NOTE: https://' "${WORK}/caddy.log") $(grep -c "Let's Encrypt needs every host name of proxy/Caddyfile.bundled to resolve to this host" "${WORK}/caddy.log") $(grep -c '^  6 Reverse proxy: the bundled Caddy on ports 80 and 443, certificates of Let.s Encrypt.s staging CA (admin@example.com)$' "${WORK}/caddy.log")" \
+    "0 1 1" "the bundled Caddy: in the review, and what Let's Encrypt needs is said"
+# again, the proxy/ of before changed by hand: kept; then --render-proxy after a change of .env,
+# and --upgrade back to your own proxy (compose/caddy.yml out of COMPOSE_FILE)
+echo "# mine" >> "${P}/nginx.conf"
+sed -i.bak 's|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://ffs.example.com|' "${W}/.env" && rm -f "${W}/.env.bak"
+run_setup docker "${WORK}/render-proxy.log" --render-proxy < /dev/null
+check "$? $(ls "${P}"/nginx.conf.before-render-* 2> /dev/null | wc -l | tr -d ' ') $(grep -c '^# mine$' "${P}"/nginx.conf.before-render-* "${P}/nginx.conf" | grep -c ':1$') $(grep -c '^ffs.example.com {$' "${P}/Caddyfile.bundled") $(grep -c 'kept as nginx.conf.before-render-' "${WORK}/render-proxy.log")" \
+    "0 1 1 1 1" "--render-proxy: proxy/ again from .env, a file changed by hand kept as <file>.before-render-<time>"
+run_setup docker "${WORK}/render-proxy-again.log" --render-proxy < /dev/null
+check "$? $(grep -c 'is that of .env already' "${WORK}/render-proxy-again.log") $(ls "${P}"/*.before-* | wc -l | tr -d ' ')" "0 1 1" "--render-proxy again: nothing changes"
+sed -i.bak 's|^PROXY=.*|PROXY=own|' "${W}/.env" && rm -f "${W}/.env.bak"
+run_setup docker "${WORK}/upgrade-proxy.log" --upgrade < /dev/null
+check "$? $(ev COMPOSE_FILE | grep -c 'caddy') [$(ls "${P}/Caddyfile.bundled" 2> /dev/null)] $(grep -c 'Caddyfile.bundled (removed)' "${WORK}/upgrade-proxy.log")" "0 0 [] 1" \
+    "--upgrade with PROXY=own: compose/caddy.yml out of COMPOSE_FILE, Caddyfile.bundled removed"
+# the bundled Caddy as a Quadlet: on the host's network, its own CA, ports of its own
+reset_checkout new
+printf '%s\n' domain=example.com deploy=quadlets proxy=caddy caddy_ca=internal caddy_http_port=8080 caddy_https_port=8443 > "${WORK}/caddy-q.answers"
+run_setup podman "${WORK}/caddy-q.log" --answers "${WORK}/caddy-q.answers" --non-interactive < /dev/null
+U=${WORK}/home/.config/containers/systemd
+check "$? $(grep -cxE "Network=host|Image=docker.io/library/caddy:latest|Volume=/.*/ffs/proxy:/etc/caddy:ro,z|Exec=caddy run --config /etc/caddy/Caddyfile.bundled --adapter caddyfile" "${U}/firefox-sync-caddy.container") $(ls "${U}"/firefox-sync-caddy-*.volume | wc -l | tr -d ' ') $(ev COMPOSE_FILE | grep -c caddy)" \
+    "0 4 2 0" "the bundled Caddy (Quadlets): its unit, on the host's network, proxy/ mounted, its volumes"
+check "$(grep -cxE '	(http_port 8080|https_port 8443|skip_install_trust|reverse_proxy 127.0.0.1:5000)' "${P}/Caddyfile.bundled") $(grep -c 'systemctl --user start firefox-sync-caddy.service' "${WORK}/caddy-q.log")" \
+    "4 1" "its Caddyfile.bundled: its ports, its own CA, the Sync server on this host's port; how to start it"
+printf 'PROXY=own\n' >> "${W}/.env"
+run_setup podman "${WORK}/caddy-q-off.log" --render-units < /dev/null
+check "$? [$(ls "${U}"/firefox-sync-caddy* 2> /dev/null)] $(grep -c 'firefox-sync-caddy.container (removed)' "${WORK}/caddy-q-off.log")" "0 [] 1" "PROXY=own, --render-units: the bundled Caddy's units removed"
+# your Traefik's Docker provider: the labels, its network, two entry points, a resolver, no redirect
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com pairing=yes proxy=traefik traefik_network=web-proxy \
+    "traefik_entrypoints=https, https6" traefik_http_entrypoint=none traefik_certresolver=le > "${WORK}/traefik.answers"
+run_setup docker "${WORK}/traefik.log" --answers "${WORK}/traefik.answers" --non-interactive < /dev/null
+L=${P}/traefik-compose.yml
+check "$? $(ev TRAEFIK_NETWORK) $(ev TRAEFIK_ENTRYPOINTS) [$(ev TRAEFIK_HTTP_ENTRYPOINT)] $(ev TRAEFIK_CERTRESOLVER) $(ev COMPOSE_FILE | grep -c ':proxy/traefik-compose.yml$')" \
+    "0 web-proxy https,https6 [] le 1" "the labels for Traefik: .env, proxy/traefik-compose.yml in COMPOSE_FILE"
+check "$(grep -cE '^  (syncstorage|fxa-content|fxa-auth|fxa-profile-static|fxa-profile|fxa-pairing|ffs-admin):$' "${L}") $(grep -c 'traefik.docker.network: web-proxy$' "${L}") $(grep -c '\.entrypoints: https,https6$' "${L}") $(grep -c '\.tls.certresolver: le$' "${L}") $(grep -c 'redirectscheme' "${L}") $(grep -cx '    name: web-proxy' "${L}")" \
+    "7 7 7 7 0 1" "proxy/traefik-compose.yml: the public containers on Traefik's network, a router per route, no redirect"
+check "$(grep -c 'traefik.http.routers.ffs-gate.priority: "1000"' "${L}") $(grep -c 'traefik.http.middlewares.ffs-img-strip.stripprefix.prefixes: /img$' "${L}") $(grep -c 'buffering.maxrequestbodybytes: "10485760"' "${L}") $(grep -c 'NOTE: no network web-proxy here' "${WORK}/traefik.log")" \
+    "1 1 1 1" "the sign-up gate first, the avatars without /img, the request size; the network not found is said"
+# refused: Traefik's labels with the Quadlets, an address list that is none
+reset_checkout new
+for bad in "deploy=quadlets
+proxy=traefik|one of own, caddy, not 'traefik'" "admin_signin=oidc
+admin_oidc_issuer=https://id.example.com
+admin_oidc_client_id=x
+admin_users=a@example.com
+proxy_admin_allow=everyone|not a list of addresses or CIDRs"; do
+    printf '%s\n' domain=example.com "${bad%|*}" > "${WORK}/bad.answers"
+    run_setup podman "${WORK}/bad.log" --answers "${WORK}/bad.answers" --non-interactive < /dev/null
+    check "$? $(grep -c "${bad##*|}" "${WORK}/bad.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" "refused: ${bad##*|}"
 done
 
 [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"

@@ -1,0 +1,17 @@
+# the Quadlets with the self-hosted accounts (no pairing server there) and the bundled Caddy on
+# the host's network, Caddy's own CA, ports of its own; the admin UI from two networks
+deploy=quadlets
+SYNC_PUBLIC_URL=https://sync.example.com
+SYNC_EXPORT_PORT=127.0.0.1:5005
+COMPOSE_PROFILES=admin,pairing
+FXA_MYSQL_PASSWORD=not-a-placeholder
+FXA_CONTENT_URL=https://accounts.example.com
+FXA_AUTH_URL=https://api.example.com
+FXA_PROFILE_URL=https://profile.example.com
+FXA_PAIRING_URL=wss://pairing.example.com
+ADMIN_OIDC_REDIRECT_URL=https://admin.example.com/auth/callback
+PROXY_ADMIN_ALLOW=192.0.2.0/24,2001:db8::/32
+PROXY=caddy
+CADDY_ACME_CA=internal
+CADDY_HTTP_PORT=8080
+CADDY_HTTPS_PORT=8443

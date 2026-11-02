@@ -1,0 +1,14 @@
+# the self-hosted accounts with the admin UI signing in with them, your own pairing server, the
+# bundled Caddy (docker compose: on the stack's network) with Let's Encrypt and an email
+deploy=compose
+SYNC_PUBLIC_URL=https://sync.example.com
+COMPOSE_PROFILES=admin,backup,pairing
+COMPOSE_PROJECT_NAME=firefox-sync
+FXA_MYSQL_PASSWORD=not-a-placeholder
+FXA_CONTENT_URL=https://accounts.example.com
+FXA_AUTH_URL=https://api.example.com
+FXA_PROFILE_URL=https://profile.example.com
+FXA_PAIRING_URL=wss://pairing.example.com
+ADMIN_OIDC_REDIRECT_URL=https://admin.example.com/auth/callback
+PROXY=caddy
+CADDY_ACME_EMAIL=admin@example.com

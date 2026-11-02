@@ -610,6 +610,13 @@ jobs:
       contents: read
       packages: read
 
+    # the reverse proxy in front, with the configuration prepare_environment.sh writes (proxy/,
+    # docs/reverse-proxy.md): the bundled Caddy, nginx, Traefik's Docker provider (TEST_PROXY)
+    strategy:
+      fail-fast: false
+      matrix:
+        proxy: [caddy, nginx, traefik]
+
     runs-on: ${{ vars.FFS_RUNNERS == 'ec2' && fromJSON('["self-hosted","ffs-ec2","linux","X64"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
 
@@ -640,7 +647,7 @@ jobs:
           echo "Testing mozilla/fxa-mono:${version}"
           echo "version=${version}" >> ${GITHUB_OUTPUT}
 
-      - name: End-to-end tests with self-hosted Mozilla accounts
+      - name: End-to-end tests with self-hosted Mozilla accounts (${{ matrix.proxy }})
         env:
           REPOSITORY: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
           TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
@@ -651,6 +658,9 @@ jobs:
           FXA_VERSION: ${{ steps.fxa.outputs.version }}
           FXA_ARCH: amd64
           FXA_PAIRING_IMAGE: docker.io/mozilla/channelserver:latest
+          TEST_PROXY: ${{ matrix.proxy }}
+          # (the setup's checks once, with the bundled Caddy)
+          SKIP_SETUP: ${{ matrix.proxy != 'caddy' && '1' || '' }}
         run: ./tests/e2e-fxa.sh
 
       # the page source and a screenshot of each Firefox window of a failed test_fxa_browser.py

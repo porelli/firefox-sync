@@ -45,9 +45,16 @@
 #                    ffs-e2e-fxa, port 28653 and the other ports of .env-example; 1, 2...: -s<SLOT>
 #                    after the project, 1000 * SLOT added to 28653, the others at 28700-28706 + 1000 * SLOT
 #   INIT_TAG         tag suffix of the init image (default: TAG), e.g. one built from this tree
+#   TEST_PROXY       the reverse proxy in front of the public hosts, with the configuration
+#                    prepare_environment.sh writes for this .env (proxy/, setup/proxy.sh):
+#                    caddy (default: the bundled Caddy, compose/caddy.yml, its own CA), nginx
+#                    (nginx:latest, proxy/nginx.conf) or traefik (traefik:latest, its Docker
+#                    provider, the labels of proxy/traefik-compose.yml); nginx and Traefik with a
+#                    test CA (tests/compose/proxy-<TEST_PROXY>.yml)
 #   CLIENT_CERT      set to 1 for client certificates (a test CA) on the accounts pages and the
 #                    admin UI; SSO=authelia for Authelia's forward auth on them instead
-#                    (tests/caddy, test_fxa_access.py, docs/development/testing.md#access-control)
+#                    (tests/caddy, its snippets in caddy.d/ of the Caddy, test_fxa_access.py,
+#                    docs/development/testing.md#access-control); TEST_PROXY=caddy only
 #   SKIP_SETUP       set to 1 to leave out the prepare_environment.sh checks
 #   DEMO             set to 1 for the screenshot demo (docs/development/testing.md#the-screenshot-demo) instead of the tests: a fresh
 #                    stack seeded by tests/demo_seed.py (a household, sign-ups on an allowlist,
@@ -185,7 +192,7 @@ elif [ -n "${DB_BOOTSTRAP:-}" ]; then
   echo "DB_BOOTSTRAP=1 is for EXTERNAL_DB"; exit 2
 fi
 # the access control in front of the public hosts (docs/single-sign-on.md), in Caddy:
-# tests/caddy/<FFS_ACCESS>/
+# tests/caddy/<FFS_ACCESS>/, the snippets of its caddy.d/
 if [ -n "${CLIENT_CERT:-}" ] && [ -n "${SSO:-}" ]; then echo "CLIENT_CERT or SSO, not both"; exit 2; fi
 FFS_ACCESS=none
 [ -n "${CLIENT_CERT:-}" ] && FFS_ACCESS=mtls
@@ -196,6 +203,17 @@ echo "FFS_ACCESS=${FFS_ACCESS}" >> "${ENV_FILE}"
 [ "${FFS_ACCESS}" = mtls ] && echo "FFS_CERTS=${FFS_CERTS}" >> "${ENV_FILE}"
 # SSO=authelia: its container
 [ "${FFS_ACCESS}" = authelia ] && sed -i 's|^COMPOSE_PROFILES=.*|&,authelia|' "${ENV_FILE}"
+# the reverse proxy (TEST_PROXY): what prepare_environment.sh writes into proxy/ for this .env,
+# in FFS_PROXY_DIR (kept with KEEP=1, for RERUN)
+TEST_PROXY=${TEST_PROXY:-caddy}
+case "${TEST_PROXY}" in caddy|nginx|traefik) ;; *) echo "TEST_PROXY: caddy, nginx or traefik"; exit 2 ;; esac
+[ "${FFS_ACCESS}" = none ] || [ "${TEST_PROXY}" = caddy ] || { echo "CLIENT_CERT and SSO: with TEST_PROXY=caddy"; exit 2; }
+FFS_PROXY_DIR=${HOME}/.cache/${PROJECT}-proxy
+case "${TEST_PROXY}" in
+  caddy) sed -i -e 's|^PROXY=.*|PROXY=caddy|' -e 's|^CADDY_ACME_CA=.*|CADDY_ACME_CA=internal|' "${ENV_FILE}" ;;
+  traefik) sed -i -e 's|^PROXY=.*|PROXY=traefik|' -e "s|^TRAEFIK_NETWORK=.*|TRAEFIK_NETWORK=${PROJECT}-traefik|" "${ENV_FILE}" ;;
+esac
+printf 'FFS_TEST_PROXY=%s\nFFS_PROXY_DIR=%s\nFFS_PROJECT=%s\n' "${TEST_PROXY}" "${FFS_PROXY_DIR}" "${PROJECT}" >> "${ENV_FILE}"
 # CLIENT_CERT=1: a test client CA, a client certificate of it (PEM, and PKCS#12 for Firefox),
 # and one of another CA, which the hosts must refuse
 client_certs() {
@@ -227,6 +245,8 @@ fi
 export -n FXA_MYSQL_IMAGE FXA_MYSQL_ARGS FXA_MARIADB_IMAGE SYNC_MYSQL_IMAGE SYNC_POSTGRES_IMAGE 2> /dev/null
 load_env "${ENV_FILE}"
 FXA_DB=${FXA_DB:-mysql}
+# (RERUN: the proxy of the kept stack)
+TEST_PROXY=${FFS_TEST_PROXY}
 # the tests' containers with CLIENT_CERT=1: the client certificate, which their requests
 # sessions present (tests/conftest.py); with SSO=authelia: Authelia's user, whose session
 # cookie they send
@@ -271,10 +291,50 @@ fi
 ADMIN_GIVEN=${ADMIN_IMAGE:-}
 export ADMIN_IMAGE=${ADMIN_IMAGE:-ffs-admin:test}
 
+# the reverse proxy's compose files: the bundled Caddy's (compose/caddy.yml), the labels for
+# Traefik (proxy/traefik-compose.yml), and the test's of each (tests/compose/proxy-*.yml)
+case "${TEST_PROXY}" in
+  caddy) COMPOSE_EXTRA+=(-f "${CODE}/compose/caddy.yml" -f "${TESTS}/compose/proxy-caddy.yml") ;;
+  nginx) COMPOSE_EXTRA+=(-f "${TESTS}/compose/proxy-nginx.yml") ;;
+  traefik) COMPOSE_EXTRA+=(-f "${FFS_PROXY_DIR}/traefik-compose.yml" -f "${TESTS}/compose/proxy-traefik.yml") ;;
+esac
 dc() {
   # (Sync on MariaDB: tests/compose/fxa.yml has the healthchecks of its databases)
   docker compose -p "${PROJECT}" --env-file "${ENV_FILE}" -f "${CODE}/compose/sync.yml" -f "${CODE}/compose/sync-mariadb.yml" \
     -f "${CODE}/compose/fxa.yml" -f "${CODE}/compose/fxa-${FXA_DB}.yml" -f "${TESTS}/compose/fxa.yml" "${COMPOSE_EXTRA[@]}" "$@"
+}
+# the hosts of the stack's public URLs (the test CA's certificate has them)
+PROXY_HOSTS="sync.fxa.test accounts.fxa.test api.fxa.test profile.fxa.test pairing.fxa.test admin.fxa.test"
+# render_test_proxy: proxy/ of this .env, as prepare_environment.sh writes it (write_proxy), into
+# FFS_PROXY_DIR, with nginx's variant on the stack's network (render_nginx network); the
+# snippets of FFS_ACCESS in caddy.d/; for nginx and Traefik a test CA and its certificate
+render_test_proxy() {
+  local d=${FFS_PROXY_DIR}/test-ca h
+  rm -rf "${FFS_PROXY_DIR}" && mkdir -p "${FFS_PROXY_DIR}" || return 1
+  # (prepare_environment.sh sourced: its functions only)
+  (source "${CODE}/prepare_environment.sh" && SCRIPT_DIR=${CODE} ENV_READ=${ENV_FILE} COMPOSE_PROJECT_NAME=${PROJECT} && ffs_temp_init &&
+    write_proxy compose render "${FFS_PROXY_DIR}" && proxy_routes compose && render_nginx network > "${FFS_PROXY_DIR}/nginx-network.conf") || return 1
+  [ "${FFS_ACCESS}" = none ] || cp "${TESTS}/caddy/${FFS_ACCESS}"/*.caddy "${FFS_PROXY_DIR}/caddy.d/" || return 1
+  if [ "${TEST_PROXY}" != caddy ]; then
+    mkdir -p "${d}" "${FFS_PROXY_DIR}/traefik-test" || return 1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 60 -subj "/CN=ffs test proxy CA" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" -keyout "${d}/ca.key" -out "${d}/ca.crt" 2> /dev/null || return 1
+    # (30 days, as Caddy's: tests/test_fxa_admin.py checks them)
+    printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\nauthorityKeyIdentifier=keyid\nsubjectKeyIdentifier=hash\n' \
+      "$(for h in ${PROXY_HOSTS}; do printf 'DNS:%s,' "${h}"; done | sed 's/,$//')" > "${d}/leaf.ext"
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=fxa.test" -keyout "${d}/leaf.key" -out "${d}/leaf.csr" 2> /dev/null &&
+      openssl x509 -req -in "${d}/leaf.csr" -CA "${d}/ca.crt" -CAkey "${d}/ca.key" -CAcreateserial -days 30 -extfile "${d}/leaf.ext" -out "${d}/leaf.crt" 2> /dev/null || return 1
+    # nginx: where proxy/nginx.conf has them (certbot's paths)
+    for h in ${PROXY_HOSTS}; do
+      mkdir -p "${FFS_PROXY_DIR}/letsencrypt/live/${h}" && cp "${d}/leaf.crt" "${FFS_PROXY_DIR}/letsencrypt/live/${h}/fullchain.pem" &&
+        cp "${d}/leaf.key" "${FFS_PROXY_DIR}/letsencrypt/live/${h}/privkey.pem" || return 1
+    done
+    # Traefik: its default certificate, the routers having no resolver (TRAEFIK_CERTRESOLVER empty)
+    cp "${d}/leaf.crt" "${FFS_PROXY_DIR}/traefik-test/cert.pem" && cp "${d}/leaf.key" "${FFS_PROXY_DIR}/traefik-test/key.pem" || return 1
+    printf 'tls:\n  stores:\n    default:\n      defaultCertificate:\n        certFile: /test/cert.pem\n        keyFile: /test/key.pem\n' > "${FFS_PROXY_DIR}/traefik-test/tls.yml"
+  fi
+  # (read by the containers, whatever their user)
+  chmod -R a+rX "${FFS_PROXY_DIR}"
 }
 FAILED=0
 # compose_healthy, the healthchecks of the stack
@@ -299,9 +359,9 @@ teardown() {
   docker rm -f "${PROJECT}-browser" > /dev/null 2>&1
   dc down -v --remove-orphans > /dev/null 2>&1
   docker rm -f "${EXTDB}" > /dev/null 2>&1
-  docker network rm "${EXTDB}" > /dev/null 2>&1
+  docker network rm "${EXTDB}" "${PROJECT}-traefik" > /dev/null 2>&1
   rm -f "${KEPT_ENV}"
-  rm -rf "${WORK}" "${FFS_CERTS}"
+  rm -rf "${WORK}" "${FFS_CERTS}" "${FFS_PROXY_DIR}"
 }
 trap teardown EXIT
 
@@ -371,8 +431,9 @@ notify_answers=(fxa_max_accounts=5 fxa_account_events=yes "admin_notify='ntfy://
 prepare "${WORK}/setup.log" "${notify_answers[@]}" backups=yes pairing=yes
 check "$(grep -c '^COMPOSE_PROFILES=admin,backup,pairing$' "${SETUP}/.env") $(grep -c '^FXA_PAIRING_URL=wss://pairing.example.org$' "${SETUP}/.env") $(setup_compose config --services | grep -cxE 'backup|backup-fxa|fxa-pairing')" \
   "1 1 3" "the backups and the pairing server chosen: COMPOSE_PROFILES=admin,backup,pairing, FXA_PAIRING_URL, their services"
-check "$(grep -cx 'server {' "${SETUP}/config/nginx/fxa.conf") $(grep -cxE '  server_name pairing\.example\.org;|    proxy_pass http://127\.0\.0\.1:8058;|  ssl_certificate /etc/letsencrypt/live/pairing\.example\.org/fullchain\.pem;' "${SETUP}/config/nginx/fxa.conf") $(grep -c '<PAIRING_HOST>\|^#   ' "${SETUP}/config/nginx/fxa.conf")" \
-  "$(($(grep -cx 'server {' "${SETUP}/config/nginx/fxa-example.conf") + 1)) 3 0" "the pairing server's block in the nginx example, uncommented"
+# proxy/: a server for each of the six hosts and the redirect, the pairing server's a websocket
+check "$(grep -cx 'server {' "${SETUP}/proxy/nginx.conf") $(grep -cxE '  server_name pairing\.example\.org;|    proxy_pass http://127\.0\.0\.1:8058;|  ssl_certificate /etc/letsencrypt/live/pairing\.example\.org/fullchain\.pem;|    proxy_set_header Upgrade \$http_upgrade;' "${SETUP}/proxy/nginx.conf") $(grep -cx 'pairing.example.org {' "${SETUP}/proxy/Caddyfile")" \
+  "7 4 1" "the pairing server in proxy/ (nginx.conf, Caddyfile)"
 # run again on that install, the two questions not answered: what its .env has
 prepare "${WORK}/setup-again.log" "${notify_answers[@]}"
 check "$? $(grep -c '^COMPOSE_PROFILES=admin,backup,pairing$' "${SETUP}/.env") $(grep -c '^FXA_PAIRING_URL=wss://pairing.example.org$' "${SETUP}/.env")" "0 1 1" \
@@ -394,8 +455,9 @@ done
 cp "${WORK}/setup.env" "${SETUP}/.env"
 check "$(cd "${SETUP}" && env -u FXA_ACCOUNT_EVENTS docker compose config 2> /dev/null | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep -cE '^ +(ACCOUNT_EVENTS_ENABLED: "?true"?|IP_PROFILING_RECENCY: "?0"?)$') $(cd "${SETUP}" && env -u FXA_ACCOUNT_EVENTS docker compose config 2> /dev/null | sed -n '/^  ffs-admin:/,/^  [a-z]/p' | grep -cE '^ +FXA_ACCOUNT_EVENTS: "?true"?$')" \
   "2 1" "the accounts record the security history, never skip the sign-in code for a known IP address, the admin UI shows it"
-check "$(grep -c 'server_name accounts.example.org;' "${SETUP}/config/nginx/fxa.conf")" 1 "nginx example for the accounts"
-check "$(grep -c 'proxy_pass http://127.0.0.1:8091;' "${SETUP}/config/nginx/fxa.conf")" 1 "nginx sends sign-ups to the gate"
+check "$(grep -c 'server_name accounts.example.org;' "${SETUP}/proxy/nginx.conf")" 1 "proxy/nginx.conf for the accounts"
+check "$(grep -c 'proxy_pass http://127.0.0.1:8091;' "${SETUP}/proxy/nginx.conf") $(grep -c 'reverse_proxy @gate 127.0.0.1:8091' "${SETUP}/proxy/Caddyfile") $(grep -c 'url: "http://127.0.0.1:8091"' "${SETUP}/proxy/traefik.yml")" "1 1 1" \
+  "proxy/ sends sign-ups to the gate (nginx, Caddy, Traefik)"
 env_value() { grep "^$1=" "${SETUP}/.env" | cut -d= -f2-; }
 check "$(env_value ADMIN_FXA_CLIENT_ID | grep -cE '^[0-9a-f]{16}$') [$(env_value ADMIN_FXA_CLIENT_SECRET)]" "1 []" "admin UI OAuth client: an id, public (no secret)"
 check "$(env_value ADMIN_ALLOWED_USERS) $(env_value ADMIN_OIDC_REDIRECT_URL) $(env_value ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL)" \
@@ -403,8 +465,8 @@ check "$(env_value ADMIN_ALLOWED_USERS) $(env_value ADMIN_OIDC_REDIRECT_URL) $(e
 check "$(env_value ADMIN_OIDC_ISSUER) $(env_value ADMIN_OIDC_CLIENT_ID)" "https://accounts.example.org $(env_value ADMIN_FXA_CLIENT_ID)" "admin UI's OpenID Connect provider"
 # the ID tokens' iss is the accounts' content URL, which the issuer must be exactly
 check "$(env_value ADMIN_OIDC_ISSUER)" "$(env_value FXA_CONTENT_URL)" "admin UI's issuer is the accounts' issuer"
-check "$(grep -c 'server_name admin.example.org;' "${SETUP}/config/nginx/fxa.conf") $(grep -c 'proxy_pass http://127.0.0.1:8090;' "${SETUP}/config/nginx/fxa.conf")" "1 1" \
-  "nginx example for the admin UI host"
+check "$(grep -c 'server_name admin.example.org;' "${SETUP}/proxy/nginx.conf") $(grep -c 'proxy_pass http://127.0.0.1:8090;' "${SETUP}/proxy/nginx.conf")" "1 1" \
+  "proxy/nginx.conf for the admin UI host"
 # (this shell has the stack's ADMIN_FXA_CLIENT_ID, which compose would prefer)
 check "$(cd "${SETUP}" && env -u ADMIN_FXA_CLIENT_ID docker compose config 2> /dev/null | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep -cE "^ +SERVICES_WITH_EMAIL_VERIFICATION: .*,$(env_value ADMIN_FXA_CLIENT_ID)$")" 1 \
   "the accounts always ask the sign-in code for the admin UI"
@@ -447,7 +509,7 @@ check "$(setup_compose config | sed -n '/^  tokenserver_db:/,/^  [a-z]/p' | grep
 check "$(setup_compose config | sed -n '/^  tokenserver_db_init:/,/^  [a-z]/p' | grep -cE '^ +MARIADB_TLS_VERIFY: "?false"?$')" 1 "init container does not check MySQL's self-signed certificate"
 prepare_again mariadb yes password
 check "$?" 0 "prepare_environment.sh with the admin UI, no admin emails (password only)"
-check "$(grep -cE 'server_name admin\.|<ADMIN_' "${SETUP}/config/nginx/fxa.conf")" 0 "no admin UI host in the nginx example, password only"
+check "$(grep -cE 'server_name admin\.' "${SETUP}/proxy/nginx.conf")" 0 "no admin UI host in proxy/nginx.conf, password only"
 check "[$(env_value ADMIN_FXA_CLIENT_ID)] [$(env_value ADMIN_OIDC_ISSUER)] [$(env_value ADMIN_OIDC_REDIRECT_URL)]" "[] [] []" "no admin UI sign-in with the accounts, password only"
 # (without the stack's values of this shell)
 setup_config=$(cd "${SETUP}" && env -u COMPOSE_PROFILES -u ADMIN_FXA_CLIENT_ID -u ADMIN_FXA_CLIENT_SECRET -u ADMIN_OIDC_REDIRECT_URL docker compose config 2> /dev/null)
@@ -455,8 +517,8 @@ check "$(echo "${setup_config}" | sed -n '/^  ffs-admin:/,/^  [a-z]/p' | grep -c
 check "$(echo "${setup_config}" | sed -n '/^  fxa-auth:/,/^  [a-z]/p' | grep -cE '^ +SERVICES_WITH_EMAIL_VERIFICATION: .*,$')" 1 "no admin UI client for the accounts, password only"
 prepare_again mariadb no
 check "$?" 0 "prepare_environment.sh with self-hosted accounts, without the admin UI"
-check "$(grep -cE 'ADMIN_GATE_EXPORT_PORT|8091' "${SETUP}/config/nginx/fxa.conf")" 0 "no sign-up gate in the nginx example without the admin UI"
-check "$(grep -cE 'server_name admin\.|<ADMIN_' "${SETUP}/config/nginx/fxa.conf") [$(env_value ADMIN_FXA_CLIENT_ID)]" "0 []" "no admin UI sign-in without the admin UI"
+check "$(grep -cE 'ADMIN_GATE_EXPORT_PORT|8091' "${SETUP}/proxy/nginx.conf" "${SETUP}/proxy/Caddyfile" "${SETUP}/proxy/traefik.yml" | grep -vc ':0$')" 0 "no sign-up gate in proxy/ without the admin UI"
+check "$(grep -cE 'server_name admin\.' "${SETUP}/proxy/nginx.conf") [$(env_value ADMIN_FXA_CLIENT_ID)]" "0 []" "no admin UI sign-in without the admin UI"
 check "$(grep -c '^COMPOSE_PROFILES=' "${SETUP}/.env")" 0 "no compose profile without the admin UI"
 check "$(grep -c '^SYNC_MAX_USERS=2$' "${SETUP}/.env")" 1 "plain SYNC_MAX_USERS=2 without the admin UI"
 check "$(grep -c '^FXA_MAX_ACCOUNTS=unlimited$' "${SETUP}/.env")" 1 "max accounts unlimited by default, plain without the admin UI"
@@ -701,7 +763,19 @@ prepare "${WORK}/setup-fxa-db-wrong.log" fxa_db=postgres
 check "$? $(grep -c "ERROR: one of mysql, mariadb, not 'postgres'" "${WORK}/setup-fxa-db-wrong.log")" "1 1" "prepare_environment.sh refuses another accounts database"
 fi
 
-echo "== ${PROJECT}: syncstorage ${REPOSITORY} ${TAG}, mozilla/fxa-mono ${FXA_VERSION}, accounts on ${FXA_DB}"
+echo "== ${PROJECT}: syncstorage ${REPOSITORY} ${TAG}, mozilla/fxa-mono ${FXA_VERSION}, accounts on ${FXA_DB}, behind ${TEST_PROXY}"
+render_test_proxy
+rc=$?
+# (what each proxy reads)
+case "${TEST_PROXY}" in
+  caddy) proxy_files="Caddyfile.bundled caddy.d" ;;
+  nginx) proxy_files="nginx-network.conf letsencrypt test-ca" ;;
+  traefik) proxy_files="traefik-compose.yml traefik-test test-ca" ;;
+esac
+check "${rc} $(for f in nginx.conf Caddyfile traefik.yml README.md ${proxy_files}; do [ -e "${FFS_PROXY_DIR}/${f}" ] || printf '%s ' "${f}"; done)" "0 " \
+  "the configuration of the reverse proxy for this .env, as prepare_environment.sh writes it (${TEST_PROXY})" || exit 1
+# (the network of your Traefik, which the public containers join)
+[ "${TEST_PROXY}" = traefik ] && { docker network inspect "${TRAEFIK_NETWORK}" > /dev/null 2>&1 || docker network create "${TRAEFIK_NETWORK}" > /dev/null; }
 if [ -z "${ADMIN_GIVEN}" ]; then
   # (one build of the tag at a time: the other tests build it too)
   COMPOSE_BAKE=false one_at_a_time admin-build docker compose -p ffs-admin-build -f "${TESTS}/compose/admin-build.yml" build -q || { echo "FAIL: admin UI image built from admin/"; exit 1; }

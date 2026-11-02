@@ -1,0 +1,37 @@
+# TEST_PROXY=traefik of tests/e2e-fxa.sh, after the proxy/traefik-compose.yml prepare_environment.sh
+# writes for the test's .env (PROXY=traefik: the labels, the public containers on TRAEFIK_NETWORK,
+# which the test creates): traefik:latest with its Docker provider (this project's containers
+# only), the entry points of .env-example (websecure, web), no ACME: a test CA's certificate as
+# its default one (FFS_PROXY_DIR/traefik-test), that CA for the FxA services and the tests
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${TRAEFIK_NETWORK:?}
+      - --providers.docker.constraints=Label(`com.docker.compose.project`,`${FFS_PROJECT:?}`)
+      - --providers.file.filename=/test/tls.yml
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --ping=true
+      - --log.level=INFO
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${FFS_PROXY_DIR:?}/traefik-test:/test:ro
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+      start_interval: 1s
+    networks:
+      default:
+        aliases: [accounts.fxa.test, api.fxa.test, admin.fxa.test, profile.fxa.test, pairing.fxa.test, sync.fxa.test]
+      traefik: {}
+
+  caddy-ca:
+    command: [sh, -c, "cp /test-ca/ca.crt /caddy-ca/root.crt && chmod 644 /caddy-ca/root.crt"]
+    volumes:
+      - ${FFS_PROXY_DIR:?}/test-ca:/test-ca:ro

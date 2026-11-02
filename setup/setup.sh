@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # prepare_environment.sh without an option: the setup, its questions in their order, then .env,
-# the nginx, systemd and SQL examples and, with Quadlets, the units. Sourced by
+# the configuration of the reverse proxy (proxy/, setup/proxy.sh), the systemd and SQL examples
+# and, with Quadlets, the units. Sourced by
 # prepare_environment.sh when it runs (not by the tests that source it): it runs as it is read.
 
 # Detect container runtime
@@ -31,8 +32,7 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     [ "${ADMIN_UI}" = "yes" ] && FXA_MAX_ACCOUNTS=initial:${FXA_MAX_ACCOUNTS}
     [ "${FXA_SMTP_PORT}" = "465" ] && FXA_SMTP_SECURE=true || FXA_SMTP_SECURE=false
 fi
-# the host names of the public URLs, for the nginx examples
-SYNC_FQDN=$(url_host "${SYNC_URL}")
+# the host name of the admin UI's public URL, said at the end
 ADMIN_HOST=""
 [ -n "${ADMIN_URL}" ] && ADMIN_HOST=$(url_host "${ADMIN_URL}")
 
@@ -147,6 +147,18 @@ apply_sed "${NEW_ENV}" "s|^ADMIN_DB_PASSWORD=.*|ADMIN_DB_PASSWORD=${ADMIN_DB_PAS
 # the optional services chosen, the whole list (none: the line stays commented out)
 [ -n "${COMPOSE_PROFILES_CHOSEN}" ] && apply_sed "${NEW_ENV}" "s|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=${COMPOSE_PROFILES_CHOSEN}|"
 [ -n "${ADMIN_NOTIFY}" ] && apply_sed "${NEW_ENV}" "s|^ADMIN_NOTIFY=.*|ADMIN_NOTIFY='$(sed_escape "${ADMIN_NOTIFY}")'|"
+# the reverse proxy: which one, who reaches the admin UI's public address, the bundled Caddy's
+# ports and certificates, the labels for Traefik's
+apply_sed "${NEW_ENV}" "s|^PROXY=.*|PROXY=${PROXY}|"
+apply_sed "${NEW_ENV}" "s|^PROXY_ADMIN_ALLOW=.*|PROXY_ADMIN_ALLOW=${PROXY_ADMIN_ALLOW_V}|"
+apply_sed "${NEW_ENV}" "s|^CADDY_HTTP_PORT=.*|CADDY_HTTP_PORT=${CADDY_HTTP_PORT_V}|"
+apply_sed "${NEW_ENV}" "s|^CADDY_HTTPS_PORT=.*|CADDY_HTTPS_PORT=${CADDY_HTTPS_PORT_V}|"
+apply_sed "${NEW_ENV}" "s|^CADDY_ACME_CA=.*|CADDY_ACME_CA=${CADDY_ACME_CA_V}|"
+apply_sed "${NEW_ENV}" "s|^CADDY_ACME_EMAIL=.*|CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL_V}|"
+apply_sed "${NEW_ENV}" "s|^TRAEFIK_NETWORK=.*|TRAEFIK_NETWORK=${TRAEFIK_NETWORK_V}|"
+apply_sed "${NEW_ENV}" "s|^TRAEFIK_ENTRYPOINTS=.*|TRAEFIK_ENTRYPOINTS=${TRAEFIK_ENTRYPOINTS_V}|"
+apply_sed "${NEW_ENV}" "s|^TRAEFIK_HTTP_ENTRYPOINT=.*|TRAEFIK_HTTP_ENTRYPOINT=${TRAEFIK_HTTP_ENTRYPOINT_V}|"
+apply_sed "${NEW_ENV}" "s|^TRAEFIK_CERTRESOLVER=.*|TRAEFIK_CERTRESOLVER=${TRAEFIK_CERTRESOLVER_V}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_DB=.*|SYNC_DB=${SYNC_DB}|"
 [ "${DATABASE_BACKEND}" = mariadb ] && [ "${EXTERNAL_DB}" != "yes" ] && \
     apply_sed "${NEW_ENV}" "s|^# SYNC_MARIADB_IMAGE=.*|SYNC_MARIADB_IMAGE=$(sed_escape "${SYNC_MARIADB_PIN}")|"
@@ -291,34 +303,6 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         # sessions through to the admin UI (SERVICES_WITH_EMAIL_VERIFICATION in fxa-auth)
         apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL=.*|ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL=true|"
     fi
-    # nginx example for the accounts host names
-    cp "${SCRIPT_DIR}/config/nginx/fxa-example.conf" "${SCRIPT_DIR}/config/nginx/fxa.conf"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ACCOUNTS_HOST>|$(url_host "${FXA_CONTENT_URL_V}")|g"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<API_HOST>|$(url_host "${FXA_AUTH_URL_V}")|g"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PROFILE_HOST>|$(url_host "${FXA_PROFILE_URL_V}")|g"
-    # (commented out without your own pairing server: the host name it would have)
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PAIRING_HOST>|$(url_host "${FXA_PAIRING_URL_V:-wss://pairing.${DOMAIN}}")|g"
-    # the pairing server's block, commented out unless it runs here
-    [ "${PAIRING}" = yes ] && apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/^# server {$/,/^# }$/s|^# \{0,1\}||"
-    for port in CONTENT AUTH PROFILE PROFILE_STATIC PAIRING; do
-        value=$(grep "^FXA_${port}_EXPORT_PORT=" "${NEW_ENV}" | cut -d= -f2)
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<${port}_EXPORT_PORT>|${value}|g"
-    done
-    if [ "${ADMIN_UI}" = "yes" ]; then
-        value=$(grep "^ADMIN_GATE_EXPORT_PORT=" "${NEW_ENV}" | cut -d= -f2)
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ADMIN_GATE_EXPORT_PORT>|${value}|g"
-    else
-        # no sign-up gate without the admin UI
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/# admin UI only/,/^  }$/d"
-    fi
-    # the admin UI on its own host name, where a sign-in sends you back
-    if [ -n "${ADMIN_HOST}" ]; then
-        value=$(grep "^ADMIN_EXPORT_PORT=" "${NEW_ENV}" | cut -d= -f2)
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ADMIN_HOST>|${ADMIN_HOST}|g"
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ADMIN_EXPORT_PORT>|${value}|g"
-    else
-        apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/# admin UI sign-in only/,/# end of the admin UI sign-in/d"
-    fi
 fi
 # the admin UI's sign-in with another OpenID Connect provider, or a header of your proxy
 # (docs/admin/signing-in.md), and who is an admin there
@@ -366,6 +350,8 @@ case "${DATABASE_BACKEND}" in
 esac
 COMPOSE_FILES=$(compose_files "${COMPOSE_SYNC_DB}" "$([ "${SELF_HOST_FXA}" = yes ] && echo "${FXA_DB}")" \
     "$([ "${CONTAINER_RUNTIME}" = podman ] && [ "${DEPLOY_METHOD}" != quadlets ] && echo yes)")
+# the reverse proxy (setup/proxy.sh): the bundled Caddy's compose file, or the labels for Traefik's
+[ "${DEPLOY_METHOD}" = quadlets ] || COMPOSE_FILES=$(compose_files_proxy "${COMPOSE_FILES}" "${PROXY}")
 apply_sed "${NEW_ENV}" "s|^# COMPOSE_FILE=.*|COMPOSE_FILE=${COMPOSE_FILES}|"
 apply_sed "${NEW_ENV}" "s|^# COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=$(compose_project)|"
 ENV_READ=${NEW_ENV} compose_settings_check
@@ -391,20 +377,10 @@ if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
     render_fxa_sql "${FXA_DB}" "$([ "${FXA_DB}" = mysql ] && [ "${FXA_MYSQL2}" != 0 ] && echo native)"
 fi
 
-# prepare nginx example
-cp "${SCRIPT_DIR}/config/nginx/syncstorage-rs-example.conf" "${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf"
-apply_sed "${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf" "s/firefox-sync.example.com/${SYNC_FQDN}/g"
-# the Sync server where it listens: its address (127.0.0.1 for every interface, 0.0.0.0, or a
-# port alone in an .env of before), not localhost, which nginx tries on ::1 first
-# (IPv6: [::] every interface, nginx on [::1])
-SYNC_UPSTREAM=${SYNC_EXPORT_PORT}
-case "${SYNC_UPSTREAM}" in
-    0.0.0.0:*) SYNC_UPSTREAM=127.0.0.1:${SYNC_UPSTREAM##*:} ;;
-    "[::]:"*) SYNC_UPSTREAM="[::1]:${SYNC_UPSTREAM##*:}" ;;
-    *:*) ;;
-    *) SYNC_UPSTREAM=127.0.0.1:${SYNC_UPSTREAM} ;;
-esac
-apply_sed "${SCRIPT_DIR}/config/nginx/syncstorage-rs.conf" "s|localhost:<SYNC_EXPORT_PORT>|${SYNC_UPSTREAM}|; s|<SYNC_EXPORT_PORT>|${SYNC_UPSTREAM##*:}|"
+# the configuration of the reverse proxy, from the .env just written (setup/proxy.sh)
+echo ""
+echo "Writing the configuration of the reverse proxy..."
+write_proxy "$([ "${DEPLOY_METHOD}" = quadlets ] && echo quadlets || echo compose)" setup || exit 1
 
 # prepare systemd example (for docker compose; with Podman, Quadlets start at boot instead)
 cp "${SCRIPT_DIR}/config/systemd/syncstorage-rs-example.service" "${SCRIPT_DIR}/config/systemd/syncstorage-rs.service"
@@ -439,9 +415,8 @@ echo "  - .env"
 [ -n "${SYNC_DB_BOOTSTRAP_USER}" ] && echo "  - database-bootstrap.sql (the account ${SYNC_DB_BOOTSTRAP_USER}, which applies database-setup.sql at every start)"
 [ "${EXTERNAL_FXA_DB}" = "yes" ] && echo "  - database-setup-fxa.sql (the accounts users for your $([ "${FXA_DB}" = "mariadb" ] && echo MariaDB || echo MySQL) server)"
 [ -n "${FXA_DB_BOOTSTRAP_USER}" ] && echo "  - database-bootstrap-fxa.sql (the account ${FXA_DB_BOOTSTRAP_USER}, which applies database-setup-fxa.sql at every start)"
-echo "  - config/nginx/syncstorage-rs.conf"
+echo "  - proxy/: the configuration of the reverse proxy for $(url_host "${SYNC_URL}")$([ "${SELF_HOST_FXA}" = "yes" ] && echo ", $(url_host "${FXA_CONTENT_URL_V}"), $(url_host "${FXA_AUTH_URL_V}"), $(url_host "${FXA_PROFILE_URL_V}")")$([ "${PAIRING}" = yes ] && echo ", $(url_host "${FXA_PAIRING_URL_V}")")${ADMIN_HOST:+, ${ADMIN_HOST}} (the README of proxy/)"
 echo "  - config/systemd/syncstorage-rs.service"
-[ "${SELF_HOST_FXA}" = "yes" ] && echo "  - config/nginx/fxa.conf ($(url_host "${FXA_CONTENT_URL_V}"), $(url_host "${FXA_AUTH_URL_V}"), $(url_host "${FXA_PROFILE_URL_V}")${ADMIN_HOST:+, ${ADMIN_HOST}}$([ "${PAIRING}" = yes ] && echo ", $(url_host "${FXA_PAIRING_URL_V}")"))"
 
 if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ]; then
     echo "  - Quadlet files in ${QUADLET_DIR}"
@@ -576,6 +551,7 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ];
         echo "       firefox-sync-fxa-profile-worker.service firefox-sync-fxa-profile-static.service"
         echo "     then in Firefox set identity.fxaccounts.autoconfig.uri to ${FXA_CONTENT_URL_V} (see docs/firefox.md#self-hosted-accounts)"
     fi
+    [ "${PROXY}" = caddy ] && echo "     systemctl --user start firefox-sync-caddy.service (the bundled Caddy)"
     echo "  2. (Optional) loginctl enable-linger \$USER"
     if [ "${BACKUPS}" = yes ]; then
         echo "  3. nightly backups: firefox-sync-backup.timer is enabled, start it with the units: systemctl --user start firefox-sync-backup.timer"
@@ -605,9 +581,24 @@ else
     echo "     sudo systemctl enable --now syncstorage-rs.service"
 fi
 
-# the public URLs on another port than their scheme's: the nginx examples listen on 443
-for url in "${SYNC_URL}" "${FXA_CONTENT_URL_V}" "${FXA_AUTH_URL_V}" "${FXA_PROFILE_URL_V}" "${FXA_PAIRING_URL_V}" "${ADMIN_URL}"; do
-    [ -n "$(url_port "${url}")" ] && echo "NOTE: ${url} has a port of its own: the server blocks of config/nginx/ listen on 443, change their listen lines to $(url_port "${url}")"
-done
+# the reverse proxy: what to do with proxy/
+echo ""
+case "${PROXY}" in
+    own) echo "Reverse proxy: put the file of yours from proxy/ (nginx.conf, Caddyfile, traefik.yml) into its configuration and reload it (the README of proxy/, docs/reverse-proxy.md)" ;;
+    caddy)
+        echo "Reverse proxy: the bundled Caddy (docs/reverse-proxy.md#the-bundled-caddy), proxy/Caddyfile.bundled, on ports ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V}"
+        if [ "${CADDY_ACME_CA_V}" = internal ]; then
+            echo "  its own CA: install its root certificate on your devices, /data/caddy/pki/authorities/local/root.crt in its data volume"
+        else
+            echo "  Let's Encrypt needs every host name of proxy/Caddyfile.bundled to resolve to this host, and ports 80 and 443 reachable"
+            echo "  from the internet (forwarded to ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V})"
+        fi
+        # (in a container on the stack's network: it listens on 443 inside, a URL's own port is not published)
+        for url in "${SYNC_URL}" "${FXA_CONTENT_URL_V}" "${FXA_AUTH_URL_V}" "${FXA_PROFILE_URL_V}" "${FXA_PAIRING_URL_V}" "${ADMIN_URL}"; do
+            [ -n "$(url_port "${url}")" ] && [ "$(url_port "${url}")" != "${CADDY_HTTPS_PORT_V}" ] && \
+                echo "NOTE: ${url} has a port of its own, not CADDY_HTTPS_PORT (${CADDY_HTTPS_PORT_V}): the bundled Caddy does not listen there"
+        done ;;
+    traefik) echo "Reverse proxy: your Traefik reads the labels of proxy/traefik-compose.yml (in COMPOSE_FILE) on its network ${TRAEFIK_NETWORK_V} (docs/reverse-proxy.md#traefik-labels)" ;;
+esac
 secrets_report end
 echo "=========================================="

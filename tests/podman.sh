@@ -419,17 +419,17 @@ echo "== where the Sync server listens: on this host only by default (nothing st
 port_setup() { ffs_setup setup-port.log "sync_listen=$1" deploy=compose; }
 rm -f .env .env.before-setup-*
 port_setup ""
-check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5000;$' config/nginx/syncstorage-rs.conf)" "0 127.0.0.1:5000 1" \
+check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5000;$' proxy/nginx.conf)" "0 127.0.0.1:5000 1" \
   "a new install: SYNC_EXPORT_PORT=127.0.0.1:5000, nginx proxies to it"
 port_setup 5001
-check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5001;$' config/nginx/syncstorage-rs.conf)" "0 127.0.0.1:5001 1" "a port alone: on 127.0.0.1"
+check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5001;$' proxy/nginx.conf)" "0 127.0.0.1:5001 1" "a port alone: on 127.0.0.1"
 port_setup 0.0.0.0:5002
-check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5002;$' config/nginx/syncstorage-rs.conf)" "0 0.0.0.0:5002 1" "0.0.0.0:<port>: every interface, nginx on 127.0.0.1"
+check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5002;$' proxy/nginx.conf)" "0 0.0.0.0:5002 1" "0.0.0.0:<port>: every interface, nginx on 127.0.0.1"
 # run again on an install from before (a port alone in its .env: every interface), it keeps it
 sed -i 's|^SYNC_EXPORT_PORT=.*|SYNC_EXPORT_PORT=5003|' .env
 port_setup ""
 newest_backup() { ls -1 "$1"-* 2> /dev/null | LC_ALL=C sort | tail -n 1; }
-check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5003;$' config/nginx/syncstorage-rs.conf) $(grep -c '^SYNC_EXPORT_PORT=5003$' "$(newest_backup .env.before-setup)")" "0 5003 1 1" \
+check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://127\.0\.0\.1:5003;$' proxy/nginx.conf) $(grep -c '^SYNC_EXPORT_PORT=5003$' "$(newest_backup .env.before-setup)")" "0 5003 1 1" \
   "run again on an install: its SYNC_EXPORT_PORT kept, the .env of before as .env.before-setup-<time>"
 # every run on an .env keeps its own copy (3 runs over one), the first one's passwords too; .env
 # and its copies for this user only
@@ -442,7 +442,7 @@ check "$? $(grep -c "^ERROR: not a port or an address and port: 'localhost:5004'
 port_setup 256.1.1.1:5004
 check "$? $(grep -c "^ERROR: not a port or an address and port: '256.1.1.1:5004'" setup-port.log)" "1 1" "an octet over 255: refused"
 port_setup '[::]:5005'
-check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://\[::1\]:5005;$' config/nginx/syncstorage-rs.conf)" "0 [::]:5005 1" "[::]:<port>: every interface (IPv6 too), nginx on [::1]"
+check "$? $(env_of SYNC_EXPORT_PORT) $(grep -c '^    proxy_pass http://\[::1\]:5005;$' proxy/nginx.conf)" "0 [::]:5005 1" "[::]:<port>: every interface (IPv6 too), nginx on [::1]"
 # a value of an .env of before this script does not know: kept, said
 sed -i 's|^SYNC_EXPORT_PORT=.*|SYNC_EXPORT_PORT=localhost:5006|' .env
 port_setup ""
@@ -822,6 +822,32 @@ check "$(hb) $(admin_up /login) $(admin_sign_in rendered) $(podman inspect -f '{
   "the Sync server, the admin UI with the same password and the image pinned (quadlets rendered again)"
 check "$(metrics_show "${DB_UP[@]}")" all "admin UI reaches the Sync server and its databases, their passwords as before (quadlets rendered again)"
 check "$(curl -s -b "${WORK}/cookies-rendered" http://localhost:${ADMIN_PORT}/config | grep -q 'also over plain HTTP' && echo yes)" yes "ADMIN_INSECURE_COOKIE of .env reaches the admin UI (quadlets)"
+
+echo "== the bundled Caddy as a Quadlet (PROXY=caddy, docs/reverse-proxy.md#the-bundled-caddy): its own CA, ports of its own"
+# on the host's network, as the unit runs it; ports over 1024 (rootless Podman, the runner's
+# net.ipv4.ip_unprivileged_port_start), the Sync server's host name resolved to 127.0.0.1 by curl
+CADDY_HTTP=$((28680 + SLOT_PORTS)) CADDY_HTTPS=$((28681 + SLOT_PORTS))
+cp -p .env "${WORK}/before-caddy.env"
+sed -i -e 's|^PROXY=.*|PROXY=caddy|' -e 's|^CADDY_ACME_CA=.*|CADDY_ACME_CA=internal|' \
+  -e "s|^CADDY_HTTP_PORT=.*|CADDY_HTTP_PORT=${CADDY_HTTP}|" -e "s|^CADDY_HTTPS_PORT=.*|CADDY_HTTPS_PORT=${CADDY_HTTPS}|" .env
+./prepare_environment.sh --render-units < /dev/null > render-caddy.log 2>&1
+check "$? $(grep -c '✓ firefox-sync-caddy.container' render-caddy.log) $(grep -cxE "	(https_port ${CADDY_HTTPS}|reverse_proxy 127\.0\.0\.1:${PORT})" proxy/Caddyfile.bundled)" "0 1 2" \
+  "PROXY=caddy, --render-units: the bundled Caddy's unit, proxy/Caddyfile.bundled to the Sync server's port (quadlets)" || cat render-caddy.log
+timeout 300 systemctl --user start firefox-sync-caddy.service
+check "$?" 0 "firefox-sync-caddy.service started (quadlets)"
+# its own CA's root, from its data volume
+for _ in $(seq 1 30); do podman exec firefox-sync-caddy cat /data/caddy/pki/authorities/local/root.crt > "${WORK}/caddy-root.crt" 2> /dev/null && [ -s "${WORK}/caddy-root.crt" ] && break; sleep 2; done
+caddy_get() { curl -s --cacert "${WORK}/caddy-root.crt" -o /dev/null -w '%{http_code}' --resolve "ffs-e2e.invalid:${CADDY_HTTPS}:127.0.0.1" "https://ffs-e2e.invalid:${CADDY_HTTPS}$1"; }
+for _ in $(seq 1 60); do [ "$(caddy_get /__heartbeat__)" = 200 ] && break; sleep 2; done
+redirect=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --resolve "ffs-e2e.invalid:${CADDY_HTTP}:127.0.0.1" "http://ffs-e2e.invalid:${CADDY_HTTP}/__heartbeat__")
+check "$(caddy_get /__heartbeat__) ${redirect%% *} $(case "${redirect#* }" in https://ffs-e2e.invalid*/__heartbeat__) echo https ;; *) echo "${redirect#* }" ;; esac)" "200 308 https" \
+  "the Sync server through the bundled Caddy, its certificate of Caddy's own CA; HTTP to HTTPS (quadlets)" || podman logs --tail 20 firefox-sync-caddy
+# back to your own proxy: its units out, the file of before gone
+timeout 120 systemctl --user stop firefox-sync-caddy.service
+cp -p "${WORK}/before-caddy.env" .env
+./prepare_environment.sh --render-units < /dev/null > render-caddy-off.log 2>&1
+check "$? [$(ls "${QUADLET_DIR}"/firefox-sync-caddy* proxy/Caddyfile.bundled 2> /dev/null)] $(grep -c 'firefox-sync-caddy.container (removed)' render-caddy-off.log)" "0 [] 1" \
+  "PROXY=own again, --render-units: the bundled Caddy's units and Caddyfile.bundled removed (quadlets)"
 
 echo "== a backup restores, the way docs/backups.md#restore-with-quadlets says for the Quadlets"
 if [ "${SYNC_DB}" = postgres ]; then

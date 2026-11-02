@@ -4,7 +4,7 @@
 
 # ./prepare_environment.sh --upgrade: the .env of an install that runs (docker compose), given
 # the settings of this release that need a value of their own (docs/upgrading.md#older-firefox-sync-releases), nothing else
-# changed: the admin UI's database users (ADMIN_DB_PASSWORD; the event log moves out of the
+# changed (and proxy/, the configuration of the reverse proxy, written again from it): the admin UI's database users (ADMIN_DB_PASSWORD; the event log moves out of the
 # Sync server's reach at the next start), the Sync server's own role in the PostgreSQL
 # container (SYNC_POSTGRES_APP_USER, SYNC_POSTGRES_APP_PASSWORD), in COMPOSE_FILE the new names
 # of the compose files (compose/, docs/upgrading.md#files-that-moved) with COMPOSE_PROJECT_NAME, and with the accounts on
@@ -197,6 +197,16 @@ upgrade_env() {
         set_value COMPOSE_FILE "${compose_podman}"
         echo "COMPOSE_FILE: docker compose on the Podman socket: compose/podman.yml added (now ${compose_podman})"
     fi
+    # the reverse proxy of PROXY in COMPOSE_FILE: the bundled Caddy's compose file, or the labels
+    # for Traefik's (proxy/traefik-compose.yml), not the other's (docs/reverse-proxy.md)
+    local compose_proxy
+    if [ "${quadlets}" != yes ] && [ -n "$(env_value COMPOSE_FILE)" ]; then
+        compose_proxy=$(compose_files_proxy "$(env_value COMPOSE_FILE)" "$(proxy_env PROXY)")
+        if [ "${compose_proxy}" != "$(env_value COMPOSE_FILE)" ]; then
+            set_value COMPOSE_FILE "${compose_proxy}"
+            echo "COMPOSE_FILE: the reverse proxy of PROXY=$(proxy_env PROXY) (now ${compose_proxy})"
+        fi
+    fi
     compose_settings_check
     if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ] && [ "$(env_value SYNC_DB_CONTAINERS)" != 0 ] && [ -z "$(env_value SYNC_POSTGRES_APP_PASSWORD)" ]; then
         [ -n "$(env_value SYNC_POSTGRES_APP_USER)" ] || set_value SYNC_POSTGRES_APP_USER syncserver_app
@@ -323,6 +333,11 @@ upgrade_env() {
     fi
     fxa_mariadb_image_check
     fxa_installed && UPGRADING=yes fxa_mysql_image_check
+    # the configuration of the reverse proxy for this .env (setup/proxy.sh): proxy/ written again,
+    # a file changed by hand kept as <file>.before-upgrade-<UTC time>
+    echo ""
+    echo "Writing the configuration of the reverse proxy (proxy/)..."
+    write_proxy "$([ "${quadlets}" = yes ] && echo quadlets || echo compose)" upgrade || exit 1
     if [ "${quadlets}" = yes ]; then
         # the units of this install: the accounts' with them, the admin UI's when it is on
         SELF_HOST_FXA=no ADMIN_UI=no

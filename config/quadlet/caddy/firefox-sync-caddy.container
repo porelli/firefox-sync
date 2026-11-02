@@ -1,0 +1,29 @@
+[Unit]
+Description=Firefox Sync - Caddy, the bundled reverse proxy (PROXY=caddy, docs/reverse-proxy.md#the-bundled-caddy)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+# CADDY_IMAGE of .env (caddy:latest)
+Image=%CADDY_IMAGE%
+ContainerName=firefox-sync-caddy
+# on the host's network: it listens on CADDY_HTTP_PORT and CADDY_HTTPS_PORT of this host itself
+# (the http_port and https_port of proxy/Caddyfile.bundled), sees the clients' own addresses and
+# reaches the stack on the ports of .env. Ports under 1024 with rootless Podman:
+# net.ipv4.ip_unprivileged_port_start (docs/reverse-proxy.md#rootless-podman-and-ports-under-1024)
+Network=host
+# proxy/ of the checkout: Caddyfile.bundled, and your snippets in caddy.d/
+Volume=%SCRIPT_DIR%/proxy:/etc/caddy:ro,z
+Exec=caddy run --config /etc/caddy/Caddyfile.bundled --adapter caddyfile
+# the certificates and their keys, Caddy's own CA with CADDY_ACME_CA=internal
+Volume=firefox-sync-caddy-data.volume:/data
+Volume=firefox-sync-caddy-config.volume:/config
+# (its admin API on a socket there, /config/caddy-admin.sock: not on the host's 127.0.0.1:2019)
+
+AutoUpdate=registry
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target
