@@ -884,8 +884,10 @@ if [ "${TEST_PROXY}" = traefik ] && [ "${FAILED}" = 0 ]; then
   sync_image=${IMAGE_REPOSITORY}:${SYNC_IMAGE}-${SYNC_IMAGE_TAG}
   forged() { docker run --rm --network "$1" -v "${PROJECT}_caddy-ca:/caddy-ca:ro" --entrypoint curl "${sync_image}" -s -L --cacert /caddy-ca/root.crt \
     -o /dev/null -w '%{url_effective}' -H 'Remote-Email: admin@example.com' "$2"; }
-  # from Traefik itself: the header counts (what the two below are refused)
-  from_traefik=$(docker exec "$(dc ps -q traefik)" wget -q -O - --header 'Remote-Email: admin@example.com' http://ffs-admin:8080/ 2> /dev/null | grep -c 'Sign out')
+  # from Traefik itself, over that network (the admin UI's address there: Traefik is on the
+  # stack's network too here): the header counts (what the two below are refused)
+  admin_ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"${TRAEFIK_NETWORK}\").IPAddress}}" "$(dc ps -q ffs-admin)")
+  from_traefik=$(docker exec "$(dc ps -q traefik)" wget -q -O - --header 'Remote-Email: admin@example.com' "http://${admin_ip}:8080/" 2> /dev/null | grep -q 'Sign out' && echo 1 || echo 0)
   # a client of Traefik: the header dropped by the route
   via_traefik=$(forged "${PROJECT}_default" https://admin.fxa.test/)
   # another container on the network: not Traefik's address
