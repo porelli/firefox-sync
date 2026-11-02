@@ -14,8 +14,10 @@
 # (a symlink to it works too).
 # Sourced (tests/prepare_functions.sh, tests/fxa_fix.sh): the functions only, nothing runs.
 
-# Set the locale to UTF-8
-export LC_CTYPE=C
+# Bytes, not characters (tr of random bytes and of names, on macOS too), and the ranges of
+# [a-z] in byte order: with LC_CTYPE=C alone, macOS's regex (bash 3.2's =~) and tr take a-z
+# from a UTF-8 LC_COLLATE, where it takes in A-Z (valid_name accepted 'Sync')
+export LC_CTYPE=C LC_COLLATE=C
 # set by the script itself only (env_file_read): one exported in the shell would redirect every read of .env
 unset ENV_READ
 
