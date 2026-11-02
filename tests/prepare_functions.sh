@@ -321,8 +321,10 @@ sed -i.bak -e 's|^SYNC_DB_BOOTSTRAP_USER=.*|SYNC_DB_BOOTSTRAP_USER=ffs_boot|' -e
 for engine in mariadb mysql postgres fxa; do
   (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_bootstrap_sql "${engine}")
   out=${WORK}/sql/database-bootstrap$([ "${engine}" = fxa ] && echo -fxa).sql
+  # (the lines naming the account; a case of its own: bash 3.2 cannot parse one in $(...))
+  case ${engine} in postgres) lines=3 ;; fxa) lines=17 ;; mysql) lines=15 ;; *) lines=7 ;; esac
   check "$(grep -c '@[A-Z_]*@' "${out}") $(grep -v '^--' "${out}" | grep -c "ffs_$([ "${engine}" = fxa ] && echo fxa_)boot") $(grep -c "$([ "${engine}" = fxa ] && echo f00t || echo b00t)" "${out}") $(mode "${out}")" \
-    "0 $(case ${engine} in postgres) echo 3 ;; fxa) echo 17 ;; mysql) echo 15 ;; *) echo 7 ;; esac) $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
+    "0 ${lines} $([ "${engine}" = postgres ] && echo 1 || echo 2) 600" \
     "render_bootstrap_sql ${engine}: the account of .env and its password, every placeholder filled, this user's only"
 done
 (SCRIPT_DIR=${WORK}/sql; ENV_READ=${WORK}/sql/.env; render_fxa_sql mysql native) || echo "render_fxa_sql mysql native failed"
@@ -372,7 +374,7 @@ render first
 smtp=$(SCRIPT_DIR=${R} env_plain FXA_SMTP_PASS)
 leaks=$(grep -rlF -e s3cretValue -e tokenTOKEN123 -e "${smtp}" -e "${smtp//%/%%}" "${R}/units"/*.container "${R}/units"/*.volume "${R}/units"/*.network "${R}/timers" 2> /dev/null | wc -l | tr -d ' ')
 envs=$(ls "${R}/units"/*.env | wc -l | tr -d ' ')
-check "$? ${leaks} $([ "${envs}" -gt 10 ] && echo files) $(for f in "${R}/units"/*.env; do mode "${f}"; done | sort -u | paste -sd' ') $(for f in "${R}/units"/*.env; do grep -cxF "EnvironmentFile=${f}" "${f%.env}.container"; done | sort -u | paste -sd' ')" \
+check "$? ${leaks} $([ "${envs}" -gt 10 ] && echo files) $(for f in "${R}/units"/*.env; do mode "${f}"; done | sort -u | paste -sd' ' -) $(for f in "${R}/units"/*.env; do grep -cxF "EnvironmentFile=${f}" "${f%.env}.container"; done | sort -u | paste -sd' ' -)" \
   "0 0 files 600 1" "render_units: no secret in a unit, the timers either; each unit's secrets in its environment file (EnvironmentFile=), 0600"
 check "$(grep -cxF "SMTP_PASS=${smtp}" "${R}/units/firefox-sync-fxa-auth.env") $(grep -cxF 'ADMIN_NOTIFY=ntfy://tokenTOKEN123@ntfy.example.org/ffs' "${R}/units/firefox-sync-admin.env") $(grep -c '^SYNC_MASTER_SECRET=s3cretValue$' "${R}/units/firefox-sync-syncstorage.env") $(grep -c 'SYNC_MASTER_SECRET' "${R}/units/firefox-sync-admin.env")" \
   "1 1 1 0" "the environment files: each value as it is (a %, quotes and \\ too: no systemd there), a unit's own secrets only"
@@ -383,7 +385,7 @@ check "$(grep -c 'nothing changed' "${WORK}/render-again.log") $(mode "${R}/unit
 sed -i.bak '/^EnvironmentFile=/d' "${R}/units/firefox-sync-syncstorage.container" && printf 'Environment=SYNC_MASTER_SECRET=s3cretValue\n' >> "${R}/units/firefox-sync-syncstorage.container"
 rm -f "${R}/units/firefox-sync-syncstorage.env" "${R}/units"/*.bak
 render old
-check "$(grep -c 's3cretValue' "${R}/units/firefox-sync-syncstorage.container") $(mode "${R}/units/firefox-sync-syncstorage.env") $(grep '^  ✓ firefox-sync-syncstorage\.\(container\|env\)$' "${WORK}/render-old.log" | paste -sd' ')" \
+check "$(grep -c 's3cretValue' "${R}/units/firefox-sync-syncstorage.container") $(mode "${R}/units/firefox-sync-syncstorage.env") $(grep '^  ✓ firefox-sync-syncstorage\.\(container\|env\)$' "${WORK}/render-old.log" | paste -sd' ' -)" \
   "0 600   ✓ firefox-sync-syncstorage.env   ✓ firefox-sync-syncstorage.container" \
   "a unit with its secret in it: rendered again, its environment file written first, then the unit without the secret"
 # a unit not rendered any more (FXA_DB_CONTAINERS=0): its environment file removed too
