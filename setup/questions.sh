@@ -778,7 +778,7 @@ step_fxa_db_host() {
     [ "${EXTERNAL_FXA_DB}" = yes ] || return 0
     hint "As the containers reach it (docs/databases.md#server-requirements)"
     while :; do
-        ask fxa_db_host "Host of your server for the accounts' database" "${DB_HOST:-}" || return
+        ask fxa_db_host "Host of your server for the self-hosted accounts' database" "${DB_HOST:-}" || return
         (valid_host "${ANSWER}") && { FXA_MYSQL_HOST=${ANSWER}; return 0; }
         retry
     done
@@ -787,7 +787,7 @@ step_fxa_db_port() {
     FXA_MYSQL_PORT=""
     [ "${EXTERNAL_FXA_DB}" = yes ] || return 0
     while :; do
-        ask fxa_db_port "Port of your server for the accounts' database" 3306 || return
+        ask fxa_db_port "Port of your server for the self-hosted accounts' database" 3306 || return
         (valid_port "${ANSWER}") && { FXA_MYSQL_PORT=${ANSWER}; return 0; }
         retry
     done
@@ -801,8 +801,8 @@ fxa_user() {
 step_fxa_db_user() {
     FXA_MYSQL_USER=""
     [ "${EXTERNAL_FXA_DB}" = yes ] || return 0
-    hint "The user the accounts connect as (database-setup-fxa.sql creates it)"
-    ask_db_name fxa_db_user "The accounts' database user" fxa FXA_MYSQL_USER fxa_user
+    hint "The user the self-hosted accounts connect as (database-setup-fxa.sql creates it)"
+    ask_db_name fxa_db_user "The self-hosted accounts' database user" fxa FXA_MYSQL_USER fxa_user
 }
 step_fxa_db_policy_user() {
     FXA_MYSQL_POLICY_USER=""
@@ -814,7 +814,7 @@ step_fxa_db_bootstrap() {
     FXA_DB_BOOTSTRAP=no
     [ "${EXTERNAL_FXA_DB}" = yes ] || return 0
     bootstrap_hint -fxa
-    ask_yn fxa_db_bootstrap "Let the stack apply the accounts' database changes itself?" no || return
+    ask_yn fxa_db_bootstrap "Let the stack apply the self-hosted accounts' database changes itself?" no || return
     FXA_DB_BOOTSTRAP=${YN}
 }
 step_fxa_db_bootstrap_user() {
