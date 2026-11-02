@@ -28,6 +28,7 @@ set -u
 
 TESTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CODE=$(dirname "${TESTS}")
+# (until promotion: then the old setup's files become saved expected files, and BASE goes)
 BASE=${BASE:-83970f2b6a6cc484872bda5f1e78044209458904}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ffs-setup-output.XXXXXX")
 trap 'chmod -R u+w "${WORK}" 2> /dev/null; rm -rf "${WORK}"' EXIT
@@ -426,6 +427,26 @@ printf 'domain=example.com\nadmin_signin=header\nadmin_trusted_proxies=172.18.0.
 run_setup docker "${WORK}/header.log" --answers "${WORK}/header.answers" < /dev/null
 check "$? $(ev ADMIN_AUTH_HEADER) $(ev ADMIN_TRUSTED_PROXIES) $(ev ADMIN_ALLOWED_USERS) [$(ev ADMIN_OIDC_ISSUER)]" "0 Remote-Email 172.18.0.1/32,10.0.0.0/8 alice@example.com []" \
     "the admin UI signs in by a header of your proxy, for the admins given"
+# single sign-on only (no password as a fallback), the scopes of another provider: compose and Quadlets
+reset_checkout new
+printf '%s\n' domain=example.com admin_signin=oidc admin_oidc_issuer=https://auth.example.com admin_oidc_client_id=ffs-admin \
+    "admin_oidc_scopes=openid  email profile groups " admin_groups=ffs-admins admin_password=no > "${WORK}/sso.answers"
+run_setup docker "${WORK}/sso.log" --answers "${WORK}/sso.answers" --non-interactive < /dev/null
+check "$? [$(ev ADMIN_PASSWORD)] $(ev ADMIN_OIDC_SCOPES) $(grep -c '^  ADMIN_PASSWORD' "${WORK}/sso.log") $(grep -c 'no password (single sign-on only)' "${WORK}/sso.log") $(grep -c '^Admin UI: single sign-on only (ADMIN_PASSWORD empty)' "${WORK}/sso.log")" \
+    '0 [] "openid email profile groups" 0 1 1' "another provider, single sign-on only: ADMIN_PASSWORD empty and not listed, the scopes given (spaces tidied)"
+reset_checkout new
+printf '%s\n' domain=example.com deploy=quadlets accounts=self-hosted smtp_host=smtp.example.com admin_signin=accounts admin_users=me@example.com admin_password=no > "${WORK}/sso-q.answers"
+run_setup podman "${WORK}/sso-q.log" --answers "${WORK}/sso-q.answers" --non-interactive < /dev/null
+check "$? [$(ev ADMIN_PASSWORD)] [$(ev ADMIN_OIDC_SCOPES)] $(grep -c '^ADMIN_PASSWORD=$' "${WORK}/home/.config/containers/systemd/firefox-sync-admin.env" 2> /dev/null) $(grep -c "ADMIN_PASSWORD=." "${WORK}/home/.config/containers/systemd/firefox-sync-admin.container" "${WORK}/home/.config/containers/systemd/firefox-sync-admin.env" 2> /dev/null | cut -d: -f2 | tr '\n' +)" \
+    "0 [] [] 1 0+0+" "the self-hosted accounts, single sign-on only, Quadlets: the admin UI's unit without a password"
+reset_checkout new
+printf '%s\n' domain=example.com admin_signin=oidc admin_oidc_issuer=https://auth.example.com admin_oidc_client_id=x admin_users=a@example.com > "${WORK}/sso-d.answers"
+run_setup docker "${WORK}/sso-d.log" --answers "${WORK}/sso-d.answers" --non-interactive < /dev/null
+check "$? $(ev ADMIN_PASSWORD | grep -cE '^[A-Za-z0-9]{24}$') [$(ev ADMIN_OIDC_SCOPES)]" "0 1 []" "another provider by default: the password kept, the scopes the admin UI's default (empty)"
+reset_checkout new
+printf '%s\n' domain=example.com admin_signin=oidc admin_oidc_issuer=https://auth.example.com admin_oidc_client_id=x admin_users=a@example.com "admin_oidc_scopes=email profile" > "${WORK}/sso-bad.answers"
+run_setup docker "${WORK}/sso-bad.log" --answers "${WORK}/sso-bad.answers" --non-interactive < /dev/null
+check "$? $(grep -c "the scopes need openid" "${WORK}/sso-bad.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" "scopes without openid: refused"
 # an install there already: upgraded by default (its passwords kept, as --upgrade), nothing asked after it
 reset_checkout new
 sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|keepme|' -e 's|<REPLACE_WITH_YOUR_DOMAIN>|sync.example.org|' -e 's|^ADMIN_DB_PASSWORD=.*|ADMIN_DB_PASSWORD=|' "${W}/.env-example" > "${W}/.env"

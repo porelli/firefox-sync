@@ -61,6 +61,7 @@ FLOW = [
     (r"self-hosted Mozilla accounts \(OpenID", "\r", "how admins sign in"),
     ("Public URL of the admin UI", "\r", None),
     ("Who is an admin", "me@example.org\r", None),
+    ("Keep a password as a fallback", "\r", None),
     ("Destinations of the alerts", "\r", None),
     ("Enable nightly backups", "\r", None),
     ("write .env and the examples now", "2", "the review: every answer, the secrets it generates named"),
