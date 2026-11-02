@@ -221,7 +221,7 @@ Which host name goes to which port: [Host names and ports](../reverse-proxy.md#h
 
 | Setting | What for | To change it |
 |---|---|---|
-| `ADMIN_PASSWORD` | the admin UI's sign-in password, the one you use yourself | `.env`, then `docker compose up -d` (Quadlets: `./prepare_environment.sh --render-units`, then restart the units it names). Keep it in your password manager |
+| `ADMIN_PASSWORD` | the admin UI's sign-in password, the one you use yourself; empty when you chose single sign-on only ("Keep a password as a fallback?": no) | `.env`, then `docker compose up -d` (Quadlets: `./prepare_environment.sh --render-units`, then restart the units it names). Keep it in your password manager |
 | `SYNC_MASTER_SECRET` | signs the Sync tokens | `.env`, then restart. A new one signs every Firefox out of Sync until it signs in again; their data stays |
 | `SYNC_METRICS_HASH_SECRET` | the key of the hashed account ids in the metrics | `.env`, then restart. The hashes start over |
 | `ADMIN_DB_PASSWORD`, `SYNC_POSTGRES_APP_PASSWORD`, `FXA_ADMIN_DB_PASSWORD` | database users the stack sets again at every start | `.env`, then restart (your own server: [Change a database password](../databases.md#change-a-database-password)) |

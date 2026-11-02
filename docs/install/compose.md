@@ -53,7 +53,7 @@ The questions go one component at a time, in six parts, each with its number (`2
 1. **Deployment**: the directory of the checkout; with an `.env` there already, upgrade it (keep its passwords, as `--upgrade`) or set it up again; with Podman, Quadlets or docker compose; your domain, which the public addresses below default to (`sync.<domain>`, `accounts.<domain>`...).
 1. **The Sync server**: its public URL, where it listens for your reverse proxy, its image tag, its database (the engine; in containers of the stack or on your own server, then its host, names and users), and how many accounts can use it.
 1. **The accounts**: Mozilla's or self-hosted. With Mozilla's: invite-only Sync. Self-hosted: the public URLs of the accounts pages, API and profile server, their database, the SMTP server for their emails, who can sign up, the most accounts, the security history and the pairing server.
-1. **The admin UI**: on or off, how admins sign in (the password; the self-hosted accounts; another OpenID Connect provider; a header of your reverse proxy), who is an admin, its public URL when a provider sends you back to it, and where its alerts go.
+1. **The admin UI**: on or off, how admins sign in (the password; the self-hosted accounts; another OpenID Connect provider; a header of your reverse proxy), who is an admin, whether a password stays a way in with single sign-on, its public URL when a provider sends you back to it, and where its alerts go.
 1. **Backups**: the nightly backups.
 1. **Review**: what will be written, part by part, with the passwords and secrets the script generates (named, not shown). Write it, change a part (its questions again, the parts after it keep their answers), or quit with nothing written.
 
@@ -166,10 +166,12 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `admin` | run the admin UI? | yes, no | yes |
 | `admin_signin` | how admins sign in | `password`, `accounts` (self-hosted only), `oidc`, `header` | `password` |
 | `admin_url` | `accounts`, `oidc`: public URL of the admin UI | see [The public addresses](#the-public-addresses) | `https://admin.<domain>` |
+| `admin_oidc_scopes` | `oidc`: the scopes to ask for, with `openid` (add `groups` for Authelia, Dex) | scopes, separated by spaces | `openid email profile` (`ADMIN_OIDC_SCOPES` left empty) |
 | `admin_oidc_issuer`, `admin_oidc_client_id`, `admin_oidc_client_secret`, `admin_oidc_name` | `oidc`: your provider's issuer, the client, the name on the button | | none (the secret: a public client; the name: single sign-on) |
 | `admin_auth_header`, `admin_auth_groups_header`, `admin_trusted_proxies` | `header`: the headers and your proxy's addresses | | `Remote-Email`, none, none |
 | `admin_users` | who is an admin | emails and @domains | none (required with `accounts`) |
 | `admin_groups` | `oidc`, `header`: groups whose members are admins | group names | none |
+| `admin_password` | `accounts`, `oidc`, `header`: keep a password as a fallback? | yes; no: `ADMIN_PASSWORD` empty, single sign-on only | yes |
 | `admin_notify` | where the alerts go too | destination URLs | none |
 | `backups` | nightly backups? | yes, no | no (an install's: its own) |
 | `confirm` | the review: write? | `write`, `quit` | `write` |

@@ -6,13 +6,14 @@ How admins sign in to the [admin UI](README.md): a password, OpenID Connect, or 
 
 `prepare_environment.sh` asks in its part about the admin UI ([What the setup script asks](../install/compose.md#what-the-setup-script-asks)):
 
-1. **How admins sign in**: `password` (only the password), `accounts` (the [self-hosted accounts](#self-hosted-accounts), offered only with them), `oidc` ([another provider](#openid-connect)) or `header` ([a header of your proxy](#trusted-header)). The password stays a way in with each.
+1. **How admins sign in**: `password` (only the password), `accounts` (the [self-hosted accounts](#self-hosted-accounts), offered only with them), `oidc` ([another provider](#openid-connect)) or `header` ([a header of your proxy](#trusted-header)).
 1. **With `accounts` or `oidc`, the public URL of the admin UI**, where the provider sends you back: `ADMIN_OIDC_REDIRECT_URL` is that URL and `/auth/callback`. Over `http` only on `localhost`.
-1. **With `oidc`**: the issuer, the client's id and secret (empty: a public client) and the name on the button. Create the client at your provider first, with that redirect URI.
+1. **With `oidc`**: the issuer, the client's id and secret (empty: a public client), the name on the button, and the scopes (`ADMIN_OIDC_SCOPES`, default `openid email profile`; Authelia and Dex need `groups` added for admins by group, see [Providers](#providers)). Create the client at your provider first, with that redirect URI.
 1. **With `header`**: the header with the email (`Remote-Email` by default), the groups header if your proxy sets one, and your proxy's addresses (`ADMIN_TRUSTED_PROXIES`).
 1. **Who is an admin**: emails and @domains (`ADMIN_ALLOWED_USERS`), and with `oidc` or `header` groups too (`ADMIN_ALLOWED_GROUPS`). Only those get in, never every account the provider knows: see [Who is an admin](#who-is-an-admin).
+1. **With `accounts`, `oidc` or `header`: keep a password as a fallback?** Yes (the default): `ADMIN_PASSWORD` is generated and works too, over an SSH tunnel when the provider or the proxy is down. No: single sign-on only, `ADMIN_PASSWORD` empty (no password form); set one in `.env` later to have it back. See [Security notes](#security-notes).
 
-By name: `admin_signin`, `admin_url`, `admin_oidc_issuer`, `admin_oidc_client_id`, `admin_oidc_client_secret`, `admin_oidc_name`, `admin_auth_header`, `admin_auth_groups_header`, `admin_trusted_proxies`, `admin_users`, `admin_groups` ([Answers by name](../install/compose.md#answers-by-name)). Scopes and the groups claim keep their defaults: set `ADMIN_OIDC_SCOPES` in `.env` for a provider that needs `groups` there (Authelia, Dex).
+By name: `admin_signin`, `admin_url`, `admin_oidc_issuer`, `admin_oidc_client_id`, `admin_oidc_client_secret`, `admin_oidc_name`, `admin_oidc_scopes`, `admin_auth_header`, `admin_auth_groups_header`, `admin_trusted_proxies`, `admin_users`, `admin_groups`, `admin_password` ([Answers by name](../install/compose.md#answers-by-name)). The groups claim keeps its default (`ADMIN_OIDC_GROUPS_CLAIM` in `.env` for another).
 
 ## Ways to sign in
 
