@@ -38,7 +38,7 @@ A file you changed since it was written is kept first, as `<file>.before-upgrade
 
 ## Host names and ports
 
-Every route of the stack: the public URL it comes from, and where it goes, on this host (the setting of `.env`, its default) and on the stack's network (the bundled Caddy, the labels for Traefik). Each host has its server block, site or router; on a host with two routes, the more specific one first.
+Every route of the stack: the public URL it comes from, and where it goes, on this host (the setting of `.env`, its default) and on the stack's network (the labels for Traefik). Each host has its server block, site or router; on a host with two routes, the more specific one first.
 
 | Host name | Setting | Path | To, on this host | Container |
 |---|---|---|---|---|
@@ -130,17 +130,17 @@ Apache, HAProxy, a load balancer: proxy each route of [Host names and ports](#ho
 
 No reverse proxy yet: the setup's `caddy` runs Caddy with the stack, on ports 80 and 443 of the host. It gets a certificate for each public host from Let's Encrypt, renews them, and redirects HTTP to HTTPS. Its configuration is `proxy/Caddyfile.bundled`, its certificates in its own volume.
 
-- **docker compose:** `compose/caddy.yml` in `COMPOSE_FILE`, the service `caddy`, on the stack's network: it proxies to the containers by name. `docker compose up -d` starts it with the rest.
-- **Quadlets:** the unit `firefox-sync-caddy.service` (and its volumes), on the host's network: it proxies to the ports of the host, and sees the clients' own addresses. Start it: `systemctl --user start firefox-sync-caddy.service`.
+- **docker compose:** `compose/caddy.yml` in `COMPOSE_FILE`, the service `caddy`. `docker compose up -d` starts it with the rest.
+- **Quadlets:** the unit `firefox-sync-caddy.service` (and its volumes). Start it: `systemctl --user start firefox-sync-caddy.service`.
+
+Both run it on the host's network (`network_mode: host`, `Network=host`): it listens on the host's ports itself, proxies to the ports of the stack on `127.0.0.1`, and sees the clients' own addresses, which the accounts' limits and the admin UI's allowlist count on. Behind published ports it would not always: rootless Podman's port forwarding, and Docker's proxy for IPv6 clients, show it the address of a gateway for them. Docker Desktop: turn on its host networking (Settings, Resources, Network). Its admin API is on a socket of its volume, not on the host's `127.0.0.1:2019`.
 
 What the setup asks: an email Let's Encrypt writes to about the certificates (`CADDY_ACME_EMAIL`, optional), where the certificates come from (`CADDY_ACME_CA`), its two ports (`CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT`). It checks that nothing listens on them yet, and says what Let's Encrypt needs:
 
 - **The host names resolve to this host**, every one of [Host names and ports](#host-names-and-ports) you use (DNS `A`/`AAAA` records), and **ports 80 and 443 are reachable from the internet**: Let's Encrypt checks them before it gives a certificate. On ports of your own (`8080`, `8443`), forward 80 and 443 to them (your router, a firewall rule).
 - **`CADDY_ACME_CA`:** `letsencrypt`; `staging`, Let's Encrypt's test CA, to try the setup without hitting its [rate limits](https://letsencrypt.org/docs/rate-limits/) (no browser trusts its certificates: set `letsencrypt` once it works, then `--render-proxy` and restart Caddy); `internal`, Caddy's own CA, without the internet, for a network of your own. Its root certificate must then be trusted where Firefox runs: `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .` (Quadlets: `podman cp firefox-sync-caddy:/data/caddy/pki/authorities/local/root.crt .`), then in Firefox's settings, Certificates, Import (or the `Certificates` policy). Its certificates last 30 days, renewed by Caddy.
 
-After a change of `.env` (a URL, a port of the stack): `./prepare_environment.sh --render-proxy`, then `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile.bundled` (Quadlets: `systemctl --user restart firefox-sync-caddy.service`). A change of its ports: `docker compose up -d` (Quadlets: `--render-proxy`, then restart). Your own snippets: in `proxy/caddy.d/`, as in [Caddy](#caddy).
-
-The client's address: with Docker (rootful), Caddy sees it, as the accounts' limits need ([Client IP address](#client-ip-address)). With docker compose on the rootless Podman socket, the port forwarding of rootless Podman hides it: every client is the same address to the accounts' limits. Run the Quadlets there, whose Caddy is on the host's network.
+After a change of `.env` (a URL, a port, its own ports): `./prepare_environment.sh --render-proxy`, then `docker compose restart caddy` (Quadlets: `systemctl --user restart firefox-sync-caddy.service`). Your own snippets: in `proxy/caddy.d/`, as in [Caddy](#caddy).
 
 ### Rootless Podman and ports under 1024
 
@@ -155,17 +155,28 @@ or give Caddy ports from 1024 on (`CADDY_HTTP_PORT=8080`, `CADDY_HTTPS_PORT=8443
 
 ## Traefik labels
 
-For your Traefik with its [Docker provider](https://doc.traefik.io/traefik/providers/docker/): the setup's `traefik` writes `proxy/traefik-compose.yml`, a compose file in `COMPOSE_FILE`, which puts the public containers on Traefik's network too (`TRAEFIK_NETWORK`, `traefik`: it must exist, created by you or your Traefik's compose project) with the labels of their routers. `docker compose up -d` applies them, and Traefik picks them up.
+For your Traefik with its [Docker provider](https://doc.traefik.io/traefik/providers/docker/): the setup's `traefik` writes `proxy/traefik-compose.yml`, a compose file in `COMPOSE_FILE`, which puts the public containers on a network for Traefik too (`TRAEFIK_NETWORK`) with the labels of their routers. `docker compose up -d` applies them, and Traefik picks them up.
+
+That network is by default the stack's own, `<project>-proxy` (`firefox-sync-proxy`), for Traefik and these containers only. Make it and attach your Traefik to it, once:
+
+```bash
+docker network create firefox-sync-proxy
+docker network connect firefox-sync-proxy traefik   # your Traefik's container
+```
+
+or in your Traefik's compose file, `networks: [firefox-sync-proxy]` with `firefox-sync-proxy: {external: true}` under its `networks:`. Don't share it: a container on that network reaches the public containers directly, past Traefik and its rules, and the admin UI's own port with them (its container answers the [sign-up gate](#sign-up-gate) too). Another network, Traefik's own shared one, only by an explicit answer, which the setup warns about. Only the containers Traefik must reach join it: the public ones, and the admin UI's for the gate and its public address.
 
 What the labels have, for each route of [Host names and ports](#host-names-and-ports), named after the compose project (`<project>-sync`, `-gate`...) so that two stacks do not share them:
 
 - a router on `TRAEFIK_ENTRYPOINTS` (`websecure`; comma-separated), TLS with `TRAEFIK_CERTRESOLVER` (empty: Traefik's default certificate), and a service on the container's port;
 - the sign-up gate and the avatars: routers of priority 1000, before those of their host; `/img` stripped by a `stripPrefix` middleware;
 - the Sync server: a `buffering` middleware of 10 MB ([Request size](#request-size));
-- the admin UI: an `ipAllowList` middleware of `PROXY_ADMIN_ALLOW`;
+- the admin UI: an `ipAllowList` middleware of `PROXY_ADMIN_ALLOW` (Traefik must see the clients' own addresses, see [The admin UI](#the-admin-ui)), and with the trusted-header sign-in a `headers` middleware that drops the header a client sends;
 - HTTP to HTTPS: a router on `TRAEFIK_HTTP_ENTRYPOINT` (`web`; empty: none, when Traefik redirects all of it already) with a `redirectScheme` middleware.
 
 Traefik passes websockets (the pairing server) as they are, and sets `X-Forwarded-For` and `X-Forwarded-Proto` itself. It keeps the `X-Forwarded-For` of a client only from the addresses of its entry point's `forwardedHeaders.trustedIPs`: leave them out, but for a proxy in front of Traefik (then add 1 to `FXA_CLIENT_ADDRESS_DEPTH`, [Client IP address](#client-ip-address)).
+
+The admin UI's [trusted-header sign-in](admin/signing-in.md#trusted-header) behind Traefik: `ADMIN_TRUSTED_PROXIES` is Traefik's own address on that network, `/32` (`docker network inspect firefox-sync-proxy`), never its subnet, which would let every container on it sign in with a header of its own: the setup refuses a range there, and an address of another network when it can read the network.
 
 The containers with a label are only those of the stack's public services. With `exposedByDefault=false` in Traefik, they have `traefik.enable=true`. On the Podman socket (docker compose on Podman), Traefik reads the labels from the Podman socket instead: mount `$XDG_RUNTIME_DIR/podman/podman.sock` as its `/var/run/docker.sock`. The Quadlets have no labels: with them, run Traefik on the host with `proxy/traefik.yml` ([Traefik](#traefik)).
 
@@ -236,8 +247,11 @@ The admin UI listens on `ADMIN_EXPORT_PORT` (`127.0.0.1:8090`), and is best reac
 
 When it signs in with the self-hosted accounts or another provider, it needs a host name of its own (`ADMIN_OIDC_REDIRECT_URL`), which `proxy/` publishes:
 
-- only from the addresses of `PROXY_ADMIN_ALLOW`, which the setup asks for (by default this host and the private networks: `127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7`; `anybody`: no restriction, its sign-in only). Add your own network or VPN, then `--render-proxy`;
-- with the `Host` header as it came: the forms check that they are posted from the same site.
+- only from the addresses of `PROXY_ADMIN_ALLOW`, which the setup asks for (by default this host only, `127.0.0.1,::1`; `anybody`: no restriction, its sign-in only). Add your own network or VPN, then `--render-proxy`;
+- with the `Host` header as it came: the forms check that they are posted from the same site;
+- without the headers of the [trusted-header sign-in](admin/signing-in.md#trusted-header) a client sends, when `ADMIN_AUTH_HEADER` is set.
+
+The allowlist counts only where the proxy sees the clients' own addresses: on the host (nginx, Caddy, the bundled Caddy on the host's network), or Traefik that does. A proxy in a container behind published ports can see a gateway's address for every client (rootless Podman, Docker's proxy of IPv6): don't list the networks of the containers then, which would let everybody in.
 
 ```nginx
 server {

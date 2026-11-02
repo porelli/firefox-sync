@@ -56,5 +56,9 @@ pairing.example.com {
 # the admin UI (ADMIN_OIDC_REDIRECT_URL), to ADMIN_EXPORT_PORT, only from PROXY_ADMIN_ALLOW (docs/reverse-proxy.md#the-admin-ui)
 admin.example.com {
 	import caddy.d/admin*.caddy
+	# the header of the trusted-header sign-in: never the client's
+	request_header -Remote-Email
+	# the header of the trusted-header sign-in: never the client's
+	request_header -Remote-Groups
 	reverse_proxy 127.0.0.1:8090
 }

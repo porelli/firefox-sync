@@ -124,11 +124,12 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "/^COMPOSE_FILE=/d" > "${ENV_FILE}"
 slot_fxa_ports "${ENV_FILE}"
 # its proxy: the bundled Caddy (compose/caddy.yml) with the configuration prepare_environment.sh
-# writes for this .env (setup/proxy.sh), its own CA (tests/compose/proxy-caddy.yml)
+# writes for this .env (setup/proxy.sh), its own CA, on the stack's network (tests/compose/proxy-caddy.yml)
 FFS_PROXY_DIR=${WORK}/proxy
 echo "FFS_PROXY_DIR=${FFS_PROXY_DIR}" >> "${ENV_FILE}"
 (source "${CODE}/prepare_environment.sh" && SCRIPT_DIR=${CODE} ENV_READ=${ENV_FILE} COMPOSE_PROJECT_NAME=${PROJECT} && ffs_temp_init &&
-  write_proxy compose render "${FFS_PROXY_DIR}" > /dev/null) && chmod -R a+rX "${FFS_PROXY_DIR}" || { echo "FAIL: the configuration of the bundled Caddy"; exit 1; }
+  write_proxy compose render "${FFS_PROXY_DIR}" > /dev/null && proxy_routes compose && render_caddy network bundled > "${FFS_PROXY_DIR}/Caddyfile.network") &&
+  chmod -R a+rX "${FFS_PROXY_DIR}" || { echo "FAIL: the configuration of the bundled Caddy"; exit 1; }
 # the database images and options as the env file has them: not empty ones of the caller's
 # environment (CI passes its matrix values, empty for the defaults), which compose would
 # prefer to the file and which would hide its pins from db/mysql/keep-major.sh

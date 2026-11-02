@@ -57,7 +57,7 @@ pairing.example.com {
 admin.example.com {
 	import caddy.d/admin*.caddy
 	# only from PROXY_ADMIN_ALLOW
-	@outside not remote_ip 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7
+	@outside not remote_ip 127.0.0.1 ::1
 	respond @outside 403
 	reverse_proxy 127.0.0.1:8090
 }

@@ -1,11 +1,14 @@
 # TEST_PROXY=caddy of tests/e2e-fxa.sh (the default), after compose/caddy.yml: the bundled Caddy
-# with the configuration prepare_environment.sh wrote for the test's .env (PROXY=caddy,
-# CADDY_ACME_CA=internal: its own CA), in FFS_PROXY_DIR with the snippets of the access
-# control (tests/caddy/<FFS_ACCESS>/) in its caddy.d/. No port of the host: the containers and
-# the tests reach it on the stack's network, by the public host names
+# with the configuration prepare_environment.sh writes for the test's .env (PROXY=caddy,
+# CADDY_ACME_CA=internal: its own CA), in FFS_PROXY_DIR with the snippets of the access control
+# (tests/caddy/<FFS_ACCESS>/) in its caddy.d/. Not on the host's network as compose/caddy.yml
+# runs it: on the stack's, where the containers and the tests reach it by the public host names,
+# with its variant that proxies to the containers by name (Caddyfile.network, render_caddy
+# network bundled of setup/proxy.sh; tests/proxy_render.sh runs it on the host's network)
 services:
   caddy:
-    ports: !reset []
+    network_mode: !reset null
+    command: [caddy, run, --config, /etc/caddy/Caddyfile.network, --adapter, caddyfile]
     volumes:
       - ${FFS_PROXY_DIR:?}:/etc/caddy:ro
       # the test client CA of CLIENT_CERT=1 (FFS_CERTS)

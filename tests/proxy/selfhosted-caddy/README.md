@@ -10,4 +10,4 @@ Pick the file of your proxy, put it where it says, reload:
 
 These three proxy to the ports of this host (127.0.0.1): your proxy runs on this host.
 
-`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, compose/caddy.yml of `COMPOSE_FILE`: `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile.bundled` after a change.
+`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, on the host's network, compose/caddy.yml of `COMPOSE_FILE`: `docker compose restart caddy` after a change.

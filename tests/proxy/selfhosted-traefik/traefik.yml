@@ -64,6 +64,7 @@ http:
       rule: "Host(`admin.example.com`)"
       entryPoints: [https, https6]
       service: ffs-admin
+      middlewares: [ffs-admin-headers]
       tls:
         certResolver: le
     # HTTP to HTTPS
@@ -84,6 +85,12 @@ http:
     ffs-img-strip:
       stripPrefix:
         prefixes: ["/img"]
+    # the headers of the trusted-header sign-in: never the client's
+    ffs-admin-headers:
+      headers:
+        customRequestHeaders:
+          Remote-Email: ""
+          Remote-Groups: ""
   services:
     ffs-sync:
       loadBalancer:

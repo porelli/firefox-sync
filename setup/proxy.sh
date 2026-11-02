@@ -109,6 +109,14 @@ proxy_what() {
 }
 # the addresses of PROXY_ADMIN_ALLOW, separated by spaces (empty: anybody)
 proxy_allow() { proxy_env PROXY_ADMIN_ALLOW | tr ',' ' ' | tr -s ' '; }
+# the headers of the admin UI's trusted-header sign-in (ADMIN_AUTH_HEADER, ADMIN_AUTH_GROUPS_HEADER),
+# separated by spaces: the admin UI's route drops those a client sends (they would sign it in
+# through the proxy, a trusted peer; docs/admin/signing-in.md#trusted-header)
+proxy_auth_headers() {
+    local h g
+    h=$(proxy_env ADMIN_AUTH_HEADER) g=$(proxy_env ADMIN_AUTH_GROUPS_HEADER)
+    printf '%s' "${h}${h:+${g:+ }}${g}"
+}
 # the hosts of the routes over TLS on that public port, once each, separated by spaces
 proxy_tls_hosts() {
     local r seen=" " port=${1:-}
@@ -203,6 +211,8 @@ render_nginx() {
         printf '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n'
         printf '    proxy_redirect off;\n'
         case "${R_NAME}" in
+            admin)
+                for a in $(proxy_auth_headers); do printf '    # the header of the trusted-header sign-in: never the client'"'"'s\n    proxy_set_header %s "";\n' "${a}"; done ;;
             sync) printf '    proxy_read_timeout 120;\n    proxy_connect_timeout 10;\n    gzip off;\n' ;;
             pairing)
                 printf '    proxy_http_version 1.1;\n    proxy_set_header Upgrade $http_upgrade;\n    proxy_set_header Connection "upgrade";\n'
@@ -213,9 +223,9 @@ render_nginx() {
     [ -z "${site}" ] || printf '}\n'
 }
 
-# --- Caddy: render_caddy <local|network> [compose|quadlets]. The second: the bundled Caddy's
-# global options (its certificates: CADDY_ACME_*; with the Quadlet, on the host's network, its
-# ports). caddy.d/ next to the file: snippets of yours, imported (none: nothing), which stay when
+# --- Caddy: render_caddy <local|network> [bundled]. bundled: the bundled Caddy's global options
+# (its certificates, CADDY_ACME_*; its admin API on a socket; on the host's network, local, its
+# ports). network: the containers by name, for a Caddy on the stack's network (the tests). caddy.d/ next to the file: snippets of yours, imported (none: nothing), which stay when
 # the file is written again: sites*.caddy beside the sites, <site>*.caddy in that site (sync,
 # content, api, profile, pairing, admin), public*.caddy in the five Firefox reaches
 render_caddy() {
@@ -238,12 +248,12 @@ render_caddy() {
                 global+=$'\tpki {\n\t\tca local {\n\t\t\tintermediate_lifetime 60d\n\t\t}\n\t}\n' ;;
         esac
         # (on the host's network: Caddy listens on the host's ports itself)
-        if [ "${bundled}" = quadlets ]; then
+        if [ "${mode}" = local ]; then
             [ "${http}" = 80 ] || global+=$'\t'"http_port ${http}"$'\n'
             [ "${https}" = 443 ] || global+=$'\t'"https_port ${https}"$'\n'
-            # (its admin API: on a socket of its volume, not on the host's 127.0.0.1:2019)
-            global+=$'\tadmin unix//config/caddy-admin.sock\n'
         fi
+        # (its admin API: on a socket of its volume, not on the host's 127.0.0.1:2019)
+        global+=$'\tadmin unix//config/caddy-admin.sock\n'
         printf '\n# the bundled Caddy (PROXY=caddy, docs/reverse-proxy.md#the-bundled-caddy): CADDY_ACME_CA=%s\n' "${ca}"
         [ -z "${global}" ] || printf '{\n%s}\n' "${global}"
     fi
@@ -263,7 +273,8 @@ render_caddy() {
                 sync) printf '\t# (docs/reverse-proxy.md#request-size)\n\trequest_body {\n\t\tmax_size %s\n\t}\n' "${PROXY_BODY_CADDY}" ;;
                 admin)
                     allow=$(proxy_allow)
-                    [ -z "${allow}" ] || printf '\t# only from PROXY_ADMIN_ALLOW\n\t@outside not remote_ip %s\n\trespond @outside 403\n' "${allow}" ;;
+                    [ -z "${allow}" ] || printf '\t# only from PROXY_ADMIN_ALLOW\n\t@outside not remote_ip %s\n\trespond @outside 403\n' "${allow}"
+                    for a in $(proxy_auth_headers); do printf '\t# the header of the trusted-header sign-in: never the client'"'"'s\n\trequest_header -%s\n' "${a}"; done ;;
             esac
         fi
         [ "${R_NAME}" = "${R_SITE}" ] || printf '\t# %s\n' "$(proxy_what "${R_NAME}")"
@@ -285,6 +296,13 @@ proxy_prefix() {
     p=${COMPOSE_PROJECT_NAME:-$(proxy_env COMPOSE_PROJECT_NAME)}
     if [ -n "${p}" ]; then normalize_project "${p}"; else compose_project; fi
 }
+# the network Traefik reaches the public containers on: TRAEFIK_NETWORK, empty: <project>-proxy,
+# this stack's own (on it only Traefik and those containers: none other reaches them past it)
+traefik_network() {
+    local net
+    net=$(proxy_env TRAEFIK_NETWORK)
+    printf '%s' "${net:-$(proxy_prefix compose)-proxy}"
+}
 # the entry points of a route: TRAEFIK_ENTRYPOINTS over TLS, TRAEFIK_HTTP_ENTRYPOINT otherwise
 traefik_entrypoints() {
     if proxy_tls; then proxy_env TRAEFIK_ENTRYPOINTS; else
@@ -304,7 +322,11 @@ traefik_middlewares() {
     case "${R_NAME}" in
         sync) printf '%s-sync-body' "${p}" ;;
         img) printf '%s-img-strip' "${p}" ;;
-        admin) [ -n "$(proxy_allow)" ] && printf '%s-admin-allow' "${p}" ;;
+        admin)
+            local mws=""
+            [ -n "$(proxy_allow)" ] && mws="${p}-admin-allow"
+            [ -n "$(proxy_auth_headers)" ] && mws="${mws:+${mws},}${p}-admin-headers"
+            printf '%s' "${mws}" ;;
     esac
 }
 # the hosts redirected from HTTP to HTTPS, as a rule
@@ -331,7 +353,7 @@ render_traefik_file() {
         printf '      entryPoints: [%s]\n' "$(printf '%s' "${ep}" | sed 's/,/, /g')"
         printf '      service: %s-%s\n' "${p}" "${R_NAME}"
         mw=$(traefik_middlewares "${p}")
-        [ -z "${mw}" ] || printf '      middlewares: [%s]\n' "${mw}"
+        [ -z "${mw}" ] || printf '      middlewares: [%s]\n' "${mw//,/, }"
         if proxy_tls; then
             if [ -n "${resolver}" ]; then printf '      tls:\n        certResolver: %s\n' "${resolver}"; else printf '      tls: {}\n'; fi
         fi
@@ -348,7 +370,12 @@ render_traefik_file() {
         case "${R_NAME}" in
             sync) printf '    # (docs/reverse-proxy.md#request-size)\n    %s-sync-body:\n      buffering:\n        maxRequestBodyBytes: %s\n' "${p}" "${PROXY_BODY_BYTES}" ;;
             img) printf '    %s-img-strip:\n      stripPrefix:\n        prefixes: ["/img"]\n' "${p}" ;;
-            admin) [ -z "$(proxy_allow)" ] || printf '    %s-admin-allow:\n      ipAllowList:\n        sourceRange: ["%s"]\n' "${p}" "$(proxy_allow | sed 's/ /", "/g')" ;;
+            admin)
+                [ -z "$(proxy_allow)" ] || printf '    %s-admin-allow:\n      ipAllowList:\n        sourceRange: ["%s"]\n' "${p}" "$(proxy_allow | sed 's/ /", "/g')"
+                if [ -n "$(proxy_auth_headers)" ]; then
+                    printf '    # the headers of the trusted-header sign-in: never the client'"'"'s\n    %s-admin-headers:\n      headers:\n        customRequestHeaders:\n' "${p}"
+                    for a in $(proxy_auth_headers); do printf '          %s: ""\n' "${a}"; done
+                fi ;;
         esac
     done
     printf '  services:\n'
@@ -361,10 +388,12 @@ render_traefik_file() {
 # containers on TRAEFIK_NETWORK too, with the labels of Traefik's Docker provider for them
 render_traefik_labels() {
     local p r svc services="" net resolver http mw rule port
-    p=$(proxy_prefix compose) net=$(proxy_env TRAEFIK_NETWORK) resolver=$(proxy_env TRAEFIK_CERTRESOLVER) http=$(proxy_env TRAEFIK_HTTP_ENTRYPOINT)
+    p=$(proxy_prefix compose) net=$(traefik_network) resolver=$(proxy_env TRAEFIK_CERTRESOLVER) http=$(proxy_env TRAEFIK_HTTP_ENTRYPOINT)
     proxy_header "Firefox Sync behind your Traefik, its Docker provider (PROXY=traefik): a compose file of" \
-        "COMPOSE_FILE, which puts the public containers on Traefik's network (TRAEFIK_NETWORK, which must" \
-        "exist) with the labels of their routers. Applied by docker compose up -d; also on the Podman socket"
+        "COMPOSE_FILE, which puts the public containers on ${net} (TRAEFIK_NETWORK) with the labels of" \
+        "their routers. That network must exist, with Traefik on it and nothing else: docker network create" \
+        "${net}, docker network connect ${net} <your Traefik> (docs/reverse-proxy.md#traefik-labels)." \
+        "Applied by docker compose up -d; also on the Podman socket"
     printf 'services:\n'
     # the containers in the order of their first route
     for r in ${PROXY_ROUTES[@]+"${PROXY_ROUTES[@]}"}; do
@@ -401,7 +430,9 @@ render_traefik_labels() {
                         printf '      traefik.http.middlewares.%s-https.redirectscheme.scheme: https\n      traefik.http.middlewares.%s-https.redirectscheme.permanent: "true"\n' "${p}" "${p}"
                     fi ;;
                 img) printf '      traefik.http.middlewares.%s-img-strip.stripprefix.prefixes: /img\n' "${p}" ;;
-                admin) [ -z "$(proxy_allow)" ] || printf '      traefik.http.middlewares.%s-admin-allow.ipallowlist.sourcerange: "%s"\n' "${p}" "$(proxy_allow | tr ' ' ',')" ;;
+                admin)
+                    [ -z "$(proxy_allow)" ] || printf '      traefik.http.middlewares.%s-admin-allow.ipallowlist.sourcerange: "%s"\n' "${p}" "$(proxy_allow | tr ' ' ',')"
+                    for a in $(proxy_auth_headers); do printf '      traefik.http.middlewares.%s-admin-headers.headers.customrequestheaders.%s: ""\n' "${p}" "${a}"; done ;;
             esac
         done
     done
@@ -420,11 +451,11 @@ render_proxy_readme() {
     printf '\nThese three proxy to the ports of this host (127.0.0.1): your proxy runs on this host.\n'
     case "${proxy}" in
         caddy)
-            printf '\n`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, '
+            printf '\n`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, on the host'"'"'s network, '
             if [ "${deploy}" = quadlets ]; then printf 'its Quadlet: `systemctl --user restart firefox-sync-caddy.service` after a change.\n'
-            else printf 'compose/caddy.yml of `COMPOSE_FILE`: `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile.bundled` after a change.\n'; fi ;;
+            else printf 'compose/caddy.yml of `COMPOSE_FILE`: `docker compose restart caddy` after a change.\n'; fi ;;
         traefik)
-            printf '\n`PROXY=traefik`: `traefik-compose.yml` is in `COMPOSE_FILE`: the labels of your Traefik'"'"'s Docker provider on the public containers, which it puts on its network (`TRAEFIK_NETWORK`). `docker compose up -d` applies them.\n' ;;
+            printf '\n`PROXY=traefik`: `traefik-compose.yml` is in `COMPOSE_FILE`: the labels of your Traefik'"'"'s Docker provider on the public containers, which it puts on `%s` (`TRAEFIK_NETWORK`), a network of this stack with Traefik on it and nothing else. `docker compose up -d` applies them.\n' "$(traefik_network)" ;;
     esac
 }
 
@@ -437,10 +468,9 @@ render_proxy() {
     render_caddy local > "${dir}/Caddyfile" || return 1
     render_traefik_file "${deploy}" > "${dir}/traefik.yml" || return 1
     case "${proxy}" in
-        caddy)
-            # compose: on the stack's network, the containers by name; the Quadlet: on the host's
-            # network (the clients' own addresses with rootless Podman), the ports of this host
-            if [ "${deploy}" = quadlets ]; then render_caddy local quadlets; else render_caddy network compose; fi > "${dir}/Caddyfile.bundled" || return 1 ;;
+        # (compose and the Quadlet: on the host's network, which gives Caddy the clients' own
+        # addresses, PROXY_ADMIN_ALLOW's; the ports of this host)
+        caddy) render_caddy local bundled > "${dir}/Caddyfile.bundled" || return 1 ;;
         traefik) render_traefik_labels > "${dir}/traefik-compose.yml" || return 1 ;;
     esac
     render_proxy_readme "${proxy}" "${deploy}" > "${dir}/README.md"
@@ -507,7 +537,7 @@ render_proxy_cli() {
     fi
     case "$(proxy_env PROXY)" in
         caddy) [ "${deploy}" = quadlets ] && echo "Then: systemctl --user restart firefox-sync-caddy.service" \
-            || echo "Then: docker compose up -d && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile.bundled" ;;
+            || echo "Then: docker compose up -d && docker compose restart caddy" ;;
         traefik) echo "Then: docker compose up -d (the labels of proxy/traefik-compose.yml)" ;;
         *) echo "Then: the file of your proxy into its configuration, and reload it (the README of proxy/)" ;;
     esac
@@ -560,4 +590,58 @@ caddy_port_checks() {
             break
         done
     fi
+}
+
+# --- the checks of the labels for Traefik (the setup)
+# network_subnets <network>: its IPv4 and IPv6 subnets as the container runtime has them,
+# separated by spaces (empty: no such network, or no runtime to ask)
+network_subnets() {
+    case "${CONTAINER_RUNTIME:-none}" in
+        podman) podman network inspect -f '{{range .Subnets}}{{.Subnet}} {{end}}' "${1}" 2> /dev/null ;;
+        docker) docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "${1}" 2> /dev/null ;;
+    esac
+}
+# ipv4_int <a.b.c.d>: the address as a number (fails for anything else)
+ipv4_int() {
+    local a b c d rest
+    IFS=. read -r a b c d rest <<< "${1}"
+    [ -z "${rest}" ] && [[ "${a}.${b}.${c}.${d}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+    [ "${a}" -le 255 ] && [ "${b}" -le 255 ] && [ "${c}" -le 255 ] && [ "${d}" -le 255 ] || return 1
+    printf '%s' "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
+}
+# ipv4_in <address> <subnet a.b.c.d/n>: the address is in the subnet
+ipv4_in() {
+    local ip net bits
+    ip=$(ipv4_int "${1}") && net=$(ipv4_int "${2%/*}") || return 1
+    bits=${2##*/}
+    [[ "${bits}" =~ ^[0-9]{1,2}$ ]] && [ "${bits}" -le 32 ] || return 1
+    [ "${bits}" = 0 ] && return 0
+    [ $(( (ip ^ net) >> (32 - bits) )) = 0 ]
+}
+# traefik_trusted_check <network> <ADMIN_TRUSTED_PROXIES>: with the labels for Traefik and the
+# admin UI's trusted-header sign-in, the header counts from Traefik's own address on its network
+# alone: an address each (a range there lets every container on that network sign in with the
+# header), of that network when the runtime knows it. An ERROR otherwise, fails
+traefik_trusted_check() {
+    local net=${1} entry subnets subnet entries=() inside
+    IFS=, read -r -a entries <<< "${2}"
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        case "${entry}" in
+            */32|*/128) ;;
+            */*) echo "ERROR: ADMIN_TRUSTED_PROXIES: ${entry} is a range: with the labels for Traefik, only Traefik's own address on ${net} (docker network inspect ${net}): any container on that network would sign in with the header (docs/reverse-proxy.md#traefik-labels)"
+                return 1 ;;
+        esac
+    done
+    subnets=$(network_subnets "${net}")
+    [ -n "${subnets// /}" ] || return 0
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        inside=""
+        for subnet in ${subnets}; do
+            case "${subnet}" in *:*) [[ "${entry}" == *:* ]] && inside=unknown ;; *) ipv4_in "${entry%/32}" "${subnet}" && inside=yes ;; esac
+        done
+        [ -n "${inside}" ] && continue
+        echo "ERROR: ADMIN_TRUSTED_PROXIES: ${entry} is no address of ${net} (${subnets% }): Traefik's own address there (docker network inspect ${net})"
+        return 1
+    done
+    return 0
 }

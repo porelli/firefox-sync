@@ -1,5 +1,6 @@
 # the self-hosted accounts, the pairing server, the admin UI with another OpenID Connect
-# provider open to anybody, your Traefik's Docker provider: two entry points, a resolver
+# provider (and a trusted header, which its route drops) open to anybody, your Traefik's Docker
+# provider on the stack's own network: two entry points, a resolver
 deploy=compose
 SYNC_PUBLIC_URL=https://sync.example.com
 COMPOSE_PROFILES=admin,pairing
@@ -12,7 +13,10 @@ FXA_PAIRING_URL=wss://pairing.example.com
 ADMIN_OIDC_REDIRECT_URL=https://admin.example.com/auth/callback
 PROXY_ADMIN_ALLOW=
 PROXY=traefik
-TRAEFIK_NETWORK=web-proxy
+TRAEFIK_NETWORK=
+ADMIN_AUTH_HEADER=Remote-Email
+ADMIN_AUTH_GROUPS_HEADER=Remote-Groups
+ADMIN_TRUSTED_PROXIES=172.30.0.5/32
 TRAEFIK_ENTRYPOINTS=https,https6
 TRAEFIK_HTTP_ENTRYPOINT=http
 TRAEFIK_CERTRESOLVER=le

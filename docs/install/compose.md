@@ -178,11 +178,11 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `admin_notify` | where the alerts go too | destination URLs | none |
 | `backups` | nightly backups? | yes, no | no (an install's: its own) |
 | `proxy` | do you already run a reverse proxy? | `own`, `caddy` (the bundled Caddy), `traefik` (labels for your Traefik; not with Quadlets) | `own` (an install's: its own) |
-| `proxy_admin_allow` | with the admin UI's public URL: who can open it | addresses and CIDRs, comma-separated; `anybody` | `127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` |
+| `proxy_admin_allow` | with the admin UI's public URL: who can open it | addresses and CIDRs, comma-separated; `anybody` | `127.0.0.1,::1` (this host) |
 | `caddy_email` | `caddy`: the email for Let's Encrypt | an email; empty: none | none |
 | `caddy_ca` | `caddy`: where its certificates come from | `letsencrypt`, `staging`, `internal` | `letsencrypt` |
 | `caddy_http_port`, `caddy_https_port` | `caddy`: its ports on this host | ports | `80`, `443` |
-| `traefik_network` | `traefik`: the Docker network your Traefik watches | a network name | `traefik` |
+| `traefik_network` | `traefik`: the network the public containers join for your Traefik | a network name (another than this stack's own: a warning) | `<project>-proxy` |
 | `traefik_entrypoints` | `traefik`: its HTTPS entry points | names, comma-separated | `websecure` |
 | `traefik_http_entrypoint` | `traefik`: its HTTP entry point, redirected to HTTPS | a name; `none` | `web` |
 | `traefik_certresolver` | `traefik`: its certificate resolver | a name; `none`: its default certificate | none |

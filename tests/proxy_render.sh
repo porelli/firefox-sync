@@ -157,10 +157,38 @@ for c in ${CASES}; do
     rc=$?
     case "$(ENV_READ=${WORK}/${c}.env proxy_env PROXY)" in
         caddy) check "${rc} $(printf '%s' "${res}" | grep -c 'target: /etc/caddy$')" "0 1" "${c}: docker compose config with compose/caddy.yml" || echo "${res}" | tail -5 ;;
-        traefik) check "${rc} $(printf '%s' "${res}" | grep -c 'traefik.docker.network: web-proxy$') $(printf '%s' "${res}" | grep -c 'name: web-proxy$')" "0 7 1" \
+        traefik) check "${rc} $(printf '%s' "${res}" | grep -c 'traefik.docker.network: ffs-proxy$') $(printf '%s' "${res}" | grep -c 'name: ffs-proxy$')" "0 7 1" \
             "${c}: docker compose config with proxy/traefik-compose.yml, the public containers on Traefik's network" || echo "${res}" | tail -5 ;;
     esac
 done
+
+echo "== the bundled Caddy of compose/caddy.yml, on the host's network: the clients' own addresses"
+# selfhosted-caddy with Caddy's own CA on ports of its own, the admin UI's host from this host
+# only (PROXY_ADMIN_ALLOW=127.0.0.1,::1) and Caddy's access log (a snippet of caddy.d/): from
+# this host the admin UI's route is let through (502, no admin UI here), from a container (the
+# host's address on the bridge network) refused (403), Caddy seeing the container's own address,
+# not the bridge's gateway, which published ports could show it instead
+HTTP_PORT=28790 HTTPS_PORT=28791
+B=${WORK}/bundled
+{ cat "${WORK}/selfhosted-caddy.env"; printf 'CADDY_ACME_CA=internal\nCADDY_HTTP_PORT=%s\nCADDY_HTTPS_PORT=%s\nPROXY_ADMIN_ALLOW=127.0.0.1,::1\nFFS_PROXY_DIR=%s\n' "${HTTP_PORT}" "${HTTPS_PORT}" "${B}"; } > "${WORK}/bundled.env"
+ENV_READ=${WORK}/bundled.env write_proxy compose render "${B}" > /dev/null || echo "FAIL: write_proxy for the bundled Caddy"
+printf 'log {\n\toutput stdout\n\tformat json\n}\n' > "${B}/caddy.d/admin-log.caddy"
+printf 'services:\n  caddy:\n    volumes:\n      - ${FFS_PROXY_DIR:?}:/etc/caddy:ro\n' > "${WORK}/bundled-compose.yml"
+chmod -R a+rX "${B}" "${WORK}/bundled-compose.yml"
+bundled() { env -i PATH="${PATH}" HOME="${HOME}" ${DOCKER_HOST:+DOCKER_HOST="${DOCKER_HOST}"} docker compose -p "${NAME}-caddy" --env-file "${WORK}/bundled.env" \
+    -f "${CODE}/compose/caddy.yml" -f "${WORK}/bundled-compose.yml" "$@"; }
+bundled up -d > "${WORK}/bundled-up.log" 2>&1 || { echo "FAIL: the bundled Caddy started"; cat "${WORK}/bundled-up.log"; }
+admin_code() { curl -sk -o /dev/null -w '%{http_code}' --resolve "admin.example.com:${HTTPS_PORT}:127.0.0.1" "https://admin.example.com:${HTTPS_PORT}/"; }
+for _ in $(seq 1 30); do [ "$(admin_code)" = 502 ] && break; sleep 1; done
+gateway=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+from_container=$(docker run --rm --add-host "admin.example.com:host-gateway" --entrypoint wget caddy:latest -q -O /dev/null --no-check-certificate \
+    "https://admin.example.com:${HTTPS_PORT}/" 2>&1)
+sleep 1
+remote=$(bundled logs caddy 2>&1 | grep '"status":403' | grep -o '"remote_ip":"[^"]*"' | tail -n 1 | cut -d'"' -f4)
+check "$(admin_code) $(printf '%s' "${from_container}" | grep -c '403') $([ -n "${remote}" ] && [ "${remote}" != "${gateway}" ] && echo "its own address")" "502 1 its own address" \
+    "the bundled Caddy on the host's network: the admin UI's host let through from this host, refused (403) from a container, which it sees at its own address (${remote:-none}, the gateway ${gateway})" \
+    || { bundled logs caddy 2>&1 | tail -10; echo "${from_container}"; }
+bundled down -v > /dev/null 2>&1
 
 [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit "${FAILED}"

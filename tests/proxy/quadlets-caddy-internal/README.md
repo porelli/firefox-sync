@@ -10,4 +10,4 @@ Pick the file of your proxy, put it where it says, reload:
 
 These three proxy to the ports of this host (127.0.0.1): your proxy runs on this host.
 
-`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, its Quadlet: `systemctl --user restart firefox-sync-caddy.service` after a change.
+`PROXY=caddy`: the bundled Caddy runs `Caddyfile.bundled`, on the host's network, its Quadlet: `systemctl --user restart firefox-sync-caddy.service` after a change.

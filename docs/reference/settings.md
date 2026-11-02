@@ -222,12 +222,12 @@ What `prepare_environment.sh` writes into `proxy/` from `.env`, the configuratio
 | `.env` | Helm | Default | Meaning | Old name |
 |---|---|---|---|---|
 | `PROXY` | – | `own` | which reverse proxy: `own` (yours, with the file of `proxy/`), `caddy` ([the bundled Caddy](../reverse-proxy.md#the-bundled-caddy): `compose/caddy.yml` in `COMPOSE_FILE`, or its Quadlet) or `traefik` ([labels for your Traefik](../reverse-proxy.md#traefik-labels): `proxy/traefik-compose.yml` in `COMPOSE_FILE`). `--upgrade` puts the file of `PROXY` in `COMPOSE_FILE`, and takes out the other's | |
-| `PROXY_ADMIN_ALLOW` | – | `127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | who reaches the admin UI's public address (`ADMIN_OIDC_REDIRECT_URL`) through the proxy: addresses and CIDRs, comma-separated; empty: anybody ([The admin UI](../reverse-proxy.md#the-admin-ui)) | |
+| `PROXY_ADMIN_ALLOW` | – | `127.0.0.1,::1` | who reaches the admin UI's public address (`ADMIN_OIDC_REDIRECT_URL`) through the proxy: addresses and CIDRs, comma-separated; empty: anybody. Not the containers' networks behind published ports ([The admin UI](../reverse-proxy.md#the-admin-ui)) | |
 | `CADDY_IMAGE` | – | `caddy:latest` | `PROXY=caddy`: its image | |
-| `CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT` | – | `80`, `443` | `PROXY=caddy`: the ports of this host it listens on ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)) | |
+| `CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT` | – | `80`, `443` | `PROXY=caddy`: the ports of this host it listens on, on the host's network ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)) | |
 | `CADDY_ACME_CA` | – | `letsencrypt` | `PROXY=caddy`: where its certificates come from, `letsencrypt`, `staging` (Let's Encrypt's test CA) or `internal` (Caddy's own CA) | |
 | `CADDY_ACME_EMAIL` | – | empty: none | `PROXY=caddy`: the email Let's Encrypt writes to about the certificates | |
-| `TRAEFIK_NETWORK` | – | `traefik` | the Docker network your Traefik watches: with `PROXY=traefik` the public containers join it | |
+| `TRAEFIK_NETWORK` | – | empty: `<COMPOSE_PROJECT_NAME>-proxy` | with `PROXY=traefik` the network the public containers join, for Traefik alone ([Traefik labels](../reverse-proxy.md#traefik-labels)) | |
 | `TRAEFIK_ENTRYPOINTS` | – | `websecure` | the routers' HTTPS entry points, comma-separated (also of `proxy/traefik.yml`) | |
 | `TRAEFIK_HTTP_ENTRYPOINT` | – | `web` | the HTTP entry point redirected to HTTPS; empty: no redirect | |
 | `TRAEFIK_CERTRESOLVER` | – | empty: Traefik's default certificate | the certificate resolver of the routers | |

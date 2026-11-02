@@ -586,19 +586,15 @@ echo ""
 case "${PROXY}" in
     own) echo "Reverse proxy: put the file of yours from proxy/ (nginx.conf, Caddyfile, traefik.yml) into its configuration and reload it (the README of proxy/, docs/reverse-proxy.md)" ;;
     caddy)
-        echo "Reverse proxy: the bundled Caddy (docs/reverse-proxy.md#the-bundled-caddy), proxy/Caddyfile.bundled, on ports ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V}"
+        echo "Reverse proxy: the bundled Caddy (docs/reverse-proxy.md#the-bundled-caddy), proxy/Caddyfile.bundled, on the host's network, ports ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V}"
         if [ "${CADDY_ACME_CA_V}" = internal ]; then
             echo "  its own CA: install its root certificate on your devices, /data/caddy/pki/authorities/local/root.crt in its data volume"
         else
             echo "  Let's Encrypt needs every host name of proxy/Caddyfile.bundled to resolve to this host, and ports 80 and 443 reachable"
             echo "  from the internet (forwarded to ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V})"
         fi
-        # (in a container on the stack's network: it listens on 443 inside, a URL's own port is not published)
-        for url in "${SYNC_URL}" "${FXA_CONTENT_URL_V}" "${FXA_AUTH_URL_V}" "${FXA_PROFILE_URL_V}" "${FXA_PAIRING_URL_V}" "${ADMIN_URL}"; do
-            [ -n "$(url_port "${url}")" ] && [ "$(url_port "${url}")" != "${CADDY_HTTPS_PORT_V}" ] && \
-                echo "NOTE: ${url} has a port of its own, not CADDY_HTTPS_PORT (${CADDY_HTTPS_PORT_V}): the bundled Caddy does not listen there"
-        done ;;
-    traefik) echo "Reverse proxy: your Traefik reads the labels of proxy/traefik-compose.yml (in COMPOSE_FILE) on its network ${TRAEFIK_NETWORK_V} (docs/reverse-proxy.md#traefik-labels)" ;;
+        ;;
+    traefik) echo "Reverse proxy: your Traefik reads the labels of proxy/traefik-compose.yml (in COMPOSE_FILE), the public containers on ${TRAEFIK_NETWORK_V}, with Traefik on it and nothing else (docs/reverse-proxy.md#traefik-labels)" ;;
 esac
 secrets_report end
 echo "=========================================="

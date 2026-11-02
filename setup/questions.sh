@@ -1236,7 +1236,9 @@ step_proxy_admin_allow() {
     PROXY_ADMIN_ALLOW_V=$(previous_setting PROXY_ADMIN_ALLOW "$(ENV_READ="${SCRIPT_DIR}/.env-example" env_plain PROXY_ADMIN_ALLOW)")
     [ -n "${ADMIN_URL}" ] || return 0
     hint "The admin UI's public address (${ADMIN_URL}) only from your own addresses: the proxy refuses the others"
-    hint "  (docs/reverse-proxy.md#the-admin-ui). Addresses and CIDRs, comma-separated; anybody: no restriction"
+    hint "  (docs/reverse-proxy.md#the-admin-ui); by default this host only. Addresses and CIDRs, comma-separated"
+    hint "  (your network, your VPN); anybody: no restriction. Not the networks of the containers: a proxy in a"
+    hint "  container behind published ports can see their gateway's address for every client"
     while :; do
         ask proxy_admin_allow "Who can open the admin UI's public address" "${PROXY_ADMIN_ALLOW_V:-anybody}" || return
         ANSWER=$(printf '%s' "${ANSWER}" | tr -d ' ')
@@ -1311,13 +1313,30 @@ ask_traefik_name() {
     done
 }
 step_traefik_network() {
-    TRAEFIK_NETWORK_V=$(previous_setting TRAEFIK_NETWORK traefik)
+    local own
+    TRAEFIK_NETWORK_V=$(previous_setting TRAEFIK_NETWORK "")
     [ "${PROXY}" = traefik ] || return 0
-    hint "Your Traefik reads the labels of the containers on the Docker socket (or the Podman one) and reaches them"
-    hint "  on its network: the public containers join it (docs/reverse-proxy.md#traefik-labels)"
-    ask_traefik_name traefik_network "The Docker network Traefik watches" "${TRAEFIK_NETWORK_V}" TRAEFIK_NETWORK_V no "a network name" || return
+    # (empty: this stack's own, as the labels take it)
+    own=$(compose_project)-proxy
+    TRAEFIK_NETWORK_V=${TRAEFIK_NETWORK_V:-${own}}
+    hint "Your Traefik reads the labels of the containers on the Docker socket (or the Podman one) and reaches the"
+    hint "  public ones on a network they join: by default ${own}, of this stack only, which you attach Traefik to."
+    hint "  A network other containers are on (Traefik's own, shared) lets them reach these containers past Traefik"
+    hint "  (docs/reverse-proxy.md#traefik-labels)"
+    while :; do
+        ask_traefik_name traefik_network "The network Traefik reaches the public containers on" "${TRAEFIK_NETWORK_V}" TRAEFIK_NETWORK_V no "a network name" || return
+        # the admin UI's trusted-header sign-in: Traefik's own address on it, nothing wider
+        [ -z "${ADMIN_TRUSTED_PROXIES_V}" ] || traefik_trusted_check "${TRAEFIK_NETWORK_V}" "${ADMIN_TRUSTED_PROXIES_V}" || {
+            echo "  change the admin UI's trusted proxies (< back to them, or the part 4 in the review)"; retry; continue; }
+        break
+    done
+    if [ "${TRAEFIK_NETWORK_V}" != "${own}" ]; then
+        echo "WARNING: ${TRAEFIK_NETWORK_V}, not a network of this stack's own: every container on it reaches the public containers"
+        echo "  directly, the admin UI's port with them, past Traefik and its rules. Keep only Traefik on it (docs/reverse-proxy.md#traefik-labels)"
+    fi
     if [ "${CONTAINER_RUNTIME}" != none ] && ! "${CONTAINER_RUNTIME}" network inspect "${TRAEFIK_NETWORK_V}" > /dev/null 2>&1; then
-        echo "NOTE: no network ${TRAEFIK_NETWORK_V} here (yet): Traefik's, which docker compose up needs (docker network create ${TRAEFIK_NETWORK_V})"
+        echo "NOTE: no network ${TRAEFIK_NETWORK_V} here yet, which docker compose up needs, with your Traefik on it:"
+        echo "  docker network create ${TRAEFIK_NETWORK_V} && docker network connect ${TRAEFIK_NETWORK_V} <your Traefik's container>"
     fi
     return 0
 }

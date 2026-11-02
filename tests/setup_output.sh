@@ -499,7 +499,7 @@ done
 
 echo "== the reverse proxy: proxy/ for each answer, the bundled Caddy, the labels for Traefik"
 P=${W}/proxy
-# the bundled Caddy with docker compose: on the stack's network (the containers by name), Let's
+# the bundled Caddy with docker compose: on the host's network (the ports of this host), Let's
 # Encrypt's staging CA, the admin UI's public address from two networks
 reset_checkout new
 printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com admin_signin=accounts admin_users=me@example.com \
@@ -507,8 +507,8 @@ printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com
 run_setup docker "${WORK}/caddy.log" --answers "${WORK}/caddy.answers" --non-interactive < /dev/null
 check "$? $(ev PROXY) $(ev CADDY_ACME_CA) $(ev CADDY_ACME_EMAIL) $(ev PROXY_ADMIN_ALLOW) $(ev COMPOSE_FILE | grep -c '^compose/sync.yml:.*:compose/caddy.yml$')" \
     "0 caddy staging admin@example.com 192.0.2.0/24,2001:db8::/32 1" "the bundled Caddy (compose): .env, compose/caddy.yml in COMPOSE_FILE"
-check "$(grep -c '^	acme_ca https://acme-staging-v02' "${P}/Caddyfile.bundled") $(grep -c '^	email admin@example.com$' "${P}/Caddyfile.bundled") $(grep -cE '^	reverse_proxy (@gate ffs-admin:8081|fxa-content:3030|fxa-auth:9000|syncstorage:8000)$' "${P}/Caddyfile.bundled") $(grep -c '^	reverse_proxy 127.0.0.1:3030$' "${P}/Caddyfile") $(grep -c '@outside not remote_ip 192.0.2.0/24 2001:db8::/32$' "${P}/Caddyfile" "${P}/Caddyfile.bundled" | grep -c ':1$') $(grep -cx '  allow 2001:db8::/32;' "${P}/nginx.conf")" \
-    "1 1 4 1 2 1" "Caddyfile.bundled: its CA, the containers by name; Caddyfile, nginx.conf: the ports of this host; the admin UI from PROXY_ADMIN_ALLOW"
+check "$(grep -c '^	acme_ca https://acme-staging-v02' "${P}/Caddyfile.bundled") $(grep -c '^	email admin@example.com$' "${P}/Caddyfile.bundled") $(grep -cE '^	(reverse_proxy (@gate 127\.0\.0\.1:8091|127\.0\.0\.1:3030|127\.0\.0\.1:9000|127\.0\.0\.1:5000)|admin unix//config/caddy-admin\.sock)$' "${P}/Caddyfile.bundled") $(grep -c '^	reverse_proxy 127.0.0.1:3030$' "${P}/Caddyfile") $(grep -c '@outside not remote_ip 192.0.2.0/24 2001:db8::/32$' "${P}/Caddyfile" "${P}/Caddyfile.bundled" | grep -c ':1$') $(grep -cx '  allow 2001:db8::/32;' "${P}/nginx.conf")" \
+    "1 1 5 1 2 1" "Caddyfile.bundled: its CA, the ports of this host, its admin API on a socket; Caddyfile, nginx.conf too; the admin UI from PROXY_ADMIN_ALLOW"
 check "$(grep -c '^NOTE: https://' "${WORK}/caddy.log") $(grep -c "Let's Encrypt needs every host name of proxy/Caddyfile.bundled to resolve to this host" "${WORK}/caddy.log") $(grep -c '^  6 Reverse proxy: the bundled Caddy on ports 80 and 443, certificates of Let.s Encrypt.s staging CA (admin@example.com)$' "${WORK}/caddy.log")" \
     "0 1 1" "the bundled Caddy: in the review, and what Let's Encrypt needs is said"
 # again, the proxy/ of before changed by hand: kept; then --render-proxy after a change of .env,
@@ -546,8 +546,20 @@ check "$? $(ev TRAEFIK_NETWORK) $(ev TRAEFIK_ENTRYPOINTS) [$(ev TRAEFIK_HTTP_ENT
     "0 web-proxy https,https6 [] le 1" "the labels for Traefik: .env, proxy/traefik-compose.yml in COMPOSE_FILE"
 check "$(grep -cE '^  (syncstorage|fxa-content|fxa-auth|fxa-profile-static|fxa-profile|fxa-pairing|ffs-admin):$' "${L}") $(grep -c 'traefik.docker.network: web-proxy$' "${L}") $(grep -c '\.entrypoints: https,https6$' "${L}") $(grep -c '\.tls.certresolver: le$' "${L}") $(grep -c 'redirectscheme' "${L}") $(grep -cx '    name: web-proxy' "${L}")" \
     "7 7 7 7 0 1" "proxy/traefik-compose.yml: the public containers on Traefik's network, a router per route, no redirect"
-check "$(grep -c 'traefik.http.routers.ffs-gate.priority: "1000"' "${L}") $(grep -c 'traefik.http.middlewares.ffs-img-strip.stripprefix.prefixes: /img$' "${L}") $(grep -c 'buffering.maxrequestbodybytes: "10485760"' "${L}") $(grep -c 'NOTE: no network web-proxy here' "${WORK}/traefik.log")" \
-    "1 1 1 1" "the sign-up gate first, the avatars without /img, the request size; the network not found is said"
+check "$(grep -c 'traefik.http.routers.ffs-gate.priority: "1000"' "${L}") $(grep -c 'traefik.http.middlewares.ffs-img-strip.stripprefix.prefixes: /img$' "${L}") $(grep -c 'buffering.maxrequestbodybytes: "10485760"' "${L}") $(grep -c 'NOTE: no network web-proxy here' "${WORK}/traefik.log") $(grep -c '^WARNING: web-proxy, not a network of this stack.s own' "${WORK}/traefik.log")" \
+    "1 1 1 1 1" "the sign-up gate first, the avatars without /img, the request size; the network not found said, a network not of this stack warned of"
+# by default a network of this stack's own (<project>-proxy); the admin UI's trusted-header
+# sign-in: Traefik's own address there, never a range of it
+reset_checkout new
+printf '%s\n' domain=example.com proxy=traefik admin_signin=header admin_users=a@example.com "admin_trusted_proxies=172.30.0.5" > "${WORK}/traefik-own.answers"
+run_setup docker "${WORK}/traefik-own.log" --answers "${WORK}/traefik-own.answers" --non-interactive < /dev/null
+check "$? $(ev TRAEFIK_NETWORK) $(grep -c 'traefik.docker.network: ffs-proxy$' "${P}/traefik-compose.yml") $(grep -c '^WARNING: .*not a network of this stack' "${WORK}/traefik-own.log") $(grep -c 'docker network create ffs-proxy && docker network connect ffs-proxy' "${WORK}/traefik-own.log")" \
+    "0 ffs-proxy 1 0 1" "the labels for Traefik: a network of this stack by default, how to make it and attach Traefik said"
+reset_checkout new
+printf '%s\n' domain=example.com proxy=traefik admin_signin=header admin_users=a@example.com "admin_trusted_proxies=172.30.0.0/16" > "${WORK}/traefik-range.answers"
+run_setup docker "${WORK}/traefik-range.log" --answers "${WORK}/traefik-range.answers" --non-interactive < /dev/null
+check "$? $(grep -c '^ERROR: ADMIN_TRUSTED_PROXIES: 172.30.0.0/16 is a range: with the labels for Traefik' "${WORK}/traefik-range.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" \
+    "the labels for Traefik and the trusted-header sign-in: a range of trusted proxies refused, nothing written"
 # refused: Traefik's labels with the Quadlets, an address list that is none
 reset_checkout new
 for bad in "deploy=quadlets

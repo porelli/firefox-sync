@@ -211,8 +211,12 @@ case "${TEST_PROXY}" in caddy|nginx|traefik) ;; *) echo "TEST_PROXY: caddy, ngin
 FFS_PROXY_DIR=${HOME}/.cache/${PROJECT}-proxy
 case "${TEST_PROXY}" in
   caddy) sed -i -e 's|^PROXY=.*|PROXY=caddy|' -e 's|^CADDY_ACME_CA=.*|CADDY_ACME_CA=internal|' "${ENV_FILE}" ;;
-  traefik) sed -i -e 's|^PROXY=.*|PROXY=traefik|' -e "s|^TRAEFIK_NETWORK=.*|TRAEFIK_NETWORK=${PROJECT}-traefik|" "${ENV_FILE}" ;;
+  # (a network of the stack's own, which the test makes, Traefik on it)
+  traefik) sed -i -e 's|^PROXY=.*|PROXY=traefik|' -e "s|^TRAEFIK_NETWORK=.*|TRAEFIK_NETWORK=${PROJECT}-proxy|" "${ENV_FILE}" ;;
 esac
+# the admin UI's host from the test's containers: the proxy is on their network here and sees
+# their own addresses (no published port in between)
+sed -i 's|^PROXY_ADMIN_ALLOW=.*|PROXY_ADMIN_ALLOW=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16|' "${ENV_FILE}"
 printf 'FFS_TEST_PROXY=%s\nFFS_PROXY_DIR=%s\nFFS_PROJECT=%s\n' "${TEST_PROXY}" "${FFS_PROXY_DIR}" "${PROJECT}" >> "${ENV_FILE}"
 # CLIENT_CERT=1: a test client CA, a client certificate of it (PEM, and PKCS#12 for Firefox),
 # and one of another CA, which the hosts must refuse
@@ -306,16 +310,21 @@ dc() {
 # the hosts of the stack's public URLs (the test CA's certificate has them)
 PROXY_HOSTS="sync.fxa.test accounts.fxa.test api.fxa.test profile.fxa.test pairing.fxa.test admin.fxa.test"
 # render_test_proxy: proxy/ of this .env, as prepare_environment.sh writes it (write_proxy), into
-# FFS_PROXY_DIR, with nginx's variant on the stack's network (render_nginx network); the
-# snippets of FFS_ACCESS in caddy.d/; for nginx and Traefik a test CA and its certificate
+# FFS_PROXY_DIR, with the variants of nginx and the bundled Caddy on the stack's network, the
+# containers by name (render_nginx network, render_caddy network bundled: the tests reach the
+# proxy by the public host names, network aliases; the bundled Caddy itself is on the host's
+# network, tests/proxy_render.sh runs it so); the snippets of FFS_ACCESS in caddy.d/; for nginx
+# and Traefik a test CA and its certificate
 render_test_proxy() {
   local d=${FFS_PROXY_DIR}/test-ca h
-  rm -rf "${FFS_PROXY_DIR}" && mkdir -p "${FFS_PROXY_DIR}" || return 1
+  # (again on a running stack: the files written again, the test CA kept)
+  mkdir -p "${FFS_PROXY_DIR}" || return 1
   # (prepare_environment.sh sourced: its functions only)
   (source "${CODE}/prepare_environment.sh" && SCRIPT_DIR=${CODE} ENV_READ=${ENV_FILE} COMPOSE_PROJECT_NAME=${PROJECT} && ffs_temp_init &&
-    write_proxy compose render "${FFS_PROXY_DIR}" && proxy_routes compose && render_nginx network > "${FFS_PROXY_DIR}/nginx-network.conf") || return 1
+    write_proxy compose render "${FFS_PROXY_DIR}" && proxy_routes compose && render_nginx network > "${FFS_PROXY_DIR}/nginx-network.conf" &&
+    render_caddy network bundled > "${FFS_PROXY_DIR}/Caddyfile.network") || return 1
   [ "${FFS_ACCESS}" = none ] || cp "${TESTS}/caddy/${FFS_ACCESS}"/*.caddy "${FFS_PROXY_DIR}/caddy.d/" || return 1
-  if [ "${TEST_PROXY}" != caddy ]; then
+  if [ "${TEST_PROXY}" != caddy ] && [ ! -f "${d}/ca.crt" ]; then
     mkdir -p "${d}" "${FFS_PROXY_DIR}/traefik-test" || return 1
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 60 -subj "/CN=ffs test proxy CA" \
       -addext "keyUsage=critical,keyCertSign,cRLSign" -keyout "${d}/ca.key" -out "${d}/ca.crt" 2> /dev/null || return 1
@@ -359,7 +368,7 @@ teardown() {
   docker rm -f "${PROJECT}-browser" > /dev/null 2>&1
   dc down -v --remove-orphans > /dev/null 2>&1
   docker rm -f "${EXTDB}" > /dev/null 2>&1
-  docker network rm "${EXTDB}" "${PROJECT}-traefik" > /dev/null 2>&1
+  docker network rm "${EXTDB}" "${PROJECT}-proxy" > /dev/null 2>&1
   rm -f "${KEPT_ENV}"
   rm -rf "${WORK}" "${FFS_CERTS}" "${FFS_PROXY_DIR}"
 }
@@ -718,7 +727,7 @@ check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c "
 docker run --rm -v "${volume}:/v" --entrypoint sh mysql:lts -c 'mkdir -p /v/mysql && echo "{\"file_format\":\"1\",\"upgrade_history\":[{\"version\":\"8.4.11\"},{\"version\":\"9.7.2\"}]}" > /v/mysql_upgrade_history'
 rm -f "${SETUP}/.env"
 prepare "${WORK}/setup-fxa-mysql9-volume.log"
-check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c "on\$" "${WORK}/setup-fxa-mysql9-volume.log") $(grep -c 'MySQL 9 already: it stays on lts' "${WORK}/setup-fxa-mysql9-volume.log")" \
+check "$? $(env_value FXA_MYSQL_IMAGE) [$(env_value FXA_MYSQL_ARGS)] $(grep -c "(docker volume ${volume}), on\$" "${WORK}/setup-fxa-mysql9-volume.log") $(grep -c 'MySQL 9 already: it stays on lts' "${WORK}/setup-fxa-mysql9-volume.log")" \
   "0 mysql:lts [] 1 1" "prepare_environment.sh keeps a volume of an earlier install already on MySQL 9 on lts"
 # keep-major.sh: that data under mysql:8 without FXA_MYSQL_IMAGE would be a downgrade, under lts
 # fine; MariaDB 11 data under mariadb:lts (12) without the setting: refused, and said
@@ -764,11 +773,12 @@ check "$? $(grep -c "ERROR: one of mysql, mariadb, not 'postgres'" "${WORK}/setu
 fi
 
 echo "== ${PROJECT}: syncstorage ${REPOSITORY} ${TAG}, mozilla/fxa-mono ${FXA_VERSION}, accounts on ${FXA_DB}, behind ${TEST_PROXY}"
+rm -rf "${FFS_PROXY_DIR}"
 render_test_proxy
 rc=$?
 # (what each proxy reads)
 case "${TEST_PROXY}" in
-  caddy) proxy_files="Caddyfile.bundled caddy.d" ;;
+  caddy) proxy_files="Caddyfile.bundled Caddyfile.network caddy.d" ;;
   nginx) proxy_files="nginx-network.conf letsencrypt test-ca" ;;
   traefik) proxy_files="traefik-compose.yml traefik-test test-ca" ;;
 esac
@@ -858,6 +868,35 @@ if [ "${FFS_ACCESS}" = authelia ] && [ "${FAILED}" = 0 ]; then
   dc up -d ffs-admin > "${WORK}/admin-header.log" 2>&1
   for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 1; done
   check "$(state ffs-admin Health.Status) $(state authelia Health.Status)" "healthy healthy" "admin UI with ADMIN_AUTH_HEADER (${ADMIN_TRUSTED_PROXIES}), Authelia"
+fi
+if [ "${TEST_PROXY}" = traefik ] && [ "${FAILED}" = 0 ]; then
+  echo "== TEST_PROXY=traefik: the network of the stack's own, the admin UI's trusted header from Traefik's address only"
+  # the admin UI signs in with a header (ADMIN_AUTH_HEADER) from Traefik's own address on that
+  # network (ADMIN_TRUSTED_PROXIES, /32, as the setup asks); its route drops the header a client
+  # sends (proxy/ written again: the label of that middleware)
+  traefik_ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"${TRAEFIK_NETWORK}\").IPAddress}}" "$(dc ps -q traefik)")
+  set_env ADMIN_AUTH_HEADER Remote-Email
+  set_env ADMIN_TRUSTED_PROXIES "${traefik_ip}/32"
+  render_test_proxy && dc up -d ffs-admin > "${WORK}/admin-traefik.log" 2>&1
+  for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 1; done
+  sleep 5
+  # where a request with a forged header ends: /login (not signed in), or the page of an admin
+  sync_image=${IMAGE_REPOSITORY}:${SYNC_IMAGE}-${SYNC_IMAGE_TAG}
+  forged() { docker run --rm --network "$1" -v "${PROJECT}_caddy-ca:/caddy-ca:ro" --entrypoint curl "${sync_image}" -s -L --cacert /caddy-ca/root.crt \
+    -o /dev/null -w '%{url_effective}' -H 'Remote-Email: admin@example.com' "$2"; }
+  # from Traefik itself: the header counts (what the two below are refused)
+  from_traefik=$(docker exec "$(dc ps -q traefik)" wget -q -O - --header 'Remote-Email: admin@example.com' http://ffs-admin:8080/ 2> /dev/null | grep -c 'Sign out')
+  # a client of Traefik: the header dropped by the route
+  via_traefik=$(forged "${PROJECT}_default" https://admin.fxa.test/)
+  # another container on the network: not Traefik's address
+  on_network=$(forged "${TRAEFIK_NETWORK}" http://ffs-admin:8080/)
+  check "${from_traefik} ${via_traefik##*/} ${on_network##*/}" "1 login login" \
+    "the trusted header from Traefik's address only (${traefik_ip}/32): a client's dropped by its route, another container's on the network refused"
+  # (and the other way back, as the other tests expect it)
+  set_env ADMIN_AUTH_HEADER ""
+  set_env ADMIN_TRUSTED_PROXIES ""
+  render_test_proxy && dc up -d ffs-admin > "${WORK}/admin-traefik-back.log" 2>&1
+  for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 1; done
 fi
 if [ "${FAILED}" != 0 ]; then
   tail -20 "${WORK}/up.log"

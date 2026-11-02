@@ -10,4 +10,4 @@ Pick the file of your proxy, put it where it says, reload:
 
 These three proxy to the ports of this host (127.0.0.1): your proxy runs on this host.
 
-`PROXY=traefik`: `traefik-compose.yml` is in `COMPOSE_FILE`: the labels of your Traefik's Docker provider on the public containers, which it puts on its network (`TRAEFIK_NETWORK`). `docker compose up -d` applies them.
+`PROXY=traefik`: `traefik-compose.yml` is in `COMPOSE_FILE`: the labels of your Traefik's Docker provider on the public containers, which it puts on `ffs-proxy` (`TRAEFIK_NETWORK`), a network of this stack with Traefik on it and nothing else. `docker compose up -d` applies them.

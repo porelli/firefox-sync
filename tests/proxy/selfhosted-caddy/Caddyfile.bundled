@@ -8,6 +8,7 @@
 # the bundled Caddy (PROXY=caddy, docs/reverse-proxy.md#the-bundled-caddy): CADDY_ACME_CA=letsencrypt
 {
 	email admin@example.com
+	admin unix//config/caddy-admin.sock
 }
 
 import caddy.d/sites*.caddy
@@ -20,14 +21,14 @@ sync.example.com {
 	request_body {
 		max_size 10MB
 	}
-	reverse_proxy syncstorage:8000
+	reverse_proxy 127.0.0.1:5000
 }
 
 # the accounts pages (FXA_CONTENT_URL), to FXA_CONTENT_EXPORT_PORT
 accounts.example.com {
 	import caddy.d/public*.caddy
 	import caddy.d/content*.caddy
-	reverse_proxy fxa-content:3030
+	reverse_proxy 127.0.0.1:3030
 }
 
 # the accounts API (FXA_AUTH_URL), to FXA_AUTH_EXPORT_PORT
@@ -36,8 +37,8 @@ api.example.com {
 	import caddy.d/api*.caddy
 	# the sign-up gate of the admin UI: /v1/account/create to ADMIN_GATE_EXPORT_PORT (docs/reverse-proxy.md#sign-up-gate)
 	@gate path /v1/account/create
-	reverse_proxy @gate ffs-admin:8081
-	reverse_proxy fxa-auth:9000
+	reverse_proxy @gate 127.0.0.1:8091
+	reverse_proxy 127.0.0.1:9000
 }
 
 # the accounts profile server (FXA_PROFILE_URL), to FXA_PROFILE_EXPORT_PORT
@@ -46,23 +47,23 @@ profile.example.com {
 	import caddy.d/profile*.caddy
 	# the avatars: /img/ to FXA_PROFILE_STATIC_EXPORT_PORT, without /img
 	handle_path /img/* {
-		reverse_proxy fxa-profile-static:1112
+		reverse_proxy 127.0.0.1:1112
 	}
-	reverse_proxy fxa-profile:1111
+	reverse_proxy 127.0.0.1:1111
 }
 
 # your own pairing server (FXA_PAIRING_URL), a websocket, to FXA_PAIRING_EXPORT_PORT (docs/reverse-proxy.md#pairing)
 pairing.example.com {
 	import caddy.d/public*.caddy
 	import caddy.d/pairing*.caddy
-	reverse_proxy fxa-pairing:8000
+	reverse_proxy 127.0.0.1:8058
 }
 
 # the admin UI (ADMIN_OIDC_REDIRECT_URL), to ADMIN_EXPORT_PORT, only from PROXY_ADMIN_ALLOW (docs/reverse-proxy.md#the-admin-ui)
 admin.example.com {
 	import caddy.d/admin*.caddy
 	# only from PROXY_ADMIN_ALLOW
-	@outside not remote_ip 127.0.0.1 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7
+	@outside not remote_ip 127.0.0.1 ::1
 	respond @outside 403
-	reverse_proxy ffs-admin:8080
+	reverse_proxy 127.0.0.1:8090
 }

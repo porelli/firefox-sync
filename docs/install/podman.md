@@ -161,7 +161,7 @@ Upgrading the images: see [Upgrading](../upgrading.md#quadlets).
 
 Everything else works as in [docker compose](compose.md): logs with `docker compose logs -f`, `docker compose down` to stop.
 
-The bundled Caddy (`PROXY=caddy`) on the Podman socket: on ports 80 and 443 it needs `net.ipv4.ip_unprivileged_port_start=80` ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)), and the port forwarding of rootless Podman hides the clients' addresses from it, which the accounts' limits count on: the Quadlets' Caddy, on the host's network, sees them ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy)). The labels for Traefik work there too, Traefik reading the Podman socket ([Traefik labels](../reverse-proxy.md#traefik-labels)).
+The bundled Caddy (`PROXY=caddy`) on the Podman socket runs on the host's network, as the Quadlets' does: on ports 80 and 443 it needs `net.ipv4.ip_unprivileged_port_start=80` ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)). The labels for Traefik work there too, Traefik reading the Podman socket ([Traefik labels](../reverse-proxy.md#traefik-labels)).
 
 ## Why not podman-compose?
 

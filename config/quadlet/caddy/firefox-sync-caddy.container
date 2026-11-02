@@ -18,7 +18,11 @@ Exec=caddy run --config /etc/caddy/Caddyfile.bundled --adapter caddyfile
 # the certificates and their keys, Caddy's own CA with CADDY_ACME_CA=internal
 Volume=firefox-sync-caddy-data.volume:/data
 Volume=firefox-sync-caddy-config.volume:/config
-# (its admin API on a socket there, /config/caddy-admin.sock: not on the host's 127.0.0.1:2019)
+# running, its admin API up (on a socket there, /config/caddy-admin.sock: not on the host's 127.0.0.1:2019)
+HealthCmd=test -S /config/caddy-admin.sock
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
 
 AutoUpdate=registry
 
