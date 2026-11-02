@@ -1079,9 +1079,10 @@ step_admin_auth_groups_header() {
 step_admin_trusted_proxies() {
     ADMIN_TRUSTED_PROXIES_V=""
     [ "${ADMIN_SIGNIN}" = header ] || return 0
-    hint "The header counts only on connections from these addresses: your proxy as the admin UI sees it, e.g."
-    hint "  the gateway of the compose network (docker network inspect <project>_default), with ADMIN_EXPORT_PORT"
-    hint "  on 127.0.0.1 as by default"
+    hint "The header counts only on connections from these addresses: your proxy as the admin UI sees it. Whatever"
+    hint "  else connects from them signs in as anybody: not 127.0.0.1 nor a network's gateway, which every process"
+    hint "  or container of the host has, but an address of your proxy alone, e.g. Traefik's on a network of this"
+    hint "  stack (docs/admin/signing-in.md#trusted-header). Without one, prefer OpenID Connect"
     while :; do
         ask admin_trusted_proxies "Addresses of your proxy, CIDRs comma-separated" "" || return
         ANSWER=$(printf '%s' "${ANSWER}" | tr -d ' ')
@@ -1227,10 +1228,28 @@ step_proxy() {
     hint "The stack serves plain HTTP on ports of this host: a reverse proxy adds HTTPS and the public host names."
     hint "  proxy/ gets its configuration in any case, for nginx, Caddy and Traefik (docs/reverse-proxy.md)"
     options=("own|I run a reverse proxy already (nginx, Caddy, Traefik, Apache...): I put the file of proxy/ into it")
-    options+=("caddy|no reverse proxy yet: run the bundled Caddy, HTTPS certificates from Let's Encrypt by itself")
+    # (not with the admin UI's trusted-header sign-in: the bundled Caddy reaches the admin UI on
+    # the host's 127.0.0.1, which every process of the host has, so any of them could send the
+    # header: trusted_header_shared)
+    if [ "${ADMIN_SIGNIN}" = header ]; then
+        [ "${default}" = caddy ] && default=own
+        hint "  (no bundled Caddy with the admin UI's trusted-header sign-in: it reaches the admin UI from this host's"
+        hint "  127.0.0.1, which any process of the host has, and the header would sign it in; docs/admin/signing-in.md#trusted-header)"
+        if answer_given proxy && [ "$(lower "${ANSWER}")" = caddy ]; then
+            ui_error "proxy=caddy with admin_signin=header: the bundled Caddy reaches the admin UI from 127.0.0.1, which any process of this host has: each could sign in with the header. Sign in with the password or OpenID Connect, or put the admin UI behind a proxy of your own (docs/admin/signing-in.md#trusted-header)"
+            exit 1
+        fi
+    else
+        options+=("caddy|no reverse proxy yet: run the bundled Caddy, HTTPS certificates from Let's Encrypt by itself")
+    fi
     [ "${DEPLOY_METHOD}" = quadlets ] || options+=("traefik|my Traefik with its Docker provider: labels on the public containers")
     ask_menu proxy "Do you already run a reverse proxy?" "${default}" "${options[@]}" || return
     PROXY=${CHOICE}
+    # your own proxy with the trusted-header sign-in: from an address everything has
+    if [ "${PROXY}" = own ] && [ -n "${ADMIN_TRUSTED_PROXIES_V}" ] && [ -z "${FFS_REPLAYED_NOW}" ]; then
+        trusted_header_shared "${ADMIN_TRUSTED_PROXIES_V}"
+    fi
+    return 0
 }
 step_proxy_admin_allow() {
     PROXY_ADMIN_ALLOW_V=$(previous_setting PROXY_ADMIN_ALLOW "$(ENV_READ="${SCRIPT_DIR}/.env-example" env_plain PROXY_ADMIN_ALLOW)")

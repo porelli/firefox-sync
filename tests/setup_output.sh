@@ -560,6 +560,18 @@ printf '%s\n' domain=example.com proxy=traefik admin_signin=header admin_users=a
 run_setup docker "${WORK}/traefik-range.log" --answers "${WORK}/traefik-range.answers" --non-interactive < /dev/null
 check "$? $(grep -c '^ERROR: ADMIN_TRUSTED_PROXIES: 172.30.0.0/16 is a range: with the labels for Traefik' "${WORK}/traefik-range.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" \
     "the labels for Traefik and the trusted-header sign-in: a range of trusted proxies refused, nothing written"
+# the admin UI's trusted-header sign-in: not with the bundled Caddy (it reaches the admin UI from
+# 127.0.0.1, which every process of the host has); with your own proxy from 127.0.0.1: warned of
+reset_checkout new
+printf '%s\n' domain=example.com admin_signin=header admin_users=a@example.com admin_trusted_proxies=172.30.0.5 proxy=caddy > "${WORK}/caddy-header.answers"
+run_setup docker "${WORK}/caddy-header.log" --answers "${WORK}/caddy-header.answers" --non-interactive < /dev/null
+check "$? $(grep -c '^ERROR: proxy=caddy with admin_signin=header: the bundled Caddy reaches the admin UI from 127.0.0.1' "${WORK}/caddy-header.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" \
+    "the bundled Caddy with the trusted-header sign-in: refused, nothing written"
+reset_checkout new
+printf '%s\n' domain=example.com admin_signin=header admin_users=a@example.com admin_trusted_proxies=127.0.0.1 > "${WORK}/own-header.answers"
+run_setup docker "${WORK}/own-header.log" --answers "${WORK}/own-header.answers" --non-interactive < /dev/null
+check "$? $(grep -c '^WARNING: ADMIN_TRUSTED_PROXIES has 127.0.0.1: more than your proxy connects from there' "${WORK}/own-header.log")" "0 1" \
+    "your own proxy with the trusted-header sign-in from 127.0.0.1: warned of"
 # refused: Traefik's labels with the Quadlets, an address list that is none
 reset_checkout new
 for bad in "deploy=quadlets

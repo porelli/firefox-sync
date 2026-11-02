@@ -140,6 +140,8 @@ What the setup asks: an email Let's Encrypt writes to about the certificates (`C
 - **The host names resolve to this host**, every one of [Host names and ports](#host-names-and-ports) you use (DNS `A`/`AAAA` records), and **ports 80 and 443 are reachable from the internet**: Let's Encrypt checks them before it gives a certificate. On ports of your own (`8080`, `8443`), forward 80 and 443 to them (your router, a firewall rule).
 - **`CADDY_ACME_CA`:** `letsencrypt`; `staging`, Let's Encrypt's test CA, to try the setup without hitting its [rate limits](https://letsencrypt.org/docs/rate-limits/) (no browser trusts its certificates: set `letsencrypt` once it works, then `--render-proxy` and restart Caddy); `internal`, Caddy's own CA, without the internet, for a network of your own. Its root certificate must then be trusted where Firefox runs: `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .` (Quadlets: `podman cp firefox-sync-caddy:/data/caddy/pki/authorities/local/root.crt .`), then in Firefox's settings, Certificates, Import (or the `Certificates` policy). Its certificates last 30 days, renewed by Caddy.
 
+Not with the admin UI's [trusted-header sign-in](admin/signing-in.md#trusted-header): Caddy reaches the admin UI from the host's `127.0.0.1`, which every process of the host has, and each could sign in with the header. The setup does not offer the bundled Caddy then (and refuses `proxy=caddy` with `admin_signin=header`); a header set by hand later is warned of, and dropped from the clients' requests on the admin UI's route.
+
 After a change of `.env` (a URL, a port, its own ports): `./prepare_environment.sh --render-proxy`, then `docker compose restart caddy` (Quadlets: `systemctl --user restart firefox-sync-caddy.service`). Your own snippets: in `proxy/caddy.d/`, as in [Caddy](#caddy).
 
 ### Rootless Podman and ports under 1024
@@ -250,6 +252,8 @@ When it signs in with the self-hosted accounts or another provider, it needs a h
 - only from the addresses of `PROXY_ADMIN_ALLOW`, which the setup asks for (by default this host only, `127.0.0.1,::1`; `anybody`: no restriction, its sign-in only). Add your own network or VPN, then `--render-proxy`;
 - with the `Host` header as it came: the forms check that they are posted from the same site;
 - without the headers of the [trusted-header sign-in](admin/signing-in.md#trusted-header) a client sends, when `ADMIN_AUTH_HEADER` is set.
+
+The trusted-header sign-in with a proxy on the host trusts what the admin UI sees it from, the host's loopback or a gateway, which every process and container of the host has: prefer OpenID Connect there, or Traefik's own address on a network of the stack ([Traefik labels](#traefik-labels)). See [Trusted header](admin/signing-in.md#trusted-header).
 
 The allowlist counts only where the proxy sees the clients' own addresses: on the host (nginx, Caddy, the bundled Caddy on the host's network), or Traefik that does. A proxy in a container behind published ports can see a gateway's address for every client (rootless Podman, Docker's proxy of IPv6): don't list the networks of the containers then, which would let everybody in.
 

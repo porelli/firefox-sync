@@ -848,6 +848,9 @@ cp -p "${WORK}/before-caddy.env" .env
 ./prepare_environment.sh --render-units < /dev/null > render-caddy-off.log 2>&1
 check "$? [$(ls "${QUADLET_DIR}"/firefox-sync-caddy* proxy/Caddyfile.bundled 2> /dev/null)] $(grep -c 'firefox-sync-caddy.container (removed)' render-caddy-off.log)" "0 [] 1" \
   "PROXY=own again, --render-units: the bundled Caddy's units and Caddyfile.bundled removed (quadlets)"
+# (the admin UI's unit of the phases after this one: rendered again here, without the line of
+# fast_admin_checks, which they expect)
+fast_admin_checks
 
 echo "== a backup restores, the way docs/backups.md#restore-with-quadlets says for the Quadlets"
 if [ "${SYNC_DB}" = postgres ]; then

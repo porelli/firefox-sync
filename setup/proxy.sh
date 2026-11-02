@@ -513,6 +513,12 @@ write_proxy() {
         written+=("${name} (removed)")
     done
     rm -rf "${stage}"
+    # (the bundled Caddy and a trusted-header sign-in set by hand: refused by the setup)
+    if [ "$(proxy_env PROXY)" = caddy ] && [ -n "$(proxy_env ADMIN_AUTH_HEADER)" ]; then
+        echo "WARNING: PROXY=caddy with ADMIN_AUTH_HEADER: the bundled Caddy reaches the admin UI from 127.0.0.1, which every process"
+        echo "  of this host has: each could sign in with the header (its route drops a client's). Sign in with the password or"
+        echo "  OpenID Connect instead (docs/admin/signing-in.md#trusted-header)"
+    fi
     if [ "${#written[@]}" = 0 ]; then
         echo "  proxy/: the configuration of the reverse proxy is that of .env already"
     else
@@ -644,4 +650,24 @@ traefik_trusted_check() {
         return 1
     done
     return 0
+}
+
+# trusted_header_shared <ADMIN_TRUSTED_PROXIES>: a WARNING for the addresses there that more than
+# your proxy has: this host's loopback (every process of the host: what reaches the admin UI on
+# ADMIN_EXPORT_PORT of 127.0.0.1 comes from it), a network's gateway (x.x.x.1, every container
+# behind published ports) and ranges of private networks (every container on them)
+trusted_header_shared() {
+    local entry entries=() shared=()
+    IFS=, read -r -a entries <<< "${1}"
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        case "${entry}" in
+            127.*|::1|::1/128|::ffff:127.*|0.0.0.0/0|::/0) shared+=("${entry}") ;;
+            10.*/*|172.*/*|192.168.*/*|fc*/*|fd*/*) case "${entry}" in */32|*/128) ;; *) shared+=("${entry}") ;; esac ;;
+        esac
+        case "${entry%/32}" in 10.*.1|172.*.1|192.168.*.1) shared+=("${entry}") ;; esac
+    done
+    [ "${#shared[@]}" = 0 ] && return 0
+    echo "WARNING: ADMIN_TRUSTED_PROXIES has ${shared[*]}: more than your proxy connects from there (this host's processes,"
+    echo "  the containers of a network): each of them could sign in to the admin UI as anybody with the header. Prefer"
+    echo "  OpenID Connect, or Traefik's own address on a network of this stack (docs/admin/signing-in.md#trusted-header)"
 }

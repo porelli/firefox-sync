@@ -17,7 +17,12 @@ TESTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CODE=$(dirname "${TESTS}")
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ffs-proxy-render.XXXXXX")
 NAME=ffs-proxy-render-$$
-cleanup() { docker rm -f "${NAME}-traefik" > /dev/null 2>&1; rm -rf "${WORK}"; }
+cleanup() {
+    docker rm -f "${NAME}-traefik" "${NAME}-whoami" "${NAME}-nginx" "${NAME}-admin" > /dev/null 2>&1
+    docker network rm "${NAME}-net" > /dev/null 2>&1
+    docker compose -p "${NAME}-caddy" down -v > /dev/null 2>&1
+    rm -rf "${WORK}"
+}
 trap cleanup EXIT
 FAILED=0
 check() { if [ "$1" = "$2" ]; then echo "PASS: $3"; else echo "FAIL: $3 (expected '$2', got '$1')"; FAILED=1; return 1; fi; }
@@ -164,31 +169,58 @@ done
 
 echo "== the bundled Caddy of compose/caddy.yml, on the host's network: the clients' own addresses"
 # selfhosted-caddy with Caddy's own CA on ports of its own, the admin UI's host from this host
-# only (PROXY_ADMIN_ALLOW=127.0.0.1,::1) and Caddy's access log (a snippet of caddy.d/): from
-# this host the admin UI's route is let through (502, no admin UI here), from a container (the
-# host's address on the bridge network) refused (403), Caddy seeing the container's own address,
-# not the bridge's gateway, which published ports could show it instead
-HTTP_PORT=28790 HTTPS_PORT=28791
+# only (PROXY_ADMIN_ALLOW=127.0.0.1,::1) and Caddy's access log (a snippet of caddy.d/), the admin
+# UI a whoami (traefik/whoami: the request it gets, headers too) with a trusted header set: from
+# this host the admin UI's route is let through, without the header a client sends; from a
+# container (the host's address on the bridge network) refused (403), Caddy seeing the
+# container's own address, not the bridge's gateway, which published ports could show it instead
+HTTP_PORT=28790 HTTPS_PORT=28791 WHOAMI_PORT=28792
 B=${WORK}/bundled
-{ cat "${WORK}/selfhosted-caddy.env"; printf 'CADDY_ACME_CA=internal\nCADDY_HTTP_PORT=%s\nCADDY_HTTPS_PORT=%s\nPROXY_ADMIN_ALLOW=127.0.0.1,::1\nFFS_PROXY_DIR=%s\n' "${HTTP_PORT}" "${HTTPS_PORT}" "${B}"; } > "${WORK}/bundled.env"
+{ cat "${WORK}/selfhosted-caddy.env"; printf 'CADDY_ACME_CA=internal\nCADDY_HTTP_PORT=%s\nCADDY_HTTPS_PORT=%s\nPROXY_ADMIN_ALLOW=127.0.0.1,::1\nFFS_PROXY_DIR=%s\nADMIN_EXPORT_PORT=127.0.0.1:%s\nADMIN_AUTH_HEADER=Remote-Email\n' \
+    "${HTTP_PORT}" "${HTTPS_PORT}" "${B}" "${WHOAMI_PORT}"; } > "${WORK}/bundled.env"
 ENV_READ=${WORK}/bundled.env write_proxy compose render "${B}" > /dev/null || echo "FAIL: write_proxy for the bundled Caddy"
 printf 'log {\n\toutput stdout\n\tformat json\n}\n' > "${B}/caddy.d/admin-log.caddy"
 printf 'services:\n  caddy:\n    volumes:\n      - ${FFS_PROXY_DIR:?}:/etc/caddy:ro\n' > "${WORK}/bundled-compose.yml"
 chmod -R a+rX "${B}" "${WORK}/bundled-compose.yml"
 bundled() { env -i PATH="${PATH}" HOME="${HOME}" ${DOCKER_HOST:+DOCKER_HOST="${DOCKER_HOST}"} docker compose -p "${NAME}-caddy" --env-file "${WORK}/bundled.env" \
     -f "${CODE}/compose/caddy.yml" -f "${WORK}/bundled-compose.yml" "$@"; }
+docker pull -q traefik/whoami:latest > /dev/null
+docker run -d --name "${NAME}-whoami" --network host traefik/whoami:latest --port "${WHOAMI_PORT}" > /dev/null
 bundled up -d > "${WORK}/bundled-up.log" 2>&1 || { echo "FAIL: the bundled Caddy started"; cat "${WORK}/bundled-up.log"; }
 admin_code() { curl -sk -o /dev/null -w '%{http_code}' --resolve "admin.example.com:${HTTPS_PORT}:127.0.0.1" "https://admin.example.com:${HTTPS_PORT}/"; }
-for _ in $(seq 1 30); do [ "$(admin_code)" = 502 ] && break; sleep 1; done
+for _ in $(seq 1 30); do [ "$(admin_code)" = 200 ] && break; sleep 1; done
+forged=$(curl -sk --resolve "admin.example.com:${HTTPS_PORT}:127.0.0.1" -H 'Remote-Email: admin@example.com' "https://admin.example.com:${HTTPS_PORT}/")
 gateway=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
 from_container=$(docker run --rm --add-host "admin.example.com:host-gateway" --entrypoint wget caddy:latest -q -O /dev/null --no-check-certificate \
     "https://admin.example.com:${HTTPS_PORT}/" 2>&1)
 sleep 1
 remote=$(bundled logs caddy 2>&1 | grep '"status":403' | grep -o '"remote_ip":"[^"]*"' | tail -n 1 | cut -d'"' -f4)
-check "$(admin_code) $(printf '%s' "${from_container}" | grep -c '403') $([ -n "${remote}" ] && [ "${remote}" != "${gateway}" ] && echo "its own address")" "502 1 its own address" \
-    "the bundled Caddy on the host's network: the admin UI's host let through from this host, refused (403) from a container, which it sees at its own address (${remote:-none}, the gateway ${gateway})" \
-    || { bundled logs caddy 2>&1 | tail -10; echo "${from_container}"; }
+check "$(admin_code) $(printf '%s' "${forged}" | grep -ci '^Remote-Email:') $(printf '%s' "${forged}" | grep -ci '^X-Forwarded-For: 127.0.0.1') $(printf '%s' "${from_container}" | grep -c '403') $([ -n "${remote}" ] && [ "${remote}" != "${gateway}" ] && echo "its own address")" \
+    "200 0 1 1 its own address" \
+    "the bundled Caddy on the host's network: the admin UI's host from this host, a client's trusted header dropped; refused (403) from a container, which it sees at its own address (${remote:-none}, the gateway ${gateway})" \
+    || { bundled logs caddy 2>&1 | tail -10; echo "${from_container}"; echo "${forged}"; }
 bundled down -v > /dev/null 2>&1
+docker rm -f "${NAME}-whoami" > /dev/null 2>&1
+
+echo "== nginx, the variant on the stack's network: the trusted headers a client sends dropped"
+# selfhosted-traefik (ADMIN_AUTH_HEADER, ADMIN_AUTH_GROUPS_HEADER, its admin UI open to anybody):
+# nginx:latest and a whoami as ffs-admin on a network of their own
+conf=${WORK}/selfhosted-traefik-nginx-network.conf
+rm -rf "${WORK}/le" && mkdir -p "${WORK}/le"
+for host in $(sed -n 's|^  ssl_certificate /etc/letsencrypt/live/\(.*\)/fullchain.pem;$|\1|p' "${conf}"); do
+    mkdir -p "${WORK}/le/live/${host}" && cp "${WORK}/cert.pem" "${WORK}/le/live/${host}/fullchain.pem" && cp "${WORK}/key.pem" "${WORK}/le/live/${host}/privkey.pem"
+done
+chmod -R a+rX "${WORK}/le" && chmod a+r "${conf}"
+docker network create "${NAME}-net" > /dev/null
+docker run -d --name "${NAME}-admin" --network "${NAME}-net" --network-alias ffs-admin traefik/whoami:latest --port 8080 > /dev/null
+docker run -d --name "${NAME}-nginx" --network "${NAME}-net" -v "${conf}:/etc/nginx/conf.d/default.conf:ro" -v "${WORK}/le:/etc/letsencrypt:ro" nginx:latest > /dev/null
+nginx_get() { docker exec "${NAME}-nginx" curl -sk --resolve admin.example.com:443:127.0.0.1 -H 'Remote-Email: admin@example.com' -H 'Remote-Groups: admins' https://admin.example.com/; }
+for _ in $(seq 1 30); do nginx_get 2> /dev/null | grep -qi '^Host: admin.example.com' && break; sleep 1; done
+forged=$(nginx_get 2>&1)
+check "$(printf '%s' "${forged}" | grep -ci '^Host: admin.example.com') $(printf '%s' "${forged}" | grep -ciE '^Remote-(Email|Groups):')" "1 0" \
+    "nginx: the admin UI's route, the trusted headers of a client dropped" || { echo "${forged}"; docker logs "${NAME}-nginx" 2>&1 | tail -5; }
+docker rm -f "${NAME}-nginx" "${NAME}-admin" > /dev/null 2>&1
+docker network rm "${NAME}-net" > /dev/null 2>&1
 
 [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit "${FAILED}"

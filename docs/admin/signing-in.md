@@ -168,6 +168,14 @@ ADMIN_TRUSTED_PROXIES=172.18.0.1/32      # required: the proxy's address as the 
 
 Anybody who can send a request to the admin UI can send that header. These rules keep it safe.
 
+**The address you trust is everybody's who connects from it.** With the admin UI on `127.0.0.1:8090` and your proxy on the same host, the admin UI sees your proxy's requests coming from the host's loopback or the compose network's gateway: so does every process of the host and, through published ports, containers. Each of them can then sign in as anybody, with a header of its own. So:
+
+- prefer [OpenID Connect](#openid-connect) when the only proxy you have is on the host;
+- or a proxy with an address of its own: Traefik on a network of the stack's own, `ADMIN_TRUSTED_PROXIES` its address there, `/32` ([Traefik labels](../reverse-proxy.md#traefik-labels): the setup refuses a range there, and an address of another network);
+- not with the bundled Caddy, which reaches the admin UI from `127.0.0.1`: the setup does not offer it with the header, and refuses `proxy=caddy` with `admin_signin=header` ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy)).
+
+The setup warns when `ADMIN_TRUSTED_PROXIES` has a loopback address, a gateway (`x.x.x.1`) or a range of a private network. The files of `proxy/` drop the headers a client sends on the admin UI's route, when `ADMIN_AUTH_HEADER` is set ([The admin UI](../reverse-proxy.md#the-admin-ui)): that keeps clients of the proxy out, not what reaches the admin UI's port past it.
+
 **Use the header only with `ADMIN_EXPORT_PORT` on a loopback address** (the default `127.0.0.1:8090`), or with the admin UI not published and the proxy a container with a fixed address on the stack's network. Published on another address (`0.0.0.0:8090`, a LAN address), the port forwarders make every client arrive from the same address as your proxy. Trusting it then trusts everybody, who can send `Remote-Email: admin@...` themselves. With the proxy on another machine, use OpenID Connect instead.
 
 The forwarders in question are Podman's rootlessport, Docker's docker-proxy, and the path of IPv6 clients to an IPv4-only container.
@@ -181,7 +189,7 @@ The forwarders in question are Podman's rootlessport, Docker's docker-proxy, and
   ```
 
 - With Podman it depends on the network backend (rootlessport, pasta): check from which address your proxy's requests arrive.
-- Any program on the host, and anybody with an SSH tunnel to it, then connects from that address too. Trust a whole host only if you trust everybody on it.
+- Any program on the host, and anybody with an SSH tunnel to it, then connects from that address too, and the containers of the host through published ports: each can sign in as anybody. Trust a whole host only if you trust everything on it, and prefer OpenID Connect there.
 - A proxy running as a container on the stack's network, with a fixed address and the admin UI not published, narrows it down to that proxy.
 - On Kubernetes the admin UI sees the address of the Ingress controller's pod: `admin.trustedHeader.trustedProxies` lists the controller's pod addresses. Every other pod of the cluster can reach the admin UI's Service directly unless a NetworkPolicy of yours allows only the controller. The chart has none.
 
@@ -262,6 +270,7 @@ Cloudflare's `Cf-Access-Authenticated-User-Email` header, through `cloudflared`,
 
 ## Security notes
 
+- **The trusted header trusts an address, and everything that connects from it.** Not the host's loopback nor a gateway, which every process and container of the host shares: see [Trusted header](#trusted-header).
 - **Fail closed.** The admin UI does not start with OpenID Connect or the header but neither `ADMIN_ALLOWED_USERS` nor `ADMIN_ALLOWED_GROUPS`, with the header but no `ADMIN_TRUSTED_PROXIES`, or with no way to sign in at all.
 - **Verified emails only.** An email counts only when the provider says it is verified. `ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL=true` turns that off: then whoever can set an address at the provider (their own profile, another tenant) can become that admin. Use it only where users cannot pick their email, such as the [self-hosted accounts](#self-hosted-accounts).
 - **`@domain` admits the whole domain.** In `ADMIN_ALLOWED_USERS` it admits every account of that domain at the provider: right for your company's domain, wrong for a public one.
