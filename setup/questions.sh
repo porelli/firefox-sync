@@ -494,7 +494,8 @@ step_container_user() {
     hint "In the example of a systemd unit that starts docker compose at boot (config/systemd/syncstorage-rs.service)"
     while :; do
         ask container_user "User that runs docker compose" "${USER}" || return
-        [[ "${ANSWER}" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*$ ]] && { CONTAINER_USER=${ANSWER}; return 0; }
+        # (empty: no USER where it runs, as before)
+        [ -z "${ANSWER}" ] || [[ "${ANSWER}" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*$ ]] && { CONTAINER_USER=${ANSWER}; return 0; }
         echo "ERROR: not a user name: '${ANSWER}'"
         retry
     done
