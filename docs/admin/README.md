@@ -23,7 +23,7 @@ The screenshots come from a small demo server with self-hosted accounts: three p
 
 ## Set up
 
-`./prepare_environment.sh` asks "Enable the admin UI?" (default yes). It then generates `ADMIN_PASSWORD`, and in `.env` adds `admin` to `COMPOSE_PROFILES` and sets `SYNC_MAX_USERS=initial:<the number you gave>`. With self-hosted accounts it also offers to sign in with them, see [Signing in](signing-in.md#self-hosted-accounts).
+`./prepare_environment.sh` asks "Run the admin UI?" in its part about it (default yes; on when invite-only Sync is approved there). It then generates `ADMIN_PASSWORD`, and in `.env` adds `admin` to `COMPOSE_PROFILES` and sets `SYNC_MAX_USERS=initial:<the number you gave>`. It asks how admins sign in: the password, the self-hosted accounts, another OpenID Connect provider or a header of your reverse proxy, then who is an admin, see [Signing in](signing-in.md#set-up-with-the-setup-script).
 
 To turn it on by hand:
 

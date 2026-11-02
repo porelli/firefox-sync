@@ -25,7 +25,7 @@ The backup service is optional. Every night it dumps each database into a volume
 
 | Method | Turn it on |
 |---|---|
-| docker compose | add `backup` to `COMPOSE_PROFILES` in `.env` (`COMPOSE_PROFILES=admin,backup`), then `docker compose up -d`. `prepare_environment.sh` adds it when you answer yes to "Enable nightly backups?" |
+| docker compose | add `backup` to `COMPOSE_PROFILES` in `.env` (`COMPOSE_PROFILES=admin,backup`), then `docker compose up -d`. `prepare_environment.sh` adds it when you answer yes to "Enable nightly backups?" (`backups=yes` by [name](install/compose.md#answers-by-name)) |
 | Quadlets | the units are installed, off unless you answered yes to that question: `systemctl --user enable --now firefox-sync-backup.timer` |
 | Helm | `backup.enabled: true`, see [Kubernetes](#kubernetes) |
 

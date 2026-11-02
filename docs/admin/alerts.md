@@ -56,7 +56,7 @@ ADMIN_NOTIFY='ntfy://ntfy.sh/my-secret-topic,slack://hooks.slack.com/services/T0
 | Install | How to set it |
 |---|---|
 | docker compose | edit `.env`, then `docker compose up -d` |
-| Quadlets | at install, `prepare_environment.sh` asks for them, separated by commas or spaces, and turns a pasted `https://` webhook URL of Slack or Discord into `slack://` or `discord://`. Later: `ADMIN_NOTIFY=` in `firefox-sync-admin.container`, see [Change a setting](../install/podman.md#change-a-setting) |
+| Quadlets | at install, `prepare_environment.sh` asks for them (`admin_notify` by [name](../install/compose.md#answers-by-name)), separated by commas or spaces, and turns a pasted `https://` webhook URL of Slack or Discord into `slack://` or `discord://`. Later: `ADMIN_NOTIFY=` in `firefox-sync-admin.container`, see [Change a setting](../install/podman.md#change-a-setting) |
 | Helm | `admin.notify`, a list of these URLs, then `helm upgrade` |
 
 The scheme says the kind. For the services that give you a webhook URL, it is that URL with `https://` replaced by the scheme:

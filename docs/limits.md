@@ -18,7 +18,7 @@ The two limits take the same forms. The form says who sets the limit: the settin
 
 The number goes from 0 to 2147483647. Anything else, empty or not a number, stops the container that sets the limit, and with it the Sync server or the accounts service.
 
-`prepare_environment.sh` asks for both, and writes `initial:` when you enable the admin UI.
+`prepare_environment.sh` asks for both, each in the part of its component ("Max users of the Sync server", "Max accounts of the self-hosted accounts"): a number or `unlimited`. It writes `initial:` when you enable the admin UI, so that you change them there later.
 
 ## `SYNC_MAX_USERS`
 
@@ -30,7 +30,7 @@ The accounts that can use the Sync server (`1` in [.env-example](/.env-example))
 
 ## `SYNC_ALLOWED_ACCOUNTS`
 
-Invite-only Sync, for Mozilla's accounts: only the accounts on a list can start to sync (empty in [.env-example](/.env-example): off). With the Helm chart: `allowedAccounts` in your values, with the same forms. `prepare_environment.sh` asks for it with Mozilla's accounts, and writes `admin` with the admin UI.
+Invite-only Sync, for Mozilla's accounts: only the accounts on a list can start to sync (empty in [.env-example](/.env-example): off). With the Helm chart: `allowedAccounts` in your values, with the same forms. `prepare_environment.sh` asks for it with Mozilla's accounts, right after which accounts: `off`, `list` (the uids, asked next: written as a plain list) or `admin` (approved in the admin UI, which it then turns on: `SYNC_ALLOWED_ACCOUNTS=admin`).
 
 The tokenserver knows an account only as `<uid>@<FXA_EMAIL_DOMAIN>`: the uid is the account's permanent id, 32 hexadecimal characters, and the email never reaches your server. The list is of uids: see [Find the uid of an account](#find-the-uid-of-an-account).
 

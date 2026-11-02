@@ -71,7 +71,7 @@ Don't stay too far behind: Firefox refuses to sign in to accounts servers that a
 
 1. Make a backup: `systemctl --user start firefox-sync-backup.service` (with self-hosted accounts it backs them up first), or back up the volumes.
 1. Stop the units, the one-shot ones too (they stay active and would not run again), and the backup timer, so that no backup starts halfway: `systemctl --user stop firefox-sync-backup.timer firefox-sync-syncstorage.service firefox-sync-admin.service firefox-sync-syncstorage-migrate.service firefox-sync-tokenserver-db-init.service firefox-sync-tokenserver-db.service firefox-sync-syncstorage-db.service`. Without the database containers, the last two are not there. With PostgreSQL, they are `firefox-sync-sync-role-init.service firefox-sync-postgres-db.service`.
-1. Get the new files (`git pull` in the clone), and keep your `.env`. Don't run `./prepare_environment.sh` without `--upgrade`: that is a new install, with new passwords that the databases don't have (it keeps the old file as `.env.before-setup-<UTC time>`).
+1. Get the new files (`git pull` in the clone), and keep your `.env`. Without `--upgrade`, `./prepare_environment.sh` asks first and upgrades by default: don't choose `new` there, that is a new install, with new passwords that the databases don't have (it keeps the old file as `.env.before-setup-<UTC time>`).
 1. Run `./prepare_environment.sh --upgrade`. It asks nothing:
     - in `.env` it does what it does for compose ([With docker compose](#with-docker-compose)): it renames the old setting names, sets `ADMIN_DB_PASSWORD` (the database containers create the admin UI's users with it at their next start) and writes the database majors the install runs;
     - it adds every line of [.env-example](/.env-example) that your `.env` lacks, with its default. A secret gets a new random value only when it is not there at all;
@@ -205,7 +205,7 @@ Moving to the newer major later is up to you, with a backup first: [MariaDB](#ma
 ### With docker compose
 
 1. Back up the volumes, or dump the databases (see [Move an existing install](databases.md#move-an-existing-install)).
-1. Get the new files (`git pull` in the clone). Keep your `.env`: don't run `./prepare_environment.sh` again, it would generate new passwords that the databases don't have.
+1. Get the new files (`git pull` in the clone). Keep your `.env`: don't set it up again (`new` at the setup's first question), it would generate new passwords that the databases don't have.
 1. Run `./prepare_environment.sh --upgrade`. It changes only what this release needs, keeps every value already there, and leaves the old file as `.env.before-upgrade-<UTC time>` (readable by you only, as `.env`):
     - it renames the settings your `.env` has under their old names ([Renamed settings](#renamed-settings));
     - it writes the files of `compose/` in `COMPOSE_FILE`, and `COMPOSE_PROJECT_NAME` ([Files that moved](#files-that-moved));

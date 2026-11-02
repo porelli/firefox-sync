@@ -16,14 +16,14 @@ Mozilla does not support self-hosting its accounts service, and changes it every
 
 `prepare_environment.sh` does the whole setup, for docker compose and for Quadlets.
 
-1. Run it, and answer `y` to "Also self-host Mozilla accounts?":
+1. Run it, and choose `self-hosted` for "Which accounts people sign in with" (`accounts=self-hosted` by [name](install/compose.md#answers-by-name)):
 
    ```bash
    ./prepare_environment.sh
    ```
 
-   It asks for the domain of the host names, your SMTP server, [who can sign up](#who-can-sign-up) and the [database](#mysql-or-mariadb). It generates the secrets and points the Sync server to your accounts. With docker compose, it sets `COMPOSE_FILE` so that `docker compose up -d` starts everything. It also writes an nginx example to `config/nginx/fxa.conf`.
-1. With the admin UI, it last asks whether to sign in to the admin UI with these accounts. Give the admins' emails and the host name of the admin UI. See [Signing in](admin/signing-in.md#self-hosted-accounts).
+   Its part about the accounts asks for their three public URLs (by default `accounts.`, `api.` and `profile.` under your domain, see [The public addresses](install/compose.md#the-public-addresses)), the [database](#mysql-or-mariadb) of the accounts, your SMTP server, [who can sign up](#who-can-sign-up), the most accounts, the [security history](#security-history) and, with docker compose, your own [pairing server](reverse-proxy.md#pairing). It generates the secrets and points the Sync server to your accounts. With docker compose, it sets `COMPOSE_FILE` so that `docker compose up -d` starts everything. It also writes an nginx example to `config/nginx/fxa.conf`.
+1. With the admin UI, choose `accounts` for how admins sign in, then give the admins' emails (only those get in, not every account) and the public URL of the admin UI. See [Signing in](admin/signing-in.md#self-hosted-accounts).
 1. Start everything. With docker compose:
 
    ```bash
@@ -69,7 +69,7 @@ Mozilla runs and supports its accounts on MySQL only, so `fxa-db` is MySQL by de
 
 To choose MariaDB:
 
-- With `prepare_environment.sh`: answer `mariadb` to the accounts database question. The default is `mysql`, whatever you chose for Sync: following Sync's default (MariaDB) would move most new installs off what Mozilla supports.
+- With `prepare_environment.sh`: choose `mariadb` for the engine of the accounts' database (`fxa_db=mariadb`). The default is `mysql`, whatever you chose for Sync: following Sync's default (MariaDB) would move most new installs off what Mozilla supports.
 - By hand: `FXA_DB=mariadb` in `.env`. With docker compose, `compose/fxa-mariadb.yml` in place of `compose/fxa-mysql.yml` in `COMPOSE_FILE` ([The compose files](install/compose.md#the-compose-files)):
 
   ```ini
@@ -115,7 +115,7 @@ Anybody who can reach your accounts pages can create an account, and with it use
 | `allowlist` | only the emails (`alice@example.com`) and domains (`@example.com`) of `FXA_SIGNUP_ALLOWLIST`, comma-separated |
 | `closed` | nobody |
 
-`prepare_environment.sh` asks for the allowlist. Existing accounts are never affected: disable them in the admin UI instead, see [Sign out and disable](admin/accounts.md#sign-out-and-disable).
+`prepare_environment.sh` asks for the allowlist (empty: `open`). Existing accounts are never affected: disable them in the admin UI instead, see [Sign out and disable](admin/accounts.md#sign-out-and-disable).
 
 How many accounts can be created at all, whoever signs up, is `FXA_MAX_ACCOUNTS`, see [Limits](limits.md#fxa_max_accounts).
 

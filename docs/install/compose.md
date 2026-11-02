@@ -22,7 +22,7 @@ This page installs the Sync server with docker compose. Read [What you need](../
    ./prepare_environment.sh
    ```
 
-   It asks its questions, then writes `.env` and the examples of `config/nginx/` with your values. See [What the setup script asks](#what-the-setup-script-asks).
+   It asks its questions, one component at a time, shows what it will write, then writes `.env` and the examples of `config/nginx/` with your values. See [What the setup script asks](#what-the-setup-script-asks); to answer from a file instead, [Answers by name](#answers-by-name).
 
 1. Set up your reverse proxy. With nginx, start from `config/nginx/syncstorage-rs.conf`, which the script wrote: see [Reverse proxy](../reverse-proxy.md).
 
@@ -48,24 +48,131 @@ This page installs the Sync server with docker compose. Read [What you need](../
 
 ## What the setup script asks
 
+The questions go one component at a time, in six parts, each with its number (`2/6 The Sync server`), then a review of every answer before anything is written:
+
+1. **Deployment**: the directory of the checkout; with an `.env` there already, upgrade it (keep its passwords, as `--upgrade`) or set it up again; with Podman, Quadlets or docker compose; your domain, which the public addresses below default to (`sync.<domain>`, `accounts.<domain>`...).
+1. **The Sync server**: its public URL, where it listens for your reverse proxy, its image tag, its database (the engine; in containers of the stack or on your own server, then its host, names and users), and how many accounts can use it.
+1. **The accounts**: Mozilla's or self-hosted. With Mozilla's: invite-only Sync. Self-hosted: the public URLs of the accounts pages, API and profile server, their database, the SMTP server for their emails, who can sign up, the most accounts, the security history and the pairing server.
+1. **The admin UI**: on or off, how admins sign in (the password; the self-hosted accounts; another OpenID Connect provider; a header of your reverse proxy), who is an admin, its public URL when a provider sends you back to it, and where its alerts go.
+1. **Backups**: the nightly backups.
+1. **Review**: what will be written, part by part, with the passwords and secrets the script generates (named, not shown). Write it, change a part (its questions again, the parts after it keep their answers), or quit with nothing written.
+
+At a question:
+
+- Enter takes the default. On a terminal it is ready to edit in place (bash 4 or later; macOS's bash 3.2 shows it in `[brackets]`).
+- A choice is a list: ↑ and ↓ then Enter, or the option's number. Without a terminal (a pipe, a log), the list is numbered and its name or number is read.
+- `<` (or `back`) goes back to the question before, with your answer as its default.
+- An answer that is not valid is said, and asked again. Without a terminal the script stops instead, with nothing written.
+- Passwords and the alerts' URLs are not shown as you type.
+
+At the end the script lists the passwords and secrets it generated, and how to change each: see [Generated passwords and secrets](../reference/settings.md#generated-passwords-and-secrets). On a terminal it shows the admin UI's password once: keep it in your password manager. In a log it says where it is instead (`ADMIN_PASSWORD` in `.env`).
+
 | Question | What it changes | More |
 |---|---|---|
-| the host name of the Sync server | `SYNC_PUBLIC_URL` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
+| the public URL of the Sync server | `SYNC_PUBLIC_URL`, the host of `config/nginx/syncstorage-rs.conf` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
 | where the Sync server listens, `127.0.0.1:5000` | `SYNC_EXPORT_PORT` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
-| max users | `SYNC_MAX_USERS` | [Limits](../limits.md) |
-| the database backend: `mariadb`, `mysql` or `postgres` | `SYNC_DB`, and its file in `COMPOSE_FILE` | [Databases](../databases.md) |
-| an existing database server instead of the containers | `SYNC_DB_CONTAINERS=0`, and a `database-setup.sql` to run there | [Your own server](../databases.md#with-docker-compose) |
 | the image tag of the Sync server | `SYNC_IMAGE_TAG` (`latest`) | [Upgrading](../upgrading.md#sync-server) |
+| the engine of the Sync server's database: `mariadb`, `mysql` or `postgres` | `SYNC_DB`, and its file in `COMPOSE_FILE` | [Databases](../databases.md) |
+| the Sync server's database on your own server | `SYNC_DB_CONTAINERS=0`, and a `database-setup.sql` to run there | [Your own server](../databases.md#with-docker-compose) |
+| max users of the Sync server | `SYNC_MAX_USERS` (`initial:` with the admin UI) | [Limits](../limits.md) |
+| Mozilla's or self-hosted accounts | the accounts' section of `.env`, `config/nginx/fxa.conf` | [Self-hosted accounts](../accounts.md#set-up) |
+| invite-only Sync, with Mozilla's accounts | `SYNC_ALLOWED_ACCOUNTS` | [Limits](../limits.md#sync_allowed_accounts) |
 | the admin UI | `admin` in `COMPOSE_PROFILES`, `ADMIN_PASSWORD` | [Admin UI](../admin/README.md#set-up) |
-| self-hosted Mozilla accounts | the accounts' section of `.env`, `config/nginx/fxa.conf` | [Self-hosted accounts](../accounts.md#set-up) |
+| how admins sign in, who is an admin | `ADMIN_OIDC_*`, `ADMIN_FXA_CLIENT_ID`, `ADMIN_AUTH_HEADER`, `ADMIN_TRUSTED_PROXIES`, `ADMIN_ALLOWED_USERS`, `ADMIN_ALLOWED_GROUPS` | [Signing in](../admin/signing-in.md) |
 | the nightly backups | `backup` in `COMPOSE_PROFILES` (Quadlets: the backup timer enabled) | [Backups](../backups.md#the-backup-service) |
-| with self-hosted accounts, your own pairing server (not with Quadlets) | `pairing` in `COMPOSE_PROFILES`, `FXA_PAIRING_URL=wss://pairing.<accounts domain>`, its server block in `config/nginx/fxa.conf` | [Pairing](../reverse-proxy.md#pairing) |
+| with self-hosted accounts, your own pairing server (not with Quadlets) | `pairing` in `COMPOSE_PROFILES`, `FXA_PAIRING_URL`, its server block in `config/nginx/fxa.conf` | [Pairing](../reverse-proxy.md#pairing) |
 
 Every setting is in [Settings](../reference/settings.md). Coming from another Sync server: read [Migrating](../migrating.md) before you run the script.
 
 `COMPOSE_FILE` in `.env` names the compose files of your choices, so a plain `docker compose` always picks the right ones: see [The compose files](#the-compose-files).
 
-`COMPOSE_PROFILES` gets every optional service you chose, for example `COMPOSE_PROFILES=admin,backup`. Run again on an install, the script offers what its `.env` has as the answer to each of them.
+`COMPOSE_PROFILES` gets every optional service you chose, for example `COMPOSE_PROFILES=admin,backup`. Set up again on an install, the script offers what its `.env` has as the answer to each of them.
+
+### The public addresses
+
+Each component that people or Firefox reach has a public URL of its own: the Sync server, and with self-hosted accounts their pages, API, profile server and pairing server, and the admin UI when a provider sends you back to it. Each is asked the same way: `https://host`, with `:port` when it is not 443 (a host alone is `https://`), defaulting to a host name under your domain. None of them can be under a path: each component answers at `/`, so each needs its own host name or port. The Sync server's tokens are bound to the path Firefox asks for, the accounts and the admin UI build their own URLs from the root, and `ADMIN_OIDC_REDIRECT_URL` must end in `/auth/callback` exactly.
+
+| Address | Default | Setting | Schemes |
+|---|---|---|---|
+| the Sync server | `https://sync.<domain>` | `SYNC_PUBLIC_URL` | `https`, `http` |
+| the accounts pages | `https://accounts.<domain>` | `FXA_CONTENT_URL`, also the issuer of their sign-in | `https`, `http` |
+| the accounts API | `https://api.<domain>` | `FXA_AUTH_URL`; its host name is `FXA_EMAIL_DOMAIN` | `https`, `http` |
+| the accounts profile server | `https://profile.<domain>` | `FXA_PROFILE_URL` | `https`, `http` |
+| your own pairing server | `wss://pairing.<domain>` | `FXA_PAIRING_URL` | `wss`, `ws` |
+| the admin UI | `https://admin.<domain>` | `ADMIN_OIDC_REDIRECT_URL` (that URL and `/auth/callback`) | `https`; `http` on `localhost` only |
+
+Firefox needs `https` for all but `localhost`. The nginx examples get the host names; with a port of its own, change their `listen` lines (the script says which).
+
+## Answers by name
+
+Each question has an id. Give answers by id and the script does not ask them; it asks only the others, or with `--non-interactive` gives them their defaults. That is how the tests run it, and how to set up from a script:
+
+```bash
+./prepare_environment.sh --answers answers.env                     # asks what the file does not answer
+./prepare_environment.sh --answers answers.env --non-interactive   # asks nothing
+FFS_SETUP_SYNC_MAX_USERS=5 ./prepare_environment.sh                 # FFS_SETUP_<ID>: the same, in the environment
+```
+
+The file has the syntax of `.env`, one `id=value` per line, `#` for comments: quote a value with spaces, `#` or `$` (`smtp_password='p@ss #1'`). An `FFS_SETUP_<ID>` of the environment wins over the file, and an empty answer is the default. An id that is no question stops the script, so a typo is never taken for the default. It has passwords: keep it yours only (`chmod 600`). For example, the self-hosted accounts with the admin UI signing in with them:
+
+```ini
+existing=new
+domain=example.com
+sync_max_users=5
+accounts=self-hosted
+smtp_host=smtp.example.com
+smtp_user=mailer
+smtp_password='your SMTP password'
+fxa_signups=@example.com
+admin_signin=accounts
+admin_users=alice@example.com
+backups=yes
+```
+
+A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or `n`.
+
+| Id | Question | Answers | Default |
+|---|---|---|---|
+| `dir` | Directory of the checkout | a path | where the script is |
+| `existing` | with an `.env` there: upgrade this install, or set it up again? | `upgrade`, `new` | `upgrade` |
+| `runtime_none` | without Docker and Podman: continue anyway? | yes, no | no |
+| `deploy` | with Podman: how the stack runs | `quadlets`, `compose` | `quadlets` |
+| `container_user` | without Quadlets: the user of `config/systemd/syncstorage-rs.service` | a user name | `$USER` |
+| `domain` | your domain, of the default host names | a domain | `example.com` |
+| `sync_url` | public URL of the Sync server | see [The public addresses](#the-public-addresses) | `https://sync.<domain>` |
+| `sync_listen` | where the Sync server listens | `[address:]port`, a port alone on `127.0.0.1` | `127.0.0.1:5000` (an install's: its own) |
+| `sync_image_tag` | image tag of the Sync server | a tag | `latest` |
+| `sync_db` | engine of the Sync server's database | `mariadb`, `mysql`, `postgres` | `mariadb` |
+| `sync_db_own` | the Sync server's database on your own server? | yes, no | no |
+| `sync_db_host`, `sync_db_port` | its host and port | as the containers reach it | none, `3306` (`5432`) |
+| `sync_db_name`, `sync_db_user` | PostgreSQL: the database and its user | names | `syncserver` |
+| `sync_tokenserver_db_name`, `sync_tokenserver_db_user`, `sync_storage_db_name`, `sync_storage_db_user` | MariaDB, MySQL: the two databases and their users | names | `tokenserver`, `syncstorage` |
+| `sync_db_bootstrap` | let the stack apply the Sync server's database changes itself? | yes, no | no |
+| `sync_db_bootstrap_user`, `sync_db_bootstrap_password` | the account that does | a name; a password (empty: generated) | `ffs_sync_bootstrap` |
+| `sync_max_users` | max users of the Sync server | a number, `unlimited` | `1` |
+| `accounts` | which accounts people sign in with | `mozilla`, `self-hosted` | `mozilla` |
+| `sync_invite_only` | with Mozilla's accounts: invite-only Sync | `off`, `list`, `admin` (turns the admin UI on) | `off` |
+| `sync_allowed_accounts` | with `list`: the uids that can sync | uids, comma-separated | none |
+| `fxa_content_url`, `fxa_auth_url`, `fxa_profile_url` | self-hosted: public URLs of the accounts pages, API and profile server | see [The public addresses](#the-public-addresses) | `https://accounts.<domain>`, `https://api.<domain>`, `https://profile.<domain>` |
+| `fxa_db` | engine of the accounts' database | `mysql`, `mariadb` | `mysql` |
+| `fxa_db_own` | the accounts' database on your own server? | yes, no | no |
+| `fxa_db_host`, `fxa_db_port`, `fxa_db_user`, `fxa_db_policy_user` | its host, port, the accounts' user, the sign-up policy's user | | the Sync server's host, `3306`, `fxa`, `ffs_policy` |
+| `fxa_db_bootstrap`, `fxa_db_bootstrap_user`, `fxa_db_bootstrap_password` | as `sync_db_bootstrap*`, for the accounts | | no, `ffs_fxa_bootstrap` |
+| `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `smtp_sender` | the SMTP server of the accounts' emails | | none, `587`, none, none, `Mozilla accounts <no-reply@<domain>>` |
+| `fxa_signups` | who can create an account | emails and @domains, comma-separated; empty: anybody | anybody |
+| `fxa_max_accounts` | max accounts of the self-hosted accounts | a number, `unlimited` | `unlimited` |
+| `fxa_account_events` | record the security history? | yes, no | no |
+| `pairing`, `pairing_url` | without Quadlets: your own pairing server, its public URL | yes, no; a `wss://` URL | no (an install's: its own), `wss://pairing.<domain>` |
+| `admin` | run the admin UI? | yes, no | yes |
+| `admin_signin` | how admins sign in | `password`, `accounts` (self-hosted only), `oidc`, `header` | `password` |
+| `admin_url` | `accounts`, `oidc`: public URL of the admin UI | see [The public addresses](#the-public-addresses) | `https://admin.<domain>` |
+| `admin_oidc_issuer`, `admin_oidc_client_id`, `admin_oidc_client_secret`, `admin_oidc_name` | `oidc`: your provider's issuer, the client, the name on the button | | none (the secret: a public client; the name: single sign-on) |
+| `admin_auth_header`, `admin_auth_groups_header`, `admin_trusted_proxies` | `header`: the headers and your proxy's addresses | | `Remote-Email`, none, none |
+| `admin_users` | who is an admin | emails and @domains | none (required with `accounts`) |
+| `admin_groups` | `oidc`, `header`: groups whose members are admins | group names | none |
+| `admin_notify` | where the alerts go too | destination URLs | none |
+| `backups` | nightly backups? | yes, no | no (an install's: its own) |
+| `confirm` | the review: write? | `write`, `quit` | `write` |
 
 ## Optional services
 

@@ -27,7 +27,7 @@ Quadlets are unit files that Podman turns into systemd services: see [podman-sys
    ./prepare_environment.sh
    ```
 
-   It detects Podman and asks for the deployment method: answer `1`, Quadlets (the default). Its other questions are those of [docker compose](compose.md#what-the-setup-script-asks). It writes `.env`, copies the units of [config/quadlet/](/config/quadlet) with your values into `~/.config/containers/systemd/` (the backup timer into `~/.config/systemd/user/`), and reloads systemd. The units hold no secret: the passwords, keys and tokens of a unit's container, and `ADMIN_NOTIFY`, are in its environment file next to it, `firefox-sync-<name>.env`, readable by you only, which the unit reads (`EnvironmentFile=`). Values there are as they are in `.env`, without the escapes of systemd.
+   It detects Podman and asks how the stack runs: `quadlets` (the default). Its other questions are those of [docker compose](compose.md#what-the-setup-script-asks), and so are its [answers by name](compose.md#answers-by-name) (`deploy=quadlets`). It writes `.env`, copies the units of [config/quadlet/](/config/quadlet) with your values into `~/.config/containers/systemd/` (the backup timer into `~/.config/systemd/user/`), and reloads systemd. The units hold no secret: the passwords, keys and tokens of a unit's container, and `ADMIN_NOTIFY`, are in its environment file next to it, `firefox-sync-<name>.env`, readable by you only, which the unit reads (`EnvironmentFile=`). Values there are as they are in `.env`, without the escapes of systemd.
 
 1. Start the Sync server:
 
@@ -127,7 +127,7 @@ The installed units and their environment files hold their own copy of the value
 
    With the admin UI, also restart `firefox-sync-admin.service` when `SYNC_MAX_USERS` changes between a plain number and `initial:N` ([Limits](../limits.md#switch-between-the-forms)).
 
-Don't run `./prepare_environment.sh` without `--render-units` (or `--upgrade`) on a running install: it writes a new `.env` from `.env-example`, with new passwords and secrets that the databases don't have. It keeps the old file as `.env.before-setup-<UTC time>`.
+On a running install, `./prepare_environment.sh` first asks whether to upgrade it (the default: the same as `--upgrade`) or set it up again. Don't set it up again (`new`) there: that writes a new `.env` from `.env-example`, with new passwords and secrets that the databases don't have. It keeps the old file as `.env.before-setup-<UTC time>`.
 
 Upgrading the images: see [Upgrading](../upgrading.md#quadlets).
 
@@ -135,7 +135,7 @@ Upgrading the images: see [Upgrading](../upgrading.md#quadlets).
 
 `docker compose` v2 can drive Podman through its Docker-compatible API, with the same compose files as Docker.
 
-1. Run the setup script, and answer `2` to the deployment method:
+1. Run the setup script, and choose `compose` for how the stack runs (`deploy=compose` by name):
 
    ```bash
    ./prepare_environment.sh

@@ -2,6 +2,18 @@
 
 How admins sign in to the [admin UI](README.md): a password, OpenID Connect, or a header set by your reverse proxy. Turn the admin UI on first, see [Set up](README.md#set-up).
 
+## Set up with the setup script
+
+`prepare_environment.sh` asks in its part about the admin UI ([What the setup script asks](../install/compose.md#what-the-setup-script-asks)):
+
+1. **How admins sign in**: `password` (only the password), `accounts` (the [self-hosted accounts](#self-hosted-accounts), offered only with them), `oidc` ([another provider](#openid-connect)) or `header` ([a header of your proxy](#trusted-header)). The password stays a way in with each.
+1. **With `accounts` or `oidc`, the public URL of the admin UI**, where the provider sends you back: `ADMIN_OIDC_REDIRECT_URL` is that URL and `/auth/callback`. Over `http` only on `localhost`.
+1. **With `oidc`**: the issuer, the client's id and secret (empty: a public client) and the name on the button. Create the client at your provider first, with that redirect URI.
+1. **With `header`**: the header with the email (`Remote-Email` by default), the groups header if your proxy sets one, and your proxy's addresses (`ADMIN_TRUSTED_PROXIES`).
+1. **Who is an admin**: emails and @domains (`ADMIN_ALLOWED_USERS`), and with `oidc` or `header` groups too (`ADMIN_ALLOWED_GROUPS`). Only those get in, never every account the provider knows: see [Who is an admin](#who-is-an-admin).
+
+By name: `admin_signin`, `admin_url`, `admin_oidc_issuer`, `admin_oidc_client_id`, `admin_oidc_client_secret`, `admin_oidc_name`, `admin_auth_header`, `admin_auth_groups_header`, `admin_trusted_proxies`, `admin_users`, `admin_groups` ([Answers by name](../install/compose.md#answers-by-name)). Scopes and the groups claim keep their defaults: set `ADMIN_OIDC_SCOPES` in `.env` for a provider that needs `groups` there (Authelia, Dex).
+
 ## Ways to sign in
 
 Each way is on when it is configured, and any combination works. With none of them the admin UI does not start.
@@ -120,7 +132,7 @@ connectors:
 
 ### Self-hosted accounts
 
-With [self-hosted accounts](../accounts.md), the accounts service is an OpenID Connect provider too. `prepare_environment.sh` asks "Sign in to the admin UI with these accounts?" (the admins' emails) and the host name of the admin UI (`admin.<your domain>`). It then sets it all up, with an nginx server for that host in `config/nginx/fxa.conf`.
+With [self-hosted accounts](../accounts.md), the accounts service is an OpenID Connect provider too. In `prepare_environment.sh`, choose `accounts` for how admins sign in, then give the admins' emails and the public URL of the admin UI (`https://admin.<your domain>`). It then sets it all up, with an nginx server for that host in `config/nginx/fxa.conf`.
 
 By hand:
 

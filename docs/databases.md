@@ -59,7 +59,7 @@ This is about the stack's database containers for Sync. The two Sync databases (
 
 To choose it:
 
-- With `prepare_environment.sh`: answer `mysql` to the database backend question. It writes `SYNC_DB=mysql` and `SYNC_DB_TLS_VERIFY=false`, and puts [compose/sync-mysql.yml](/compose/sync-mysql.yml) in `COMPOSE_FILE`.
+- With `prepare_environment.sh`: choose `mysql` for the engine of the Sync server's database (`sync_db=mysql`). It writes `SYNC_DB=mysql` and `SYNC_DB_TLS_VERIFY=false`, and puts [compose/sync-mysql.yml](/compose/sync-mysql.yml) in `COMPOSE_FILE`.
 - By hand, in `.env`:
 
   ```ini
@@ -86,7 +86,7 @@ On kind or k3s on an Ubuntu host with `mysql-server` installed, see [Troubleshoo
 
 ## PostgreSQL
 
-The Sync server can run on PostgreSQL, with the `syncstorage-rs-postgres` images and [compose/sync-postgres.yml](/compose/sync-postgres.yml). `prepare_environment.sh` sets both when you answer `postgres` to the database backend question. The self-hosted accounts cannot use PostgreSQL.
+The Sync server can run on PostgreSQL, with the `syncstorage-rs-postgres` images and [compose/sync-postgres.yml](/compose/sync-postgres.yml). `prepare_environment.sh` sets both when you choose `postgres` for the engine of the Sync server's database (`sync_db=postgres`). The self-hosted accounts cannot use PostgreSQL.
 
 With Quadlets, the units of [config/quadlet/sync-postgres/](/config/quadlet/sync-postgres) replace those of the Sync server, its migrations, its init container and the backups. They add `firefox-sync-postgres-db`, the one database, in its own volume `firefox-sync-postgres-db`, and `firefox-sync-sync-role-init`, which gives the Sync server its own role before the migrations, as compose's `sync_role_init`. The MariaDB units are not installed.
 
@@ -139,7 +139,7 @@ Every setting, with its Helm value: [Settings](reference/settings.md#your-own-da
 
 The SQL is in [db/mysql/setup/](/db/mysql/setup) (MariaDB and MySQL) and [db/postgres/setup/](/db/postgres/setup), numbered files with `@NAME@` placeholders: the [setup migrations](#setup-migrations). What each user gets, and why: [Database users](reference/database-users.md).
 
-1. Run `./prepare_environment.sh` and answer `y` to "Use an existing database server instead of starting one?". For the accounts, answer `y` to the same question about them too.
+1. Run `./prepare_environment.sh` and answer yes to "Put the Sync server's database on your own database server?" in its part about the Sync server (`sync_db_own=yes`), then give the host, port, databases and users. For the self-hosted accounts, answer yes to "Put the self-hosted Mozilla accounts' database on your own database server?" in their part (`fxa_db_own=yes`).
 
    It fills in the placeholders with the names and generated passwords of `.env`, and writes `database-setup.sql` (and `database-setup-fxa.sql` for the accounts), readable by you only: every setup migration, then the `INSERT`s that record them on your server.
 1. Optional: replace `'%'` in every line of the file with your containers' network, for example `'172.16.0.0/255.240.0.0'`. With `'%'` the users connect from any address, and the passwords are the only check.
@@ -232,7 +232,7 @@ To fix it, either:
 
 With an account that can create users, the same step runs the [setup migrations](#setup-migrations) your server lacks itself at every start, as that account, records them, then checks the end state, and runs them all again once if something is missing (drift). A release that needs more then needs nothing from you. If the SQL fails, the start stops there, with the server's error in the log.
 
-- docker compose and the Quadlets: `SYNC_DB_BOOTSTRAP_USER` and `SYNC_DB_BOOTSTRAP_PASSWORD` in `.env` (`FXA_DB_BOOTSTRAP_USER` and `FXA_DB_BOOTSTRAP_PASSWORD` for the accounts). `prepare_environment.sh` asks "Let the stack apply database changes itself at start?", default no, and writes the account's SQL to `database-bootstrap.sql` (`database-bootstrap-fxa.sql`). `--upgrade` keeps your choice, and asks nothing.
+- docker compose and the Quadlets: `SYNC_DB_BOOTSTRAP_USER` and `SYNC_DB_BOOTSTRAP_PASSWORD` in `.env` (`FXA_DB_BOOTSTRAP_USER` and `FXA_DB_BOOTSTRAP_PASSWORD` for the accounts). `prepare_environment.sh` asks "Let the stack apply the Sync server's database changes itself?" (and the same for the accounts' database), default no, and writes the account's SQL to `database-bootstrap.sql` (`database-bootstrap-fxa.sql`). `--upgrade` keeps your choice, and asks nothing.
 - Helm: `database.external.bootstrap.user` (`fxa.database.external.bootstrap.user`), and its password in your `existingSecret` as `SYNC_DB_BOOTSTRAP_PASSWORD` (`FXA_DB_BOOTSTRAP_PASSWORD`). The SQL is filled in from the values and the Secret.
 
 It runs the SQL as `prepare_environment.sh` writes it: users with the host part `'%'`, and both Sync databases on one server (with `SYNC_STORAGE_DB_HOST` on another server it refuses: run the SQL by hand there). For other host parts, run your edited file by hand instead: an account of a stack name on another host stops the bootstrap (below). One start at a time: replicas of the chart wait for the lock.
@@ -468,6 +468,42 @@ Not covered by the tests: check the result before you remove the old volumes. Mo
    ```
 
 The old volumes stay until you remove them, with `docker volume rm`, or `docker compose down -v` while `SYNC_DB_CONTAINERS=1`.
+
+## Change a database password
+
+A database user's password is in `.env` and in the database. Changed in `.env` alone, the stack cannot connect any more. The passwords `prepare_environment.sh` generated, and what a change takes:
+
+| Setting | The user | The stack's database containers | Your own server |
+|---|---|---|---|
+| `ADMIN_DB_PASSWORD` | the admin UI's `ffs_admin_ui`, `ffs_admin_sync` | `.env` alone: set again at every start | in `database-setup.sql`, below |
+| `SYNC_POSTGRES_APP_PASSWORD` | the Sync server's role `syncserver_app` | `.env` alone: set again at every start | not used |
+| `FXA_ADMIN_DB_PASSWORD` | the admin UI's `ffs_admin` of the accounts | `.env` alone: set again at every start | in `database-setup-fxa.sql`, below |
+| `SYNC_TOKENSERVER_DB_PASSWORD`, `SYNC_STORAGE_DB_PASSWORD` | `tokenserver`, `syncstorage` (MariaDB, MySQL) | in the database first, below | in `database-setup.sql`, below |
+| `SYNC_POSTGRES_PASSWORD` | `syncserver` (PostgreSQL) | in the database first, below | in `database-setup.sql`, below |
+| `FXA_MYSQL_PASSWORD` | the accounts' user: `root` of `fxa-db`, or yours (`fxa`) | in the database first, below | in `database-setup-fxa.sql`, below |
+| `FXA_MYSQL_POLICY_PASSWORD` | `ffs_policy`, which installs the sign-up policy | not used | in `database-setup-fxa.sql`, below |
+| `SYNC_DB_BOOTSTRAP_PASSWORD`, `FXA_DB_BOOTSTRAP_PASSWORD` | the [bootstrap account](#the-bootstrap-account) | not used | on your server yourself (`ALTER USER`), then `.env` |
+
+**`.env` alone:** set the new password (letters, digits, `. _ ~ -`), then `docker compose up -d`. With Quadlets: `./prepare_environment.sh --render-units`, then `systemctl --user restart` the units it names ([Change a setting](install/podman.md#change-a-setting)).
+
+**In the database first**, in the stack's containers: the user sets its own new password, then `.env` gets it.
+
+1. Connect as the user, with the password its container has, and set the new one. Type the statement at the client's prompt: on its command line the password would show in `ps` ([Passwords in commands](#passwords-in-commands)). With Quadlets, `podman exec -it firefox-sync-tokenserver-db` (`-storage-db`, `-postgres-db`, `-fxa-db`) in place of `docker compose exec`.
+
+    ```bash
+    # the tokenserver on MariaDB (syncstorage_db for the storage), then at its prompt: SET PASSWORD = PASSWORD('<new>');
+    docker compose exec tokenserver_db sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" mariadb -u"$MARIADB_USER"'
+    # on MySQL, then: ALTER USER USER() IDENTIFIED BY '<new>';
+    docker compose exec tokenserver_db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER"'
+    # PostgreSQL, then: \password  (it asks for the new one twice)
+    docker compose exec postgres_db sh -c 'psql -U "$POSTGRES_USER" -d postgres'
+    # the accounts' fxa-db, as root, then: ALTER USER 'root'@'%' IDENTIFIED BY '<new>'; ALTER USER 'root'@'localhost' IDENTIFIED BY '<new>';
+    docker compose exec fxa-db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot'   # MariaDB: mariadb
+    ```
+
+1. Set it in `.env`, then `docker compose up -d` (Quadlets: `--render-units`, then restart the units it names). The database containers keep their data: their image reads its password variables only on the first start.
+
+**On your own server:** set the new password in `.env`, run `./prepare_environment.sh --upgrade`, which writes `database-setup.sql` (`database-setup-fxa.sql`) again from it, and run that file on your server as its administrator, as [at install](#create-the-databases-and-users): it sets the passwords of its users again. Then `docker compose up -d`.
 
 ## Passwords in commands
 

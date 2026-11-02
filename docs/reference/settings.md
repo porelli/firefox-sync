@@ -215,6 +215,21 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 
 Which host name goes to which port: [Host names and ports](../reverse-proxy.md#host-names-and-ports).
 
+## Generated passwords and secrets
+
+`prepare_environment.sh` generates every password and secret of the choices you made (letters and digits), writes them to `.env` (this user's only), names them in its review, and lists them at its end with what each is for. Those you typed (the SMTP password, a client secret, a bootstrap password you gave) are not listed. On a terminal it shows the admin UI's password once; in a log it says where it is. Each can be changed later:
+
+| Setting | What for | To change it |
+|---|---|---|
+| `ADMIN_PASSWORD` | the admin UI's sign-in password, the one you use yourself | `.env`, then `docker compose up -d` (Quadlets: `./prepare_environment.sh --render-units`, then restart the units it names). Keep it in your password manager |
+| `SYNC_MASTER_SECRET` | signs the Sync tokens | `.env`, then restart. A new one signs every Firefox out of Sync until it signs in again; their data stays |
+| `SYNC_METRICS_HASH_SECRET` | the key of the hashed account ids in the metrics | `.env`, then restart. The hashes start over |
+| `ADMIN_DB_PASSWORD`, `SYNC_POSTGRES_APP_PASSWORD`, `FXA_ADMIN_DB_PASSWORD` | database users the stack sets again at every start | `.env`, then restart (your own server: [Change a database password](../databases.md#change-a-database-password)) |
+| `SYNC_TOKENSERVER_DB_PASSWORD`, `SYNC_STORAGE_DB_PASSWORD`, `SYNC_POSTGRES_PASSWORD`, `FXA_MYSQL_PASSWORD`, `FXA_MYSQL_POLICY_PASSWORD`, `SYNC_DB_BOOTSTRAP_PASSWORD`, `FXA_DB_BOOTSTRAP_PASSWORD` | database users whose password the database has too | in the database first, then `.env`: [Change a database password](../databases.md#change-a-database-password) |
+| `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | the self-hosted accounts services' own keys | `.env`, then restart; only if one leaked: the accounts' sessions and tokens signed with it stop working, and people sign in again |
+
+`ADMIN_FXA_CLIENT_ID`, also generated, is no secret: the id of the admin UI's sign-in client of the self-hosted accounts.
+
 ## Helm only
 
 Values of the chart with no `.env` counterpart, besides those in the tables above. Each is described in [values.yaml](/charts/firefox-sync/values.yaml).
