@@ -26,8 +26,8 @@ SETUP_STEPS=(
     smtp_sender fxa_signups fxa_max_accounts fxa_account_events pairing pairing_url
     "@The admin UI"
     admin admin_signin admin_url admin_oidc_issuer admin_oidc_client_id admin_oidc_client_secret
-    admin_oidc_name admin_auth_header admin_auth_groups_header admin_trusted_proxies admin_users
-    admin_groups admin_notify
+    admin_oidc_name admin_oidc_scopes admin_auth_header admin_auth_groups_header admin_trusted_proxies
+    admin_users admin_groups admin_password admin_notify
     "@Backups"
     backups
     "@Review"
@@ -958,8 +958,9 @@ step_admin_signin() {
     ADMIN_SIGNIN=""
     [ "${ADMIN_UI}" = yes ] || return 0
     local options=()
-    hint "How admins sign in (docs/admin/signing-in.md). The password (ADMIN_PASSWORD in .env, generated) always"
-    hint "  works too, at http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>)"
+    hint "How admins sign in (docs/admin/signing-in.md). The password (ADMIN_PASSWORD in .env, generated) works at"
+    hint "  http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>); with single sign-on"
+    hint "  it is kept as a way in too, unless you say otherwise below"
     options=("password|the password only")
     [ "${SELF_HOST_FXA}" = yes ] && options+=("accounts|with the self-hosted Mozilla accounts (OpenID Connect), on a public address of the admin UI")
     options+=("oidc|with another OpenID Connect provider: Authentik, Keycloak, Authelia, Google, Entra ID, Dex...")
@@ -1023,6 +1024,27 @@ step_admin_oidc_name() {
         ask admin_oidc_name "Name of the provider on the button (empty: single sign-on)" "" || return
         [[ "${ANSWER}" =~ ^[^\"\\]*$ ]] && { ADMIN_OIDC_NAME_V=${ANSWER}; return 0; }
         echo "ERROR: the name cannot contain \" or \\"
+        retry
+    done
+}
+step_admin_oidc_scopes() {
+    ADMIN_OIDC_SCOPES_V=""
+    [ "${ADMIN_SIGNIN}" = oidc ] || return 0
+    hint "The scopes the admin UI asks for, openid among them. Admins by group (asked below) with Authelia or"
+    hint "  Dex: add groups (openid email profile groups); most other providers send the groups without it"
+    while :; do
+        ask admin_oidc_scopes "Scopes to ask the provider for" "openid email profile" || return
+        ANSWER=$(printf '%s' "${ANSWER}" | tr -s ' ')
+        ANSWER=${ANSWER# } ANSWER=${ANSWER% }
+        if ! [[ "${ANSWER}" =~ ^[A-Za-z0-9_.:/-]+( [A-Za-z0-9_.:/-]+)*$ ]]; then
+            ui_error "not a list of scopes, separated by spaces: '${ANSWER}'"
+        elif [[ " ${ANSWER} " != *" openid "* ]]; then
+            ui_error "the scopes need openid: '${ANSWER}'"
+        else
+            # (the default: ADMIN_OIDC_SCOPES left empty, as the admin UI's own default)
+            [ "${ANSWER}" = "openid email profile" ] || ADMIN_OIDC_SCOPES_V=${ANSWER}
+            return 0
+        fi
         retry
     done
 }
@@ -1150,6 +1172,16 @@ notify_list() {
         NOTIFY_NAMES="${NOTIFY_NAMES:+${NOTIFY_NAMES}, }$(notify_name "${entry}")"
     done
 }
+step_admin_password() {
+    # single sign-on: the password as a way in too (the default), or not (ADMIN_PASSWORD empty)
+    ADMIN_KEEP_PASSWORD=yes
+    case "${ADMIN_SIGNIN}" in accounts|oidc|header) ;; *) return 0 ;; esac
+    hint "The admin UI's password (ADMIN_PASSWORD, generated) as a way in too: when the provider or the proxy is"
+    hint "  down, over an SSH tunnel to http://localhost:8090. No: single sign-on only, ADMIN_PASSWORD empty (set"
+    hint "  one in .env later to have it back; docs/admin/signing-in.md#security-notes)"
+    ask_yn admin_password "Keep a password as a fallback?" yes || return
+    ADMIN_KEEP_PASSWORD=${YN}
+}
 step_admin_notify() {
     # the alerts of the admin UI to other destinations than email (docs/admin/alerts.md#destinations).
     # Not shown as typed: the URLs hold tokens
@@ -1188,7 +1220,7 @@ secrets_planned() {
     local own_sync own_fxa
     [ "${EXTERNAL_DB}" = yes ] && own_sync=db || own_sync=reset
     [ "${EXTERNAL_FXA_DB}" = yes ] && own_fxa=db || own_fxa=reset
-    [ "${ADMIN_UI}" = yes ] && echo "ADMIN_PASSWORD|the admin UI's sign-in password|env"
+    [ "${ADMIN_UI}" = yes ] && [ "${ADMIN_KEEP_PASSWORD}" = yes ] && echo "ADMIN_PASSWORD|the admin UI's sign-in password|env"
     echo "SYNC_MASTER_SECRET|signs the Sync tokens: a new one signs every Firefox out of Sync, until it signs in again|key"
     echo "SYNC_METRICS_HASH_SECRET|the key of the hashed account ids in the metrics: a new one starts them over|key"
     if [ "${DATABASE_BACKEND}" = postgres ]; then
@@ -1252,6 +1284,8 @@ secrets_report() {
     [ -z "${keys}" ] || echo "  - the keys: what a new one does is said above."
     echo "  More: docs/reference/settings.md#generated-passwords-and-secrets"
 }
+# ", or the password", or that there is none (single sign-on only)
+password_way() { [ "${ADMIN_KEEP_PASSWORD}" = yes ] && printf ', or the password' || printf '; no password (single sign-on only)'; }
 # setup_summary: what the answers set up, part by part, the secrets not shown
 setup_summary() {
     local db
@@ -1288,9 +1322,9 @@ setup_summary() {
     if [ "${ADMIN_UI}" = yes ]; then
         case "${ADMIN_SIGNIN}" in
             password) echo "  4 Admin UI: on, sign-in with the password (ADMIN_PASSWORD)" ;;
-            accounts) echo "  4 Admin UI: on, at ${ADMIN_URL}: sign-in with the self-hosted accounts of ${ADMIN_ALLOWED_USERS}, or the password" ;;
-            oidc) echo "  4 Admin UI: on, at ${ADMIN_URL}: sign-in with ${ADMIN_OIDC_NAME_V:-single sign-on} (${ADMIN_OIDC_ISSUER_V}, client ${ADMIN_OIDC_CLIENT_ID_V}$([ -n "${ADMIN_OIDC_CLIENT_SECRET_V}" ] && echo ", its secret as typed")) for ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+ and }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}, or the password" ;;
-            header) echo "  4 Admin UI: on, sign-in by the header ${ADMIN_AUTH_HEADER_V} from ${ADMIN_TRUSTED_PROXIES_V} for ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+ and }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}, or the password" ;;
+            accounts) echo "  4 Admin UI: on, at ${ADMIN_URL}: sign-in with the self-hosted accounts of ${ADMIN_ALLOWED_USERS}$(password_way)" ;;
+            oidc) echo "  4 Admin UI: on, at ${ADMIN_URL}: sign-in with ${ADMIN_OIDC_NAME_V:-single sign-on} (${ADMIN_OIDC_ISSUER_V}, client ${ADMIN_OIDC_CLIENT_ID_V}$([ -n "${ADMIN_OIDC_CLIENT_SECRET_V}" ] && echo ", its secret as typed")${ADMIN_OIDC_SCOPES_V:+, scopes ${ADMIN_OIDC_SCOPES_V}}) for ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+ and }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}$(password_way)" ;;
+            header) echo "  4 Admin UI: on, sign-in by the header ${ADMIN_AUTH_HEADER_V} from ${ADMIN_TRUSTED_PROXIES_V} for ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+ and }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}$(password_way)" ;;
         esac
         echo "     alerts: $([ -n "${ADMIN_NOTIFY}" ] && echo "${NOTIFY_NAMES}" || echo "by email only, once ADMIN_ALERT_EMAIL is set")"
     else

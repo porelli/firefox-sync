@@ -53,6 +53,8 @@ SYNC_POSTGRES_PASSWORD=$(generate_random_string 24)
 SYNC_MASTER_SECRET=$(generate_random_string 24)
 SYNC_METRICS_HASH_SECRET=$(generate_random_string 24)
 ADMIN_PASSWORD=$(generate_random_string 24)
+# single sign-on only: no password sign-in (the admin UI shows no form)
+[ "${ADMIN_KEEP_PASSWORD:-yes}" = yes ] || ADMIN_PASSWORD=""
 ADMIN_DB_PASSWORD=$(generate_random_string 32)
 
 # run again on an install: its databases stay on the PostgreSQL, MariaDB or MySQL versions they run
@@ -326,6 +328,7 @@ case "${ADMIN_SIGNIN}" in
         apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_CLIENT_ID=.*|ADMIN_OIDC_CLIENT_ID=$(sed_escape "${ADMIN_OIDC_CLIENT_ID_V}")|"
         [ -z "${ADMIN_OIDC_CLIENT_SECRET_V}" ] || apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_CLIENT_SECRET=.*|ADMIN_OIDC_CLIENT_SECRET='$(sed_escape "${ADMIN_OIDC_CLIENT_SECRET_V}")'|"
         apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_REDIRECT_URL=.*|ADMIN_OIDC_REDIRECT_URL=${ADMIN_URL}/auth/callback|"
+        [ -z "${ADMIN_OIDC_SCOPES_V}" ] || apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_SCOPES=.*|ADMIN_OIDC_SCOPES=\"$(sed_escape "${ADMIN_OIDC_SCOPES_V}")\"|"
         [ -z "${ADMIN_OIDC_NAME_V}" ] || apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_NAME=.*|ADMIN_OIDC_NAME=\"$(sed_escape "$(env_dq "${ADMIN_OIDC_NAME_V}")")\"|"
         # (the groups claim with the default scopes of most providers; Authelia and Dex need
         # ADMIN_OIDC_SCOPES with groups, docs/admin/signing-in.md#providers)
@@ -445,8 +448,12 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ];
 fi
 if [ "${ADMIN_UI}" = "yes" ]; then
     echo ""
-    echo "Admin UI: http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>),"
-    echo "  password: ADMIN_PASSWORD in .env. See docs/admin/README.md"
+    if [ "${ADMIN_KEEP_PASSWORD:-yes}" = yes ]; then
+        echo "Admin UI: http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>),"
+        echo "  password: ADMIN_PASSWORD in .env. See docs/admin/README.md"
+    else
+        echo "Admin UI: single sign-on only (ADMIN_PASSWORD empty). See docs/admin/signing-in.md"
+    fi
     case "${ADMIN_SIGNIN}" in
         accounts) echo "  or ${ADMIN_URL}, signed in with the accounts of ${ADMIN_ALLOWED_USERS}" ;;
         oidc) echo "  or ${ADMIN_URL}, signed in with ${ADMIN_OIDC_NAME_V:-single sign-on} (only ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+, }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}})"
