@@ -130,6 +130,9 @@ echo "FFS_PROXY_DIR=${FFS_PROXY_DIR}" >> "${ENV_FILE}"
 (source "${CODE}/prepare_environment.sh" && SCRIPT_DIR=${CODE} ENV_READ=${ENV_FILE} COMPOSE_PROJECT_NAME=${PROJECT} && ffs_temp_init &&
   write_proxy compose render "${FFS_PROXY_DIR}" > /dev/null && proxy_routes compose && render_caddy network bundled > "${FFS_PROXY_DIR}/Caddyfile.network") &&
   chmod -R a+rX "${FFS_PROXY_DIR}" || { echo "FAIL: the configuration of the bundled Caddy"; exit 1; }
+# the admin UI signs in with its password only here: no public address of its own (an install
+# reaches it over an SSH tunnel), the tests at https://admin.fxa.test, a site of caddy.d/
+printf 'admin.fxa.test {\n\treverse_proxy ffs-admin:8080\n}\n' > "${FFS_PROXY_DIR}/caddy.d/sites-test-admin.caddy" && chmod a+r "${FFS_PROXY_DIR}/caddy.d/sites-test-admin.caddy"
 # the database images and options as the env file has them: not empty ones of the caller's
 # environment (CI passes its matrix values, empty for the defaults), which compose would
 # prefer to the file and which would hide its pins from db/mysql/keep-major.sh

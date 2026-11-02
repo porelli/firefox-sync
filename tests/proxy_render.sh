@@ -54,6 +54,19 @@ for c in ${CASES}; do
     # the variant of tests/e2e-fxa.sh: nginx on the stack's network
     (ENV_READ=${WORK}/${c}.env QUADLET_DIR=${WORK}/no-units; proxy_routes "$(case_deploy "${c}")" && render_nginx network) > "${WORK}/${c}-nginx-network.conf"
     # (the files: caddy.d/ is yours)
+    # every public host of the routing table has its server, site or router in each file
+    hosts=$(ENV_READ=${WORK}/${c}.env QUADLET_DIR=${WORK}/no-units; proxy_routes "$(case_deploy "${c}")" \
+        && for r in "${PROXY_ROUTES[@]}"; do proxy_split "${r}"; echo "${R_HOST}"; done | sort -u)
+    missing=""
+    for h in ${hosts}; do
+        hre=${h//./\\.}
+        grep -qE "^  server_name ${hre};$" "${out}/nginx.conf" || missing="${missing} nginx.conf:${h}"
+        grep -qE "^(http://)?${hre}(:[0-9]+)? \\{$" "${out}/Caddyfile" || missing="${missing} Caddyfile:${h}"
+        [ ! -f "${out}/Caddyfile.bundled" ] || grep -qE "^(http://)?${hre}(:[0-9]+)? \\{$" "${out}/Caddyfile.bundled" || missing="${missing} Caddyfile.bundled:${h}"
+        grep -qF "Host(\`${h}\`)" "${out}/traefik.yml" || missing="${missing} traefik.yml:${h}"
+        [ ! -f "${out}/traefik-compose.yml" ] || grep -qF "rule: \"Host(\`${h}\`)" "${out}/traefik-compose.yml" || missing="${missing} traefik-compose.yml:${h}"
+    done
+    check "$(echo ${hosts} | wc -w | tr -d ' ') [${missing}]" "$(echo ${hosts} | wc -w | tr -d ' ') []" "${c}: every public host of the routing table in each file ($(echo ${hosts}))"
     files=$(cd "${out}" && ls -p | grep -v /)
     if [ -n "${UPDATE:-}" ]; then
         (cd "${TESTS}/proxy/${c}" && ls | grep -v '^settings$' | while read -r f; do rm -f "${f}"; done)
