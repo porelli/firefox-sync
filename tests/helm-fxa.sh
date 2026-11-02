@@ -1561,16 +1561,29 @@ PY
   [[ "${got}" == "${avatar_sha}" ]] || fail "the avatar read back (${avatar_sha}) is not the volume's ${public}/${avatar_id} (${got})"
   kubectl rollout restart "${profile}" > /dev/null
   kubectl rollout status "${profile}" --timeout 10m > /dev/null || fail "${profile} not rolled out again"
+  # (the new pod Ready is not Traefik routing to it yet: while the Service had no endpoints
+  # it dropped the Ingress' routers, and answers its own "404 page not found" until it has read
+  # the new EndpointSlice; any controller has such a lag, a user too sees it right after a
+  # restart. So the default avatar first, until Traefik's 404 is gone, then alice's once)
   got=$(fxa_py ip-b URL="${avatar_url}" <<'PY'
-import hashlib, os
+import hashlib, os, sys, time
 import requests
+default = f"{os.environ['FXA_PROFILE_URL']}/img/a/{'0' * 32}"
+for waited in range(60):
+    res = requests.get(default, timeout=30)
+    if not (res.status_code == 404 and res.text == "404 page not found\n"):
+        break
+    time.sleep(1)
+if waited:
+    print(f"(Traefik's own 404 for {waited}s after the rollout)", file=sys.stderr)
+assert res.status_code == 200, ("the default avatar through the Ingress", res.status_code, res.text[:100])
 res = requests.get(os.environ["URL"], timeout=30)
 print(res.status_code, hashlib.sha256(res.content).hexdigest())
 PY
 ) || fail "the avatar after the restart: ${got}"
   [[ "${got}" == "200 ${avatar_sha}" ]] || fail "the avatar after kubectl rollout restart ${profile}: ${got}, before 200 ${avatar_sha}"
   kubectl delete pod ip-a ip-b --wait=true > /dev/null
-  check "avatars: the default one at https://profile.fxa.test/img/a/0… 200; alice's upload (profile:write) read back as the volume's bytes, the same after kubectl rollout restart ${profile}"
+  check "avatars: the default one at https://profile.fxa.test/img/a/0… 200; alice's upload (profile:write) read back as the volume's bytes, the same after kubectl rollout restart ${profile} once Traefik routes to the new pod"
 
   # the admin UI with the accounts, as tests/e2e-fxa.sh's test_fxa_admin.py: the sign-up gate
   # behind the Ingress (refusals readable, the database refusing them without it), sign-in
