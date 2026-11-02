@@ -4,11 +4,14 @@
 # Supports both Docker and Podman
 #
 #   ./prepare_environment.sh                    the setup: questions, then .env and the examples
+#   ./prepare_environment.sh --answers FILE     the same, the answers of FILE not asked (docs/install/compose.md#answers-by-name)
+#   ./prepare_environment.sh --non-interactive  nothing asked: the answers given (FILE, FFS_SETUP_<ID>), defaults for the rest
 #   ./prepare_environment.sh --upgrade          .env (and the Quadlet units) of an install, for this release
 #   ./prepare_environment.sh --render-units [--fresh]  the Quadlet units again from .env
 #
 # The code is in setup/ (env.sh, images.sh, databases.sh, validate.sh, quadlets.sh, upgrade.sh,
-# and setup.sh, the questions), next to this script's real path (a symlink to it works too).
+# questions.sh, the questions, and setup.sh, what it writes), next to this script's real path
+# (a symlink to it works too).
 # Sourced (tests/prepare_functions.sh, tests/fxa_fix.sh): the functions only, nothing runs.
 
 # Set the locale to UTF-8
@@ -45,6 +48,8 @@ source "${SELF_DIR}/setup/validate.sh" || { [ -n "${FFS_SOURCED}" ] && return 1;
 source "${SELF_DIR}/setup/quadlets.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/upgrade.sh
 source "${SELF_DIR}/setup/upgrade.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
+# shellcheck source=setup/questions.sh
+source "${SELF_DIR}/setup/questions.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 [ -n "${FFS_SOURCED}" ] && return 0
 
 # the temporary files and their traps (setup/env.sh)
@@ -60,5 +65,16 @@ case "${1:-}" in
         esac ;;
 esac
 
+# the setup's options (read by setup/questions.sh)
+# shellcheck disable=SC2034
+while [ "$#" -gt 0 ]; do
+    case "${1}" in
+        --answers) [ -n "${2:-}" ] || { echo "ERROR: --answers FILE"; exit 2; }; FFS_ANSWERS=${2}; shift 2 ;;
+        --answers=*) FFS_ANSWERS=${1#--answers=}; shift ;;
+        --non-interactive) FFS_NONINTERACTIVE=yes; shift ;;
+        -h|--help) sed -n '6,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "ERROR: unknown option '${1}' (--answers FILE, --non-interactive, --upgrade, --render-units [--fresh])"; exit 2 ;;
+    esac
+done
 # shellcheck source=setup/setup.sh
 source "${SELF_DIR}/setup/setup.sh"

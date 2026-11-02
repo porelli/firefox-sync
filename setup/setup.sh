@@ -16,365 +16,25 @@ detect_runtime() {
 
 CONTAINER_RUNTIME=$(detect_runtime)
 
-# domain
-DOMAIN_EXAMPLE='firefox-sync.example.com'
-read -r -e -p "Enter FQDN for your Firefox sync server [${DOMAIN_EXAMPLE}]: " SYNC_FQDN
-SYNC_FQDN=${SYNC_FQDN:-${DOMAIN_EXAMPLE}}
+# the questions (setup/questions.sh): the answers given by id first checked, then each part
+check_answers
+run_steps
 
-# compose dir
-CURRENT_DIR=${FFS_ENTRY_DIR}
-read -r -e -p "Enter full path for the docker-compose file [${CURRENT_DIR}]: " SCRIPT_DIR
-SCRIPT_DIR=${SCRIPT_DIR:-${CURRENT_DIR}}
-
-# where the Sync server listens for your reverse proxy, [address:]port: on this host only by
-# default, as the other ports; a port alone is 127.0.0.1:<port>, 0.0.0.0:<port> (or [::]:<port>)
-# every interface. Run again on an install: what its .env has, as it is
-DEFAULT_SYNC_EXPORT_PORT=127.0.0.1:5000
-if [ -f "${SCRIPT_DIR}/.env" ]; then
-    previous=$(env_plain SYNC_EXPORT_PORT); previous=${previous:-$(env_plain CONTAINER_EXPORT_PORT)}
-    DEFAULT_SYNC_EXPORT_PORT=${previous:-${DEFAULT_SYNC_EXPORT_PORT}}
-fi
-read -r -e -p "Listening address and port for syncstorage-rs, a port alone on 127.0.0.1 [${DEFAULT_SYNC_EXPORT_PORT}]: " SYNC_EXPORT_PORT
-case "${SYNC_EXPORT_PORT}" in
-    "")
-        SYNC_EXPORT_PORT=${DEFAULT_SYNC_EXPORT_PORT}
-        # what an install has is kept as it is, also a value this check does not know
-        if ! valid_export_port "${SYNC_EXPORT_PORT}"; then
-            echo "WARNING: SYNC_EXPORT_PORT='${SYNC_EXPORT_PORT}' of .env is not [address:]port as this script knows it: kept"
-            SYNC_EXPORT_KEPT=yes
-        fi ;;
-    *[!0-9]*) ;;
-    *) SYNC_EXPORT_PORT=127.0.0.1:${SYNC_EXPORT_PORT} ;;
-esac
-if [ -z "${SYNC_EXPORT_KEPT:-}" ] && ! valid_export_port "${SYNC_EXPORT_PORT}"; then
-    echo "ERROR: not a port or an address and port: '${SYNC_EXPORT_PORT}' (e.g. 5000, 127.0.0.1:5000, 0.0.0.0:5000, [::]:5000)"
-    exit 1
-fi
-
-
-# max users
-DEFAULT_MAX_USERS=1
-read -r -e -p "Max allowed users, a number or unlimited [${DEFAULT_MAX_USERS}]: " SYNC_MAX_USERS
-SYNC_MAX_USERS=${SYNC_MAX_USERS:-${DEFAULT_MAX_USERS}}
-valid_limit "max users" "${SYNC_MAX_USERS}"
-
-# database backend
-DEFAULT_DATABASE_BACKEND=mariadb
-read -r -e -p "Database backend [mariadb/mysql/postgres] [${DEFAULT_DATABASE_BACKEND}]: " DATABASE_BACKEND
-DATABASE_BACKEND=${DATABASE_BACKEND:-${DEFAULT_DATABASE_BACKEND}}
-case "${DATABASE_BACKEND}" in
-    mariadb|postgres) SYNC_DB=mariadb ;;
-    # MySQL containers (compose/sync-mysql.yml), the same Sync images as MariaDB
-    mysql|MySQL) DATABASE_BACKEND=mysql; SYNC_DB=mysql ;;
-    *)
-        echo "ERROR: unknown database backend '${DATABASE_BACKEND}'"
-        exit 1
-        ;;
-esac
-
-# Container runtime detection
-echo ""
-echo "Detected container runtime: ${CONTAINER_RUNTIME}"
-
-if [ "${CONTAINER_RUNTIME}" = "none" ]; then
-    echo "WARNING: Neither Docker nor Podman detected!"
-    echo "Please install Docker or Podman before proceeding."
-    read -r -e -p "Continue anyway? (y/N): " CONTINUE
-    if [ "${CONTINUE}" != "y" ] && [ "${CONTINUE}" != "Y" ]; then
-        exit 1
-    fi
-fi
-
-# Ask about deployment method
-if [ "${CONTAINER_RUNTIME}" = "podman" ]; then
-    echo ""
-    echo "Podman detected! Choose deployment method:"
-    echo "  1) Quadlets (systemd integration, recommended)"
-    echo "  2) docker compose with the Podman socket"
-    read -r -e -p "Deployment method [1]: " DEPLOY_METHOD
-    case "${DEPLOY_METHOD:-1}" in
-        1) DEPLOY_METHOD=quadlets ;;
-        2) DEPLOY_METHOD=compose ;;
-        *) echo "ERROR: unknown deployment method '${DEPLOY_METHOD}'"; exit 1 ;;
-    esac
-fi
-
-# docker/podman user (for systemd service)
-DEFAULT_CONTAINER_USER=${USER}
-read -r -e -p "Container user [${DEFAULT_CONTAINER_USER}]: " CONTAINER_USER
-CONTAINER_USER=${CONTAINER_USER:-${DEFAULT_CONTAINER_USER}}
-
-# syncstorage image tag
-DEFAULT_SYNCSTORAGE_IMAGE_TAG=latest
-read -r -e -p "Syncstorage image tag [latest/<tag>] [${DEFAULT_SYNCSTORAGE_IMAGE_TAG}]: " SYNC_IMAGE_TAG
-SYNC_IMAGE_TAG=${SYNC_IMAGE_TAG:-${DEFAULT_SYNCSTORAGE_IMAGE_TAG}}
-
-# admin UI
-read -r -e -p "Enable the admin UI? Max users, and sign-ups and accounts with self-hosted accounts, see docs/admin/README.md (Y/n): " ADMIN_UI
-case "${ADMIN_UI}" in n|N|no) ADMIN_UI=no ;; *) ADMIN_UI=yes ;; esac
-# with the admin UI, max users is managed there: SYNC_MAX_USERS=initial:N sets it only on the
-# first start. A plain number is set again on every start (read-only in the admin UI)
+# (ADMIN_UI and the other answers: setup/questions.sh)
+# shellcheck disable=SC2153
+# with the admin UI, the limits are managed there: initial:N sets them only on the first start.
+# A plain number is set again on every start (read-only in the admin UI)
 [ "${ADMIN_UI}" = "yes" ] && SYNC_MAX_USERS=initial:${SYNC_MAX_USERS}
-
-# admin sign-in with the self-hosted accounts, asked below
-ADMIN_ALLOWED_USERS=""
-ADMIN_HOST=""
-
-# self-hosted Mozilla accounts (docs/accounts.md)
-read -r -e -p "Also self-host Mozilla accounts? See docs/accounts.md (y/N): " SELF_HOST_FXA
-case "${SELF_HOST_FXA}" in y|Y|yes) SELF_HOST_FXA=yes ;; *) SELF_HOST_FXA=no ;; esac
-# invite-only Sync with Mozilla's accounts (docs/limits.md#sync_allowed_accounts): only the
-# accounts you approve can start to sync, approved in the admin UI (SYNC_ALLOWED_ACCOUNTS=admin)
-# or, without it, listed here by their uid. With self-hosted accounts the sign-up policy
-# (FXA_SIGNUP_ALLOWLIST) decides who has an account at all
-SYNC_ALLOWED_ACCOUNTS=""
-if [ "${SELF_HOST_FXA}" = "no" ]; then
-    read -r -e -p "Invite-only: only accounts you approve can sync? See docs/limits.md#sync_allowed_accounts (y/N): " INVITE_ONLY
-    case "${INVITE_ONLY}" in
-        y|Y|yes)
-            if [ "${ADMIN_UI}" = "yes" ]; then
-                SYNC_ALLOWED_ACCOUNTS=admin
-            else
-                read -r -e -p "Without the admin UI: the account ids (uids) that can sync, comma-separated: " SYNC_ALLOWED_ACCOUNTS
-                SYNC_ALLOWED_ACCOUNTS=$(valid_uids "${SYNC_ALLOWED_ACCOUNTS}") || exit 1
-            fi ;;
-    esac
-fi
-if [ "${SELF_HOST_FXA}" = "yes" ]; then
-    DEFAULT_FXA_DOMAIN=${SYNC_FQDN#*.}
-    read -r -e -p "Domain for the accounts host names (accounts., api. and profile. are prepended) [${DEFAULT_FXA_DOMAIN}]: " FXA_DOMAIN
-    FXA_DOMAIN=${FXA_DOMAIN:-${DEFAULT_FXA_DOMAIN}}
-    read -r -e -p "SMTP server for the confirmation emails: " FXA_SMTP_HOST
-    read -r -e -p "SMTP port [587]: " FXA_SMTP_PORT
-    FXA_SMTP_PORT=${FXA_SMTP_PORT:-587}
-    read -r -e -p "SMTP user: " FXA_SMTP_USER
-    case "${FXA_SMTP_USER}" in *"'"*|*\\) echo "ERROR: the SMTP user cannot contain a single quote nor end with a backslash, set FXA_SMTP_USER in .env by hand"; exit 1 ;; esac
-    read -r -e -s -p "SMTP password: " FXA_SMTP_PASS
-    echo ""
-    # (written in single quotes, as typed: compose reads \' there as a quote, so not at the end either)
-    case "${FXA_SMTP_PASS}" in
-        *"'"*) echo "ERROR: the SMTP password cannot contain a single quote, set FXA_SMTP_PASS in .env by hand"; exit 1 ;;
-        *\\) echo "ERROR: the SMTP password cannot end with a backslash, set FXA_SMTP_PASS in .env by hand"; exit 1 ;;
-    esac
-    DEFAULT_FXA_SMTP_SENDER="Mozilla accounts <no-reply@${FXA_DOMAIN}>"
-    read -r -e -p "Sender of the emails [${DEFAULT_FXA_SMTP_SENDER}]: " FXA_SMTP_SENDER
-    FXA_SMTP_SENDER=${FXA_SMTP_SENDER:-${DEFAULT_FXA_SMTP_SENDER}}
-    [ "${FXA_SMTP_PORT}" = "465" ] && FXA_SMTP_SECURE=true || FXA_SMTP_SECURE=false
-    read -r -e -p "Who can create an account? Emails and @domains, comma-separated (empty: anybody): " FXA_SIGNUP_ALLOWLIST
-    FXA_SIGNUP_ALLOWLIST=$(printf '%s' "${FXA_SIGNUP_ALLOWLIST}" | tr -d ' ')
-    case "${FXA_SIGNUP_ALLOWLIST}" in *[!A-Za-z0-9@._+,-]*) echo "ERROR: not a list of emails and domains: ${FXA_SIGNUP_ALLOWLIST}"; exit 1 ;; esac
-    [ -n "${FXA_SIGNUP_ALLOWLIST}" ] && FXA_SIGNUPS=allowlist || FXA_SIGNUPS=open
-    # asked last, so that scripted answers for the questions above still line up
-    if [ "${ADMIN_UI}" = "yes" ]; then
-        read -r -e -p "Sign in to the admin UI with these accounts? Admin emails, comma-separated (empty: password only): " ADMIN_ALLOWED_USERS
-        ADMIN_ALLOWED_USERS=$(printf '%s' "${ADMIN_ALLOWED_USERS}" | tr -d ' ')
-        case "${ADMIN_ALLOWED_USERS}" in *[!A-Za-z0-9@._+,-]*) echo "ERROR: not a list of emails and domains: ${ADMIN_ALLOWED_USERS}"; exit 1 ;; esac
-        if [ -n "${ADMIN_ALLOWED_USERS}" ]; then
-            DEFAULT_ADMIN_HOST=admin.${FXA_DOMAIN}
-            read -r -e -p "Host name of the admin UI, where the accounts pages send you back [${DEFAULT_ADMIN_HOST}]: " ADMIN_HOST
-            ADMIN_HOST=${ADMIN_HOST:-${DEFAULT_ADMIN_HOST}}
-            case "${ADMIN_HOST}" in *[!A-Za-z0-9.:-]*|"") echo "ERROR: not a host name: ${ADMIN_HOST}"; exit 1 ;; esac
-        fi
-    fi
-fi
-
-# your own database server (docs/databases.md#your-own-server), asked last so that scripted answers for the
-# questions above still line up
-EXTERNAL_DB=no
-EXTERNAL_FXA_DB=no
-FXA_DB=mysql
-read -r -e -p "Use an existing database server instead of starting one? See docs/databases.md#your-own-server (y/N): " EXTERNAL_DB
-case "${EXTERNAL_DB}" in y|Y|yes) EXTERNAL_DB=yes ;; *) EXTERNAL_DB=no ;; esac
-if [ "${EXTERNAL_DB}" = "yes" ]; then
-    read -r -e -p "Database server host, as the containers reach it: " DB_HOST
-    valid_host "${DB_HOST}"
-    [ "${DATABASE_BACKEND}" = "postgres" ] && DEFAULT_DB_PORT=5432 || DEFAULT_DB_PORT=3306
-    read -r -e -p "Database server port [${DEFAULT_DB_PORT}]: " DB_PORT
-    DB_PORT=${DB_PORT:-${DEFAULT_DB_PORT}}
-    valid_port "${DB_PORT}"
-    if [ "${DATABASE_BACKEND}" = "postgres" ]; then
-        read -r -e -p "Database [syncserver]: " SYNC_POSTGRES_NAME
-        SYNC_POSTGRES_NAME=${SYNC_POSTGRES_NAME:-syncserver}
-        read -r -e -p "Database user [syncserver]: " SYNC_POSTGRES_USER
-        SYNC_POSTGRES_USER=${SYNC_POSTGRES_USER:-syncserver}
-        stack_name "${SYNC_POSTGRES_NAME}"; valid_user "${SYNC_POSTGRES_USER}"
-    else
-        read -r -e -p "Tokenserver database [tokenserver]: " SYNC_TOKENSERVER_DB_NAME
-        SYNC_TOKENSERVER_DB_NAME=${SYNC_TOKENSERVER_DB_NAME:-tokenserver}
-        read -r -e -p "Tokenserver database user [tokenserver]: " SYNC_TOKENSERVER_DB_USER
-        SYNC_TOKENSERVER_DB_USER=${SYNC_TOKENSERVER_DB_USER:-tokenserver}
-        read -r -e -p "Storage database [syncstorage]: " SYNC_STORAGE_DB_NAME
-        SYNC_STORAGE_DB_NAME=${SYNC_STORAGE_DB_NAME:-syncstorage}
-        read -r -e -p "Storage database user [syncstorage]: " SYNC_STORAGE_DB_USER
-        SYNC_STORAGE_DB_USER=${SYNC_STORAGE_DB_USER:-syncstorage}
-        stack_name "${SYNC_TOKENSERVER_DB_NAME}"; stack_name "${SYNC_STORAGE_DB_NAME}"
-        valid_user "${SYNC_TOKENSERVER_DB_USER}"; valid_user "${SYNC_STORAGE_DB_USER}"
-        [ "${SYNC_TOKENSERVER_DB_NAME}" != "${SYNC_STORAGE_DB_NAME}" ] || { echo "ERROR: the tokenserver and the storage need two databases"; exit 1; }
-    fi
-fi
-if [ "${SELF_HOST_FXA}" = "yes" ]; then
-    read -r -e -p "Use an existing MySQL 8.4/9 or MariaDB 11.4+ server for the accounts$([ "${EXTERNAL_DB}" = "yes" ] && echo " too")? See docs/databases.md#your-own-server (y/N): " EXTERNAL_FXA_DB
-    case "${EXTERNAL_FXA_DB}" in y|Y|yes) EXTERNAL_FXA_DB=yes ;; *) EXTERNAL_FXA_DB=no ;; esac
-    if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
-        read -r -e -p "Accounts database server host${DB_HOST:+ [${DB_HOST}]}: " FXA_MYSQL_HOST
-        FXA_MYSQL_HOST=${FXA_MYSQL_HOST:-${DB_HOST:-}}
-        valid_host "${FXA_MYSQL_HOST}"
-        read -r -e -p "Accounts database server port [3306]: " FXA_MYSQL_PORT
-        FXA_MYSQL_PORT=${FXA_MYSQL_PORT:-3306}
-        valid_port "${FXA_MYSQL_PORT}"
-        read -r -e -p "Accounts database user [fxa]: " FXA_MYSQL_USER
-        FXA_MYSQL_USER=${FXA_MYSQL_USER:-fxa}
-        read -r -e -p "User installing the sign-up policy [ffs_policy]: " FXA_MYSQL_POLICY_USER
-        FXA_MYSQL_POLICY_USER=${FXA_MYSQL_POLICY_USER:-ffs_policy}
-        valid_user "${FXA_MYSQL_USER}"; valid_user "${FXA_MYSQL_POLICY_USER}"
-    fi
-    # MySQL by default, whatever Sync uses: it is what Mozilla supports and runs
-    if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
-        read -r -e -p "Is that server MySQL or MariaDB? (mysql/mariadb) [mysql]: " FXA_DB
-    else
-        read -r -e -p "Accounts database: mysql (MySQL lts, what Mozilla runs) or mariadb (MariaDB lts, see docs/accounts.md#mysql-or-mariadb) [mysql]: " FXA_DB
-    fi
-    case "${FXA_DB}" in
-        ""|mysql|MySQL) FXA_DB=mysql ;;
-        mariadb|MariaDB) FXA_DB=mariadb ;;
-        *) echo "ERROR: mysql or mariadb, not '${FXA_DB}'"; exit 1 ;;
-    esac
-fi
-
-# the most accounts of the self-hosted accounts, asked last so that scripted answers for
-# the questions above still line up; with the admin UI it manages them (initial:)
 FXA_MAX_ACCOUNTS=initial:unlimited
 if [ "${SELF_HOST_FXA}" = "yes" ]; then
-    read -r -e -p "Max accounts that can be created on the accounts service, a number or unlimited [unlimited]: " FXA_MAX_ACCOUNTS
-    FXA_MAX_ACCOUNTS=${FXA_MAX_ACCOUNTS:-unlimited}
-    valid_limit "max accounts" "${FXA_MAX_ACCOUNTS}"
+    FXA_MAX_ACCOUNTS=${FXA_MAX_ACCOUNTS_ANSWER}
     [ "${ADMIN_UI}" = "yes" ] && FXA_MAX_ACCOUNTS=initial:${FXA_MAX_ACCOUNTS}
+    [ "${FXA_SMTP_PORT}" = "465" ] && FXA_SMTP_SECURE=true || FXA_SMTP_SECURE=false
 fi
-
-# the security history of the accounts (docs/accounts.md#security-history), asked last for the same reason
-FXA_ACCOUNT_EVENTS=false
-if [ "${SELF_HOST_FXA}" = "yes" ]; then
-    echo "Security history: every sign-in, password and 2-step change is kept with its IP address, for the owner and the admin UI to see (docs/accounts.md#security-history)."
-    read -r -e -p "Record the security history of the accounts? (y/N): " FXA_ACCOUNT_EVENTS
-    case "${FXA_ACCOUNT_EVENTS}" in y|Y|yes) FXA_ACCOUNT_EVENTS=true ;; *) FXA_ACCOUNT_EVENTS=false ;; esac
-fi
-
-# the alerts of the admin UI to other destinations than email (docs/admin/alerts.md#destinations), asked last
-# for the same reason. Not shown as typed: the URLs hold tokens
-ADMIN_NOTIFY=""
-if [ "${ADMIN_UI}" = "yes" ]; then
-    echo "Alerts of the admin UI: by email (ADMIN_ALERT_EMAIL in .env, with an SMTP server), and/or to Slack, Discord, Teams, ntfy, Gotify, Telegram, Matrix or a webhook (docs/admin/alerts.md#destinations)."
-    read -r -s -p "Also send alerts to Slack, Discord, ntfy...? Paste a destination URL (e.g. ntfy://ntfy.sh/<topic>, slack://hooks.slack.com/services/...) or leave empty: " ADMIN_NOTIFY
-    echo ""
-    # scheme://host of a destination, … for what cannot be named safely (an @ after the
-    # host is the end of a user or password with / ? # in it, not the host)
-    notify_name() {
-        local scheme rest host tail
-        scheme=$(printf '%s' "${1%%://*}" | tr '[:upper:]' '[:lower:]'); rest=${1#*://}
-        [[ "${scheme}" =~ ^[a-z][a-z0-9+]*$ ]] || { printf '…'; return; }
-        case "${scheme}" in telegram*) printf '%s://api.telegram.org' "${scheme}"; return ;; esac
-        host=${rest%%[/?#]*}; tail=${rest#"${host}"}
-        tail=${tail//\?@/}; tail=${tail//&@/}
-        case "${tail}" in *@*) printf '%s://…' "${scheme}"; return ;; esac
-        host=${host##*@}
-        [[ "${host}" =~ ^[A-Za-z0-9.:-]+$ ]] || { printf '%s://…' "${scheme}"; return; }
-        printf '%s://%s' "${scheme}" "${host}"
-    }
-    notify_in=${ADMIN_NOTIFY}; ADMIN_NOTIFY=""; notify_names=""
-    # separated by commas or spaces
-    IFS=$', \t\r' read -r -a notify_entries <<< "${notify_in}"
-    for notify_entry in "${notify_entries[@]}"; do
-        [ -n "${notify_entry}" ] || continue
-        case "${notify_entry}" in *"'"*|*\\) echo "ERROR: a destination URL cannot contain a single quote nor end with a backslash, set ADMIN_NOTIFY in .env by hand"; exit 1 ;; esac
-        # the webhook URL of Slack or Discord as they give it: their scheme instead of https://
-        notify_kind=""
-        case "${notify_entry}" in
-            https://hooks.slack.com/*) notify_kind=slack ;;
-            https://discord.com/api/webhooks/*|https://discordapp.com/api/webhooks/*) notify_kind=discord ;;
-        esac
-        if [ -n "${notify_kind}" ]; then
-            read -r -e -p "That is a ${notify_kind} webhook URL: use it as ${notify_kind}://... (Y/n): " notify_convert
-            case "${notify_convert}" in n|N|no) echo "ERROR: https:// is no destination of ADMIN_NOTIFY, see docs/admin/alerts.md#destinations"; exit 1 ;; esac
-            notify_entry="${notify_kind}://${notify_entry#https://}"
-        fi
-        notify_base="" notify_shown="…"
-        if [[ "${notify_entry}" == *://* ]]; then
-            notify_base=$(printf '%s' "${notify_entry%%://*}" | tr '[:upper:]' '[:lower:]'); notify_base=${notify_base%+http}; notify_base=${notify_base%+https}
-            notify_shown=$(notify_name "${notify_entry}")
-        fi
-        if ! [[ "${notify_base}" =~ ^(slack|discord|teams|ntfy|gotify|telegram|matrix|webhook)$ ]]; then
-            echo "ERROR: ${notify_shown} is no destination of ADMIN_NOTIFY: slack://, discord://, teams://, ntfy://, gotify://, telegram://, matrix:// or webhook://, see docs/admin/alerts.md#destinations"
-            exit 1
-        fi
-        if [ "${notify_base}" != telegram ] && [ "${notify_shown}" = "${notify_shown%://…}://…" ]; then
-            echo "ERROR: ${notify_shown}: an @ after the host, percent-encode / ? # in the user or password (%2F %3F %23)"
-            exit 1
-        fi
-        ADMIN_NOTIFY="${ADMIN_NOTIFY:+${ADMIN_NOTIFY},}${notify_entry}"
-        notify_names="${notify_names:+${notify_names}, }$(notify_name "${notify_entry}")"
-    done
-    [ -z "${ADMIN_NOTIFY}" ] || echo "Alerts also to ${notify_names} (ADMIN_NOTIFY in .env; more destinations there, separated by commas)"
-fi
-
-# the optional services, asked last for the same reason. Run again on an install: what it
-# has is the default (COMPOSE_PROFILES of its .env; with Quadlets also the backup timer on)
-previous_profile() { [ -f "${SCRIPT_DIR}/.env" ] && case ",$(env_plain COMPOSE_PROFILES)," in *",${1},"*) return 0 ;; esac; return 1; }
-# the nightly backups (docs/backups.md#the-backup-service): compose's backup profile, the
-# Quadlets' backup timer
-BACKUPS=no
-previous_profile backup && BACKUPS=yes
-[ "${DEPLOY_METHOD:-}" = quadlets ] && systemctl --user is-enabled -q firefox-sync-backup.timer 2> /dev/null && BACKUPS=yes
-if [ "${BACKUPS}" = yes ]; then
-    read -r -e -p "Enable nightly backups? See docs/backups.md#the-backup-service (Y/n): " BACKUPS
-    case "${BACKUPS}" in n|N|no) BACKUPS=no ;; *) BACKUPS=yes ;; esac
-else
-    read -r -e -p "Enable nightly backups? See docs/backups.md#the-backup-service (y/N): " BACKUPS
-    case "${BACKUPS}" in y|Y|yes) BACKUPS=yes ;; *) BACKUPS=no ;; esac
-fi
-# your own pairing server for the QR code (docs/reverse-proxy.md#pairing), with the accounts:
-# compose's pairing profile (the Quadlets have none: not asked)
-PAIRING=no
-if [ "${SELF_HOST_FXA}" = "yes" ] && [ "${DEPLOY_METHOD:-}" != quadlets ]; then
-    if previous_profile pairing; then
-        read -r -e -p "Run your own pairing server, at pairing.${FXA_DOMAIN}? See docs/reverse-proxy.md#pairing (Y/n): " PAIRING
-        case "${PAIRING}" in n|N|no) PAIRING=no ;; *) PAIRING=yes ;; esac
-    else
-        read -r -e -p "Run your own pairing server, at pairing.${FXA_DOMAIN}? See docs/reverse-proxy.md#pairing (y/N): " PAIRING
-        case "${PAIRING}" in y|Y|yes) PAIRING=yes ;; *) PAIRING=no ;; esac
-    fi
-fi
-# your own database server: the stack applies database-setup.sql (database-setup-fxa.sql) itself at
-# every start, as an account that can create users (docs/databases.md#let-the-stack-apply-them);
-# default no: it then only checks that they are there. Asked last, so that scripted answers for
-# the questions above still line up
-SYNC_DB_BOOTSTRAP_USER="" SYNC_DB_BOOTSTRAP_PASSWORD="" FXA_DB_BOOTSTRAP_USER="" FXA_DB_BOOTSTRAP_PASSWORD=""
-ask_bootstrap() { # <prefix: SYNC or FXA> <what>
-    local answer user password
-    read -r -e -p "Let the stack apply database changes itself at start${2} (needs a database account that can create users, see docs/databases.md#let-the-stack-apply-them)? (y/N): " answer
-    case "${answer}" in y|Y|yes) ;; *) return 0 ;; esac
-    # (a name of its own per scope: on one server one account would get the two passwords)
-    local default=ffs_$([ "${1}" = FXA ] && echo fxa || echo sync)_bootstrap
-    read -r -e -p "That account, which you have or database-bootstrap$([ "${1}" = FXA ] && echo -fxa).sql creates [${default}]: " user
-    user=${user:-${default}}
-    [[ "${user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "ERROR: not a valid user name (A-Z, a-z, 0-9, _): '${user}'"; exit 1; }
-    # (on another server than Sync's the same name is another account)
-    [ "${1}" != FXA ] || [ "${user}" != "${SYNC_DB_BOOTSTRAP_USER}" ] \
-        || [ "$(tr '[:upper:]' '[:lower:]' <<< "${FXA_MYSQL_HOST}:${FXA_MYSQL_PORT}")" != "$(tr '[:upper:]' '[:lower:]' <<< "${DB_HOST}:${DB_PORT}")" ] \
-        || { echo "ERROR: '${user}' is Sync's bootstrap account already, on the same server: the accounts need one of their own there (one account would get two passwords)"; exit 1; }
-    # an account of its own, not one of the stack's users nor the server's administrator
-    case " root postgres ${SYNC_TOKENSERVER_DB_USER:-} ${SYNC_STORAGE_DB_USER:-} ${SYNC_POSTGRES_USER:-} ${FXA_MYSQL_USER:-} ${FXA_MYSQL_POLICY_USER:-} ffs_admin ffs_admin_ui ffs_admin_sync " in
-        *" ${user} "*) echo "ERROR: '${user}' is the server's administrator or one of the stack's users: the bootstrap needs an account of its own (docs/databases.md#the-bootstrap-account)"; exit 1 ;;
-    esac
-    read -r -e -s -p "Its password (empty: a new one): " password
-    echo ""
-    [ -n "${password}" ] || password=$(generate_random_string 32)
-    # (in database-bootstrap.sql, and in the database URLs' rules)
-    [[ "${password}" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "ERROR: the password: only A-Z a-z 0-9 . _ ~ -"; exit 1; }
-    printf -v "${1}_DB_BOOTSTRAP_USER" '%s' "${user}"
-    printf -v "${1}_DB_BOOTSTRAP_PASSWORD" '%s' "${password}"
-}
-[ "${EXTERNAL_DB}" = "yes" ] && ask_bootstrap SYNC "$([ "${EXTERNAL_FXA_DB}" = "yes" ] && echo " for Sync")"
-[ "${EXTERNAL_FXA_DB}" = "yes" ] && ask_bootstrap FXA " for the accounts"
+# the host names of the public URLs, for the nginx examples
+SYNC_FQDN=$(url_host "${SYNC_URL}")
+ADMIN_HOST=""
+[ -n "${ADMIN_URL}" ] && ADMIN_HOST=$(url_host "${ADMIN_URL}")
 
 # COMPOSE_PROFILES: the whole list of what was chosen (the Quadlets read admin there too)
 COMPOSE_PROFILES_CHOSEN=""
@@ -474,7 +134,7 @@ apply_sed "${NEW_ENV}" "s|^SYNC_STORAGE_DB_PASSWORD=.*|SYNC_STORAGE_DB_PASSWORD=
 apply_sed "${NEW_ENV}" "s|^SYNC_POSTGRES_PASSWORD=.*|SYNC_POSTGRES_PASSWORD=${SYNC_POSTGRES_PASSWORD}|"
 apply_sed "${NEW_ENV}" "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER_SECRET}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_METRICS_HASH_SECRET=.*|SYNC_METRICS_HASH_SECRET=${SYNC_METRICS_HASH_SECRET}|"
-apply_sed "${NEW_ENV}" "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://${SYNC_FQDN}|"
+apply_sed "${NEW_ENV}" "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=$(sed_escape "${SYNC_URL}")|"
 apply_sed "${NEW_ENV}" "s|^SYNC_EXPORT_PORT=.*|SYNC_EXPORT_PORT=${SYNC_EXPORT_PORT}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_MAX_USERS=.*|SYNC_MAX_USERS=${SYNC_MAX_USERS}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_ALLOWED_ACCOUNTS=.*|SYNC_ALLOWED_ACCOUNTS=${SYNC_ALLOWED_ACCOUNTS}|"
@@ -541,11 +201,12 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     apply_sed "${NEW_ENV}" "s|^FXA_IMAGE=.*|FXA_IMAGE=${FXA_REGISTRY}|"
     apply_sed "${NEW_ENV}" "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${FXA_REGISTRY}:fxa-channelserver-latest|"
     apply_sed "${NEW_ENV}" "s|^FXA_ARCH=.*|FXA_ARCH=${FXA_ARCH}|"
-    apply_sed "${NEW_ENV}" "s|^FXA_CONTENT_URL=.*|FXA_CONTENT_URL=https://accounts.${FXA_DOMAIN}|"
-    apply_sed "${NEW_ENV}" "s|^FXA_AUTH_URL=.*|FXA_AUTH_URL=https://api.${FXA_DOMAIN}|"
-    apply_sed "${NEW_ENV}" "s|^FXA_PROFILE_URL=.*|FXA_PROFILE_URL=https://profile.${FXA_DOMAIN}|"
+    apply_sed "${NEW_ENV}" "s|^FXA_CONTENT_URL=.*|FXA_CONTENT_URL=${FXA_CONTENT_URL_V}|"
+    apply_sed "${NEW_ENV}" "s|^FXA_AUTH_URL=.*|FXA_AUTH_URL=${FXA_AUTH_URL_V}|"
+    apply_sed "${NEW_ENV}" "s|^FXA_PROFILE_URL=.*|FXA_PROFILE_URL=${FXA_PROFILE_URL_V}|"
     apply_sed "${NEW_ENV}" "s|^FXA_OAUTH_SERVER_URL=.*|FXA_OAUTH_SERVER_URL=http://fxa-auth:9000/v1|"
-    apply_sed "${NEW_ENV}" "s|^FXA_EMAIL_DOMAIN=.*|FXA_EMAIL_DOMAIN=api.${FXA_DOMAIN}|"
+    # the host name of the API: fxa-auth signs and checks the OAuth assertions with it
+    apply_sed "${NEW_ENV}" "s|^FXA_EMAIL_DOMAIN=.*|FXA_EMAIL_DOMAIN=$(url_host "${FXA_AUTH_URL_V}")|"
     apply_sed "${NEW_ENV}" "s|^FXA_SMTP_HOST=.*|FXA_SMTP_HOST=${FXA_SMTP_HOST}|"
     apply_sed "${NEW_ENV}" "s|^FXA_SMTP_PORT=.*|FXA_SMTP_PORT=${FXA_SMTP_PORT}|"
     apply_sed "${NEW_ENV}" "s|^FXA_SMTP_USER=.*|FXA_SMTP_USER='$(sed_escape "${FXA_SMTP_USER}")'|"
@@ -557,7 +218,7 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     apply_sed "${NEW_ENV}" "s|^FXA_MAX_ACCOUNTS=.*|FXA_MAX_ACCOUNTS=${FXA_MAX_ACCOUNTS}|"
     apply_sed "${NEW_ENV}" "s|^FXA_ACCOUNT_EVENTS=.*|FXA_ACCOUNT_EVENTS=${FXA_ACCOUNT_EVENTS}|"
     # your own pairing server: Firefox's QR code points to it
-    [ "${PAIRING}" = yes ] && apply_sed "${NEW_ENV}" "s|^# FXA_PAIRING_URL=.*|FXA_PAIRING_URL=wss://pairing.${FXA_DOMAIN}|"
+    [ "${PAIRING}" = yes ] && apply_sed "${NEW_ENV}" "s|^# FXA_PAIRING_URL=.*|FXA_PAIRING_URL=${FXA_PAIRING_URL_V}|"
     if [ "${EXTERNAL_FXA_DB}" = "yes" ]; then
         apply_sed "${NEW_ENV}" "s|^FXA_DB_CONTAINERS=.*|FXA_DB_CONTAINERS=0|"
         for name in FXA_MYSQL_HOST FXA_MYSQL_PORT FXA_MYSQL_USER FXA_MYSQL_POLICY_USER; do
@@ -613,15 +274,15 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         apply_sed "${NEW_ENV}" "s|^# FXA_MYSQL_IMAGE=.*|FXA_MYSQL_IMAGE=$(sed_escape "${FXA_MYSQL_IMAGE}")|"
         [ -z "${FXA_MYSQL_ARGS}" ] || apply_sed "${NEW_ENV}" "s|^# FXA_MYSQL_ARGS=.*|FXA_MYSQL_ARGS=$(sed_escape "${FXA_MYSQL_ARGS}")|"
     fi
-    if [ -n "${ADMIN_ALLOWED_USERS:-}" ]; then
+    if [ "${ADMIN_SIGNIN}" = accounts ]; then
         # the admin UI signs in with these accounts: a public OAuth client (PKCE, no secret:
         # the accounts service refuses PKCE from clients with one), registered by fxa-auth
         ADMIN_FXA_CLIENT_ID=$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')
         apply_sed "${NEW_ENV}" "s|^ADMIN_FXA_CLIENT_ID=.*|ADMIN_FXA_CLIENT_ID=${ADMIN_FXA_CLIENT_ID}|"
         apply_sed "${NEW_ENV}" "s|^ADMIN_ALLOWED_USERS=.*|ADMIN_ALLOWED_USERS=${ADMIN_ALLOWED_USERS}|"
-        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_REDIRECT_URL=.*|ADMIN_OIDC_REDIRECT_URL=https://${ADMIN_HOST}/auth/callback|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_REDIRECT_URL=.*|ADMIN_OIDC_REDIRECT_URL=${ADMIN_URL}/auth/callback|"
         # written out for the Quadlets too, which have no defaults like compose/fxa.yml
-        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_ISSUER=.*|ADMIN_OIDC_ISSUER=https://accounts.${FXA_DOMAIN}|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_ISSUER=.*|ADMIN_OIDC_ISSUER=${FXA_CONTENT_URL_V}|"
         apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_CLIENT_ID=.*|ADMIN_OIDC_CLIENT_ID=${ADMIN_FXA_CLIENT_ID}|"
         apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_NAME=.*|ADMIN_OIDC_NAME=\"Mozilla account\"|"
         # the accounts service has no email_verified claim, but only lets confirmed
@@ -630,10 +291,11 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     fi
     # nginx example for the accounts host names
     cp "${SCRIPT_DIR}/config/nginx/fxa-example.conf" "${SCRIPT_DIR}/config/nginx/fxa.conf"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ACCOUNTS_HOST>|accounts.${FXA_DOMAIN}|g"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<API_HOST>|api.${FXA_DOMAIN}|g"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PROFILE_HOST>|profile.${FXA_DOMAIN}|g"
-    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PAIRING_HOST>|pairing.${FXA_DOMAIN}|g"
+    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ACCOUNTS_HOST>|$(url_host "${FXA_CONTENT_URL_V}")|g"
+    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<API_HOST>|$(url_host "${FXA_AUTH_URL_V}")|g"
+    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PROFILE_HOST>|$(url_host "${FXA_PROFILE_URL_V}")|g"
+    # (commented out without your own pairing server: the host name it would have)
+    apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<PAIRING_HOST>|$(url_host "${FXA_PAIRING_URL_V:-wss://pairing.${DOMAIN}}")|g"
     # the pairing server's block, commented out unless it runs here
     [ "${PAIRING}" = yes ] && apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/^# server {$/,/^# }$/s|^# \{0,1\}||"
     for port in CONTENT AUTH PROFILE PROFILE_STATIC PAIRING; do
@@ -647,7 +309,8 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         # no sign-up gate without the admin UI
         apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/# admin UI only/,/^  }$/d"
     fi
-    if [ -n "${ADMIN_ALLOWED_USERS:-}" ]; then
+    # the admin UI on its own host name, where a sign-in sends you back
+    if [ -n "${ADMIN_HOST}" ]; then
         value=$(grep "^ADMIN_EXPORT_PORT=" "${NEW_ENV}" | cut -d= -f2)
         apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ADMIN_HOST>|${ADMIN_HOST}|g"
         apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "s|<ADMIN_EXPORT_PORT>|${value}|g"
@@ -655,6 +318,29 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         apply_sed "${SCRIPT_DIR}/config/nginx/fxa.conf" "/# admin UI sign-in only/,/# end of the admin UI sign-in/d"
     fi
 fi
+# the admin UI's sign-in with another OpenID Connect provider, or a header of your proxy
+# (docs/admin/signing-in.md), and who is an admin there
+case "${ADMIN_SIGNIN}" in
+    oidc)
+        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_ISSUER=.*|ADMIN_OIDC_ISSUER=$(sed_escape "${ADMIN_OIDC_ISSUER_V}")|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_CLIENT_ID=.*|ADMIN_OIDC_CLIENT_ID=$(sed_escape "${ADMIN_OIDC_CLIENT_ID_V}")|"
+        [ -z "${ADMIN_OIDC_CLIENT_SECRET_V}" ] || apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_CLIENT_SECRET=.*|ADMIN_OIDC_CLIENT_SECRET='$(sed_escape "${ADMIN_OIDC_CLIENT_SECRET_V}")'|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_REDIRECT_URL=.*|ADMIN_OIDC_REDIRECT_URL=${ADMIN_URL}/auth/callback|"
+        [ -z "${ADMIN_OIDC_NAME_V}" ] || apply_sed "${NEW_ENV}" "s|^ADMIN_OIDC_NAME=.*|ADMIN_OIDC_NAME=\"$(sed_escape "$(env_dq "${ADMIN_OIDC_NAME_V}")")\"|"
+        # (the groups claim with the default scopes of most providers; Authelia and Dex need
+        # ADMIN_OIDC_SCOPES with groups, docs/admin/signing-in.md#providers)
+        ;;
+    header)
+        apply_sed "${NEW_ENV}" "s|^ADMIN_AUTH_HEADER=.*|ADMIN_AUTH_HEADER=${ADMIN_AUTH_HEADER_V}|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_AUTH_GROUPS_HEADER=.*|ADMIN_AUTH_GROUPS_HEADER=${ADMIN_AUTH_GROUPS_HEADER_V}|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_TRUSTED_PROXIES=.*|ADMIN_TRUSTED_PROXIES=${ADMIN_TRUSTED_PROXIES_V}|"
+        ;;
+esac
+case "${ADMIN_SIGNIN}" in
+    oidc|header)
+        apply_sed "${NEW_ENV}" "s|^ADMIN_ALLOWED_USERS=.*|ADMIN_ALLOWED_USERS=${ADMIN_ALLOWED_USERS}|"
+        apply_sed "${NEW_ENV}" "s|^ADMIN_ALLOWED_GROUPS=.*|ADMIN_ALLOWED_GROUPS=$(sed_escape "${ADMIN_ALLOWED_GROUPS_V}")|" ;;
+esac
 if [ "${DATABASE_BACKEND}" = "postgres" ]; then
     apply_sed "${NEW_ENV}" "s|^SYNC_IMAGE=.*|SYNC_IMAGE=syncstorage-rs-postgres|"
     apply_sed "${NEW_ENV}" "s|^SYNC_INIT_IMAGE=.*|SYNC_INIT_IMAGE=syncstorage-rs-postgres-init|"
@@ -752,7 +438,7 @@ echo "  - .env"
 [ -n "${FXA_DB_BOOTSTRAP_USER}" ] && echo "  - database-bootstrap-fxa.sql (the account ${FXA_DB_BOOTSTRAP_USER}, which applies database-setup-fxa.sql at every start)"
 echo "  - config/nginx/syncstorage-rs.conf"
 echo "  - config/systemd/syncstorage-rs.service"
-[ "${SELF_HOST_FXA}" = "yes" ] && echo "  - config/nginx/fxa.conf (accounts.${FXA_DOMAIN}, api.${FXA_DOMAIN}, profile.${FXA_DOMAIN}${ADMIN_HOST:+, ${ADMIN_HOST}}$([ "${PAIRING}" = yes ] && echo ", pairing.${FXA_DOMAIN}"))"
+[ "${SELF_HOST_FXA}" = "yes" ] && echo "  - config/nginx/fxa.conf ($(url_host "${FXA_CONTENT_URL_V}"), $(url_host "${FXA_AUTH_URL_V}"), $(url_host "${FXA_PROFILE_URL_V}")${ADMIN_HOST:+, ${ADMIN_HOST}}$([ "${PAIRING}" = yes ] && echo ", $(url_host "${FXA_PAIRING_URL_V}")"))"
 
 if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ]; then
     echo "  - Quadlet files in ${QUADLET_DIR}"
@@ -761,7 +447,12 @@ if [ "${ADMIN_UI}" = "yes" ]; then
     echo ""
     echo "Admin UI: http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>),"
     echo "  password: ADMIN_PASSWORD in .env. See docs/admin/README.md"
-    [ -n "${ADMIN_ALLOWED_USERS:-}" ] && echo "  or https://${ADMIN_HOST}, signed in with the accounts of ${ADMIN_ALLOWED_USERS}"
+    case "${ADMIN_SIGNIN}" in
+        accounts) echo "  or ${ADMIN_URL}, signed in with the accounts of ${ADMIN_ALLOWED_USERS}" ;;
+        oidc) echo "  or ${ADMIN_URL}, signed in with ${ADMIN_OIDC_NAME_V:-single sign-on} (only ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+, }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}})"
+            [ "${SELF_HOST_FXA}" = yes ] || echo "  publish ${ADMIN_HOST} on your reverse proxy: docs/reverse-proxy.md#the-admin-ui" ;;
+        header) echo "  or through your proxy, signed in by ${ADMIN_AUTH_HEADER_V} from ${ADMIN_TRUSTED_PROXIES_V} (only ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+, }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}), see docs/admin/signing-in.md#trusted-header" ;;
+    esac
 fi
 
 echo ""
@@ -876,7 +567,7 @@ if [ "${CONTAINER_RUNTIME}" = "podman" ] && [ "${DEPLOY_METHOD}" = "quadlets" ];
     if [ "${SELF_HOST_FXA}" = "yes" ]; then
         echo "     systemctl --user start firefox-sync-fxa-content.service firefox-sync-fxa-profile.service \\"
         echo "       firefox-sync-fxa-profile-worker.service firefox-sync-fxa-profile-static.service"
-        echo "     then in Firefox set identity.fxaccounts.autoconfig.uri to https://accounts.${FXA_DOMAIN} (see docs/firefox.md#self-hosted-accounts)"
+        echo "     then in Firefox set identity.fxaccounts.autoconfig.uri to ${FXA_CONTENT_URL_V} (see docs/firefox.md#self-hosted-accounts)"
     fi
     echo "  2. (Optional) loginctl enable-linger \$USER"
     if [ "${BACKUPS}" = yes ]; then
@@ -900,11 +591,16 @@ elif [ "${CONTAINER_RUNTIME}" = "podman" ]; then
 else
     echo "Next steps:"
     echo "  1. docker compose up -d"
-    [ "${SELF_HOST_FXA}" = "yes" ] && echo "     then in Firefox set identity.fxaccounts.autoconfig.uri to https://accounts.${FXA_DOMAIN} (see docs/firefox.md#self-hosted-accounts)"
+    [ "${SELF_HOST_FXA}" = "yes" ] && echo "     then in Firefox set identity.fxaccounts.autoconfig.uri to ${FXA_CONTENT_URL_V} (see docs/firefox.md#self-hosted-accounts)"
     [ "${BACKUPS}" = yes ] || echo "  (Optional) nightly backups: add backup to COMPOSE_PROFILES in .env (docs/backups.md#the-backup-service)"
     echo "  2. (Optional) Install systemd service:"
     echo "     sudo cp config/systemd/syncstorage-rs.service /etc/systemd/system/"
     echo "     sudo systemctl enable --now syncstorage-rs.service"
 fi
 
+# the public URLs on another port than their scheme's: the nginx examples listen on 443
+for url in "${SYNC_URL}" "${FXA_CONTENT_URL_V}" "${FXA_AUTH_URL_V}" "${FXA_PROFILE_URL_V}" "${FXA_PAIRING_URL_V}" "${ADMIN_URL}"; do
+    [ -n "$(url_port "${url}")" ] && echo "NOTE: ${url} has a port of its own: the server blocks of config/nginx/ listen on 443, change their listen lines to $(url_port "${url}")"
+done
+secrets_report end
 echo "=========================================="
