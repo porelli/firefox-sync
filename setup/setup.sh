@@ -138,6 +138,12 @@ apply_sed "${NEW_ENV}" "s|SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=${SYNC_MASTER
 apply_sed "${NEW_ENV}" "s|^SYNC_METRICS_HASH_SECRET=.*|SYNC_METRICS_HASH_SECRET=${SYNC_METRICS_HASH_SECRET}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=$(sed_escape "${SYNC_URL}")|"
 apply_sed "${NEW_ENV}" "s|^SYNC_EXPORT_PORT=.*|SYNC_EXPORT_PORT=${SYNC_EXPORT_PORT}|"
+# the other ports of this host (setup/ports.sh: the next free one where something listens)
+for port_entry in "${EXPORT_PORTS[@]}"; do
+    port_name=${port_entry%%|*} port_value=${port_entry%%|*}_V
+    [ "${port_name}" = SYNC_EXPORT_PORT ] && continue
+    apply_sed "${NEW_ENV}" "s|^${port_name}=.*|${port_name}=$(sed_escape "${!port_value}")|"
+done
 apply_sed "${NEW_ENV}" "s|^SYNC_MAX_USERS=.*|SYNC_MAX_USERS=${SYNC_MAX_USERS}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_ALLOWED_ACCOUNTS=.*|SYNC_ALLOWED_ACCOUNTS=${SYNC_ALLOWED_ACCOUNTS}|"
 apply_sed "${NEW_ENV}" "s|^SYNC_IMAGE_TAG=.*|SYNC_IMAGE_TAG=${SYNC_IMAGE_TAG}|"
@@ -159,6 +165,12 @@ apply_sed "${NEW_ENV}" "s|^TRAEFIK_NETWORK=.*|TRAEFIK_NETWORK=${TRAEFIK_NETWORK_
 apply_sed "${NEW_ENV}" "s|^TRAEFIK_ENTRYPOINTS=.*|TRAEFIK_ENTRYPOINTS=${TRAEFIK_ENTRYPOINTS_V}|"
 apply_sed "${NEW_ENV}" "s|^TRAEFIK_HTTP_ENTRYPOINT=.*|TRAEFIK_HTTP_ENTRYPOINT=${TRAEFIK_HTTP_ENTRYPOINT_V}|"
 apply_sed "${NEW_ENV}" "s|^TRAEFIK_CERTRESOLVER=.*|TRAEFIK_CERTRESOLVER=${TRAEFIK_CERTRESOLVER_V}|"
+# your own proxy's certificates: per host name, or one for all
+apply_sed "${NEW_ENV}" "s|^PROXY_CERTS=.*|PROXY_CERTS=${PROXY_CERTS_V}|"
+for port_name in PROXY_CERT_FILE PROXY_CERT_KEY_FILE PROXY_NGINX_SSL_INCLUDE PROXY_CERT_NAMES; do
+    port_value=${port_name}_V
+    apply_sed "${NEW_ENV}" "s|^${port_name}=.*|${port_name}=$(sed_escape "${!port_value}")|"
+done
 apply_sed "${NEW_ENV}" "s|^SYNC_DB=.*|SYNC_DB=${SYNC_DB}|"
 [ "${DATABASE_BACKEND}" = mariadb ] && [ "${EXTERNAL_DB}" != "yes" ] && \
     apply_sed "${NEW_ENV}" "s|^# SYNC_MARIADB_IMAGE=.*|SYNC_MARIADB_IMAGE=$(sed_escape "${SYNC_MARIADB_PIN}")|"
@@ -364,6 +376,7 @@ if [ -f "${SCRIPT_DIR}/.env" ]; then
 fi
 replace_env "${NEW_ENV}" "${SCRIPT_DIR}/.env" || exit 1
 unset ENV_READ
+oauth_url_check
 
 # the SQL for your own database server, with the names and passwords of .env (docs/databases.md#create-the-databases-and-users)
 [ "${EXTERNAL_DB}" = "yes" ] && render_sync_sql "${DATABASE_BACKEND}"
@@ -424,7 +437,8 @@ fi
 if [ "${ADMIN_UI}" = "yes" ]; then
     echo ""
     if [ "${ADMIN_KEEP_PASSWORD:-yes}" = yes ]; then
-        echo "Admin UI: http://localhost:8090 on this host (over SSH: ssh -L 8090:127.0.0.1:8090 <host>),"
+        port_split "${ADMIN_EXPORT_PORT_V}"
+        echo "Admin UI: http://localhost:${PORT_NUM} on this host (over SSH: ssh -L ${PORT_NUM}:127.0.0.1:${PORT_NUM} <host>),"
         echo "  password: ADMIN_PASSWORD in .env. See docs/admin/README.md"
     else
         echo "Admin UI: single sign-on only (ADMIN_PASSWORD empty). See docs/admin/signing-in.md"
@@ -583,8 +597,23 @@ fi
 
 # the reverse proxy: what to do with proxy/
 echo ""
+# the ports moved from their defaults (something else listens there)
+for port_entry in "${EXPORT_PORTS[@]}"; do
+    port_value=PORT_NOTE_${port_entry%%|*}
+    [ -z "${!port_value:-}" ] || echo "NOTE: ${!port_value} (${port_entry%%|*} in .env)"
+done
 case "${PROXY}" in
-    own) echo "Reverse proxy: put the file of yours from proxy/ (nginx.conf, Caddyfile, traefik.yml) into its configuration and reload it (the README of proxy/, docs/reverse-proxy.md)" ;;
+    own)
+        echo "Reverse proxy: your reverse proxy must serve these host names, forwarding to these ports of this host:"
+        proxy_table "$([ "${DEPLOY_METHOD}" = quadlets ] && echo quadlets || echo compose)"
+        echo "  the file to install: ${SCRIPT_DIR}/proxy/nginx.conf (nginx; Caddy: proxy/Caddyfile, Traefik: proxy/traefik.yml),"
+        echo "  into its configuration, then reload it (the README of proxy/, docs/reverse-proxy.md)"
+        if [ "${PROXY_CERTS_V}" = one ]; then
+            echo "  certificates: ${PROXY_NGINX_SSL_INCLUDE_V:+nginx includes ${PROXY_NGINX_SSL_INCLUDE_V}; }${PROXY_CERT_FILE_V} for every host name"
+        elif [ -n "$(setup_tls_hosts)" ]; then
+            echo "  certificates: one per host name, where proxy/nginx.conf says; with nginx running: certbot certonly --nginx -d <host>"
+            echo "  (docs/reverse-proxy.md#certificates)"
+        fi ;;
     caddy)
         echo "Reverse proxy: the bundled Caddy (docs/reverse-proxy.md#the-bundled-caddy), proxy/Caddyfile.bundled, on the host's network, ports ${CADDY_HTTP_PORT_V} and ${CADDY_HTTPS_PORT_V}"
         if [ "${CADDY_ACME_CA_V}" = internal ]; then
@@ -597,4 +626,6 @@ case "${PROXY}" in
     traefik) echo "Reverse proxy: your Traefik reads the labels of proxy/traefik-compose.yml (in COMPOSE_FILE), the public containers on ${TRAEFIK_NETWORK_V}, with Traefik on it and nothing else (docs/reverse-proxy.md#traefik-labels)" ;;
 esac
 secrets_report end
+# the nginx examples of an earlier setup, moved out of the way (write_proxy): said again, last
+[ -z "${NGINX_OLD_MOVED}" ] || { echo ""; nginx_old_said; }
 echo "=========================================="

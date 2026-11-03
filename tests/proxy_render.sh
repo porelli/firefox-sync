@@ -4,8 +4,9 @@
 # (lines of .env over .env-example; deploy=compose|quadlets): each file the same as the one
 # kept next to it (tests/proxy/<case>/<file>; UPDATE=1 writes them again, to review in the
 # diff). Then, with a container runtime (docker, found or CONTAINERS=1; CONTAINERS=0: not),
-# each file as its proxy reads it: nginx -t (nginx:latest, a test certificate for each host,
-# and the variant with the containers by name of tests/e2e-fxa.sh), caddy validate
+# each file as its proxy reads it: nginx -t (nginx:latest, a test certificate for each host, or
+# where the one for all is, PROXY_CERTS=one, and the variant with the containers by name of
+# tests/e2e-fxa.sh), caddy validate
 # (caddy:latest, also with the snippets of tests/caddy/authelia in caddy.d/), Traefik
 # (traefik:latest) with the file provider: every router, middleware and service enabled, none
 # with an error, and docker compose config with compose/caddy.yml or proxy/traefik-compose.yml.
@@ -39,7 +40,11 @@ ffs_temp_init
 # case_env <case>: the .env of the case: .env-example with its settings after it (the last line counts)
 case_env() {
     { cat "${CODE}/.env-example"; grep -v '^#\|^deploy=' "${TESTS}/proxy/${1}/settings"; } > "${WORK}/${1}.env"
+    # (the time of .env in the first lines of each file: always the same)
+    TZ=UTC touch -t 202601010000.00 "${WORK}/${1}.env"
 }
+# the files as kept: the path of the case's .env without this run's directory
+masked() { sed "s|${WORK}/|@WORK@/|g" "${1}"; }
 case_deploy() { sed -n 's/^deploy=//p' "${TESTS}/proxy/${1}/settings"; }
 
 CASES=$(cd "${TESTS}/proxy" && ls -d -- */ | tr -d /)
@@ -70,13 +75,13 @@ for c in ${CASES}; do
     files=$(cd "${out}" && ls -p | grep -v /)
     if [ -n "${UPDATE:-}" ]; then
         (cd "${TESTS}/proxy/${c}" && ls | grep -v '^settings$' | while read -r f; do rm -f "${f}"; done)
-        for f in ${files}; do cp "${out}/${f}" "${TESTS}/proxy/${c}/${f}"; done
+        for f in ${files}; do masked "${out}/${f}" > "${TESTS}/proxy/${c}/${f}"; done
         echo "  written: tests/proxy/${c}/ ($(echo ${files}))"
         continue
     fi
     same=yes
     for f in $(cd "${TESTS}/proxy/${c}" && ls | grep -v '^settings$') ${files}; do
-        if ! diff -u "${TESTS}/proxy/${c}/${f}" "${out}/${f}" > "${WORK}/diff" 2>&1; then
+        if ! masked "${out}/${f}" 2> /dev/null | diff -u "${TESTS}/proxy/${c}/${f}" - > "${WORK}/diff" 2>&1; then
             same=no
             echo "  ${f}:"
             sed 's/^/    /' "${WORK}/diff" | head -40
@@ -97,10 +102,30 @@ if ! docker info > /dev/null 2>&1; then
 fi
 for image in nginx:latest caddy:latest traefik:latest; do docker pull -q "${image}" > /dev/null; done
 
+# cert_mounts <file>: one certificate for all (PROXY_CERTS=one): the test certificate where the
+# file says (nginx's ssl_certificate and its key, an include with them, Caddy's tls, Traefik's
+# certFile and keyFile), as docker run's -v
+cert_mounts() {
+    local f
+    for f in $(sed -n -e 's|^  ssl_certificate \(/.*\);$|\1|p' -e 's|^	tls \(/[^ ]*\) .*$|\1|p' -e 's|^    - certFile: \(/.*\)$|\1|p' "${1}" | grep -v '^/etc/letsencrypt/' | sort -u); do
+        printf -- '-v %s:%s:ro ' "${WORK}/cert.pem" "${f}"
+    done
+    for f in $(sed -n -e 's|^  ssl_certificate_key \(/.*\);$|\1|p' -e 's|^	tls /[^ ]* \(/.*\)$|\1|p' -e 's|^      keyFile: \(/.*\)$|\1|p' "${1}" | grep -v '^/etc/letsencrypt/' | sort -u); do
+        printf -- '-v %s:%s:ro ' "${WORK}/key.pem" "${f}"
+    done
+    for f in $(sed -n 's|^  include \(/.*\);$|\1|p' "${1}" | sort -u); do
+        printf -- '-v %s:%s:ro -v %s:/etc/ffs-test/cert.pem:ro -v %s:/etc/ffs-test/key.pem:ro ' "${WORK}/ssl-include.conf" "${f}" "${WORK}/cert.pem" "${WORK}/key.pem"
+    done
+}
+
 echo "== nginx -t (nginx:latest)"
 # a test certificate where each ssl_certificate says (one for every host)
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj "/CN=ffs proxy test" \
     -keyout "${WORK}/key.pem" -out "${WORK}/cert.pem" 2> /dev/null || { echo "FAIL: openssl"; exit 1; }
+chmod a+r "${WORK}/key.pem" "${WORK}/cert.pem"
+# an include of yours with the ssl_* lines (PROXY_NGINX_SSL_INCLUDE)
+printf 'ssl_certificate /etc/ffs-test/cert.pem;\nssl_certificate_key /etc/ffs-test/key.pem;\nssl_protocols TLSv1.2 TLSv1.3;\n' > "${WORK}/ssl-include.conf"
+chmod a+r "${WORK}/ssl-include.conf"
 for c in ${CASES}; do
     for conf in "${WORK}/${c}/nginx.conf" "${WORK}/${c}-nginx-network.conf"; do
         rm -rf "${WORK}/le" && mkdir -p "${WORK}/le"
@@ -108,7 +133,8 @@ for c in ${CASES}; do
             mkdir -p "${WORK}/le/live/${host}" && cp "${WORK}/cert.pem" "${WORK}/le/live/${host}/fullchain.pem" && cp "${WORK}/key.pem" "${WORK}/le/live/${host}/privkey.pem"
         done
         chmod -R a+rX "${WORK}/le" && chmod a+r "${conf}"
-        res=$(docker run --rm -v "${conf}:/etc/nginx/conf.d/default.conf:ro" -v "${WORK}/le:/etc/letsencrypt:ro" nginx:latest nginx -t 2>&1)
+        # shellcheck disable=SC2046 # (cert_mounts: -v arguments, one word each)
+        res=$(docker run --rm -v "${conf}:/etc/nginx/conf.d/default.conf:ro" -v "${WORK}/le:/etc/letsencrypt:ro" $(cert_mounts "${conf}") nginx:latest nginx -t 2>&1)
         check "$? $(printf '%s' "${res}" | grep -c 'test is successful')" "0 1" "${c}: nginx -t, $(basename "${conf}")" || echo "${res}" | tail -5
     done
 done
@@ -118,7 +144,8 @@ for c in ${CASES}; do
     for f in Caddyfile Caddyfile.bundled; do
         [ -f "${WORK}/${c}/${f}" ] || continue
         chmod -R a+rX "${WORK}/${c}"
-        res=$(docker run --rm -v "${WORK}/${c}:/etc/caddy:ro" caddy:latest caddy validate --config "/etc/caddy/${f}" --adapter caddyfile 2>&1)
+        # shellcheck disable=SC2046 # (cert_mounts: -v arguments, one word each)
+        res=$(docker run --rm -v "${WORK}/${c}:/etc/caddy:ro" $(cert_mounts "${WORK}/${c}/${f}") caddy:latest caddy validate --config "/etc/caddy/${f}" --adapter caddyfile 2>&1)
         check "$? $(printf '%s' "${res}" | grep -c '^Valid configuration')" "0 1" "${c}: caddy validate ${f}" || echo "${res}" | tail -5
     done
 done
@@ -146,7 +173,8 @@ for c in ${CASES}; do
         "--certificatesresolvers.${resolver}.acme.caserver=https://127.0.0.1:1/directory" "--certificatesresolvers.${resolver}.acme.tlschallenge=true")
     chmod a+r "${WORK}/${c}/traefik.yml"
     docker rm -f "${NAME}-traefik" > /dev/null 2>&1
-    docker run -d --name "${NAME}-traefik" -v "${WORK}/${c}/traefik.yml:/dynamic/traefik.yml:ro" traefik:latest "${args[@]}" > /dev/null
+    # shellcheck disable=SC2046 # (cert_mounts: -v arguments, one word each)
+    docker run -d --name "${NAME}-traefik" -v "${WORK}/${c}/traefik.yml:/dynamic/traefik.yml:ro" $(cert_mounts "${WORK}/${c}/traefik.yml") traefik:latest "${args[@]}" > /dev/null
     for _ in $(seq 1 30); do docker exec "${NAME}-traefik" wget -qO- http://127.0.0.1:8080/api/overview > /dev/null 2>&1 && break; sleep 1; done
     sleep 2
     bad=""

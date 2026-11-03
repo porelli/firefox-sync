@@ -2,6 +2,44 @@
 # prepare_environment.sh --upgrade and --render-units: upgrade_env. Sourced by
 # prepare_environment.sh: functions only.
 
+# upgrade_ports: the ports of this host the stack publishes (setup/ports.sh), of .env (ENV_READ):
+# one something else listens on (not this stack's own containers) moves to the next free port,
+# said, and proxy/ follows; when the containers of this stack could not be listed (a runtime
+# that does not answer), only said. Run by upgrade_env, its set_value
+upgrade_ports() {
+    local fxa=no admin=no pairing=no name value free published dup
+    fxa_installed && fxa=yes
+    case ",$(env_plain COMPOSE_PROFILES)," in *,admin,*) admin=yes ;; esac
+    case ",$(env_plain COMPOSE_PROFILES)," in *,pairing,*) pairing=yes ;; esac
+    if [ "${quadlets}" = yes ]; then
+        pairing=no
+        [ -f "${QUADLET_DIR}/firefox-sync-admin.container" ] && admin=yes
+    fi
+    published=$(export_ports_published "${fxa}" "${admin}" "${pairing}")
+    own_ports
+    host_listeners
+    local taken=""
+    for name in ${published}; do
+        value=$(env_value "${name}")
+        [ -n "${value}" ] || value=$(ENV_READ="${SCRIPT_DIR}/.env-example" env_plain "${name}")
+        valid_export_port "${value}" || continue
+        port_split "${value}"
+        case " ${taken} " in *" $((10#${PORT_NUM})) "*) dup=yes ;; *) dup="" ;; esac
+        if { [ -n "${dup}" ] || port_busy "${value}"; } && free=$(port_free_from "${value}" "${taken}"); then
+            if [ "${FFS_OWN_KNOWN}" = yes ]; then
+                set_value "${name}" "${free}"
+                echo "NOTE: $(port_moved_note "${name}" "${value}" "${free}") now (${name}; proxy/ follows: put it into your proxy again)"
+                value=${free}
+            else
+                echo "WARNING: ${value} (${name}) is in use on this host, and the containers of this stack could not be listed:"
+                echo "  if it is not this stack, set ${name}=${free} in .env and run this again"
+            fi
+        fi
+        port_split "${value}"
+        taken="${taken} $((10#${PORT_NUM}))"
+    done
+}
+
 # ./prepare_environment.sh --upgrade: the .env of an install that runs (docker compose), given
 # the settings of this release that need a value of their own (docs/upgrading.md#older-firefox-sync-releases), nothing else
 # changed (and proxy/, the configuration of the reverse proxy, written again from it): the admin UI's database users (ADMIN_DB_PASSWORD; the event log moves out of the
@@ -315,6 +353,7 @@ upgrade_env() {
         [ "${#generated[@]}" = 0 ] || echo "Generated, as they were not in .env: ${generated[*]}"
     }
     [ "${quadlets}" = yes ] && add_missing_settings
+    upgrade_ports
     old_names_in_environment
     if [ "${#changed[@]}" = 0 ]; then
         rm -f "${env_file}"
@@ -353,6 +392,7 @@ upgrade_env() {
     fi
     fxa_mariadb_image_check
     fxa_installed && UPGRADING=yes fxa_mysql_image_check
+    oauth_url_check
     # the configuration of the reverse proxy for this .env (setup/proxy.sh): proxy/ written again,
     # a file changed by hand kept as <file>.before-upgrade-<UTC time>
     echo ""

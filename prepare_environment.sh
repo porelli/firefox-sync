@@ -10,8 +10,8 @@
 #   ./prepare_environment.sh --render-units [--fresh]  the Quadlet units again from .env
 #   ./prepare_environment.sh --render-proxy     the configuration of the reverse proxy (proxy/) again from .env
 #
-# The code is in setup/ (env.sh, images.sh, databases.sh, validate.sh, quadlets.sh, upgrade.sh,
-# proxy.sh, the reverse proxy's configuration, questions.sh, the questions, and setup.sh, what it writes), next to this script's real path
+# The code is in setup/ (env.sh, images.sh, databases.sh, validate.sh, ports.sh, the host ports,
+# quadlets.sh, upgrade.sh, proxy.sh, the reverse proxy's configuration, questions.sh, the questions, and setup.sh, what it writes), next to this script's real path
 # (a symlink to it works too).
 # Sourced (tests/prepare_functions.sh, tests/fxa_fix.sh): the functions only, nothing runs.
 
@@ -47,6 +47,8 @@ source "${SELF_DIR}/setup/images.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; e
 source "${SELF_DIR}/setup/databases.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/validate.sh
 source "${SELF_DIR}/setup/validate.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
+# shellcheck source=setup/ports.sh
+source "${SELF_DIR}/setup/ports.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/quadlets.sh
 source "${SELF_DIR}/setup/quadlets.sh" || { [ -n "${FFS_SOURCED}" ] && return 1; exit 1; }
 # shellcheck source=setup/upgrade.sh

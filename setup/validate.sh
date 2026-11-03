@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # prepare_environment.sh: the checks of what the setup is given: addresses and ports, limits,
-# database names and hosts. Sourced by prepare_environment.sh: functions only.
+# database names and hosts; and of .env on every path that writes from it (oauth_url_check).
+# Sourced by prepare_environment.sh: functions only.
 
 # an IPv4 address: four numbers up to 255
 valid_ipv4() {
@@ -100,3 +101,22 @@ valid_host() {
     esac
 }
 valid_port() { case "${1}" in ''|*[!0-9]*) echo "ERROR: not a port: '${1}'"; exit 1 ;; esac; }
+
+# oauth_url_check: with the self-hosted accounts, FXA_OAUTH_SERVER_URL of .env (ENV_READ) is the
+# accounts API inside the stack, http://fxa-auth:9000/v1, where the Sync server checks each
+# sign-in. A WARNING when it points at fxa-auth on another port: FXA_AUTH_EXPORT_PORT is a port
+# of the host, for your reverse proxy, never the container's (docs/troubleshooting.md#sign-in-keys-connection-refused).
+# Run on every path that writes from .env (the setup, --upgrade, --render-units, --render-proxy)
+oauth_url_check() {
+    local url rest host port=""
+    fxa_installed || return 0
+    url=$(env_value FXA_OAUTH_SERVER_URL)
+    rest=${url#*://} rest=${rest%%/*}
+    host=${rest%:*}
+    [ "${host}" = "${rest}" ] || port=${rest##*:}
+    case "$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')" in fxa-auth|*-fxa-auth) ;; *) return 0 ;; esac
+    [ "${port}" = 9000 ] && return 0
+    echo "WARNING: FXA_OAUTH_SERVER_URL=${url} in .env: FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy."
+    echo "  Set FXA_OAUTH_SERVER_URL=http://fxa-auth:9000/v1 in .env, then $([ "${DEPLOY_METHOD:-}" = quadlets ] && echo "./prepare_environment.sh --render-units" || echo "docker compose up -d"): until then every sign-in of Firefox to Sync fails"
+    echo "  (the admin UI: Sign-in keys ... connection refused; docs/troubleshooting.md#sign-in-keys-connection-refused)"
+}

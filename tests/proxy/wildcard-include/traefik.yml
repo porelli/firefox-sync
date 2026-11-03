@@ -1,0 +1,41 @@
+# Firefox Sync behind Traefik: a dynamic configuration of its file provider (providers.file,
+# filename or directory): put this file there, Traefik reads it again by itself. Traefik on this host
+# (the stack's ports are on 127.0.0.1); in a container, see the labels (PROXY=traefik). Entry points:
+# TRAEFIK_ENTRYPOINTS, TRAEFIK_HTTP_ENTRYPOINT; certificates: PROXY_CERT_FILE, tls.certificates at the end
+# Written by prepare_environment.sh from @WORK@/wildcard-include.env (changed 2026-01-01 00:00:00 UTC).
+# Again by --upgrade and --render-proxy: a change of yours is then kept aside, as
+# <file>.before-<...>-<time>. See docs/reverse-proxy.md
+http:
+  routers:
+    # the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT
+    firefox-sync-sync:
+      rule: "Host(`sync.example.com`)"
+      entryPoints: [websecure]
+      service: firefox-sync-sync
+      middlewares: [firefox-sync-sync-body]
+      tls: {}
+    # HTTP to HTTPS
+    firefox-sync-https:
+      rule: "Host(`sync.example.com`)"
+      entryPoints: [web]
+      middlewares: [firefox-sync-https]
+      service: noop@internal
+  middlewares:
+    firefox-sync-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    # (docs/reverse-proxy.md#request-size)
+    firefox-sync-sync-body:
+      buffering:
+        maxRequestBodyBytes: 10485760
+  services:
+    firefox-sync-sync:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5000"
+# one certificate for every host (PROXY_CERTS=one): Traefik picks it by the names it is for
+tls:
+  certificates:
+    - certFile: /etc/ssl/example.com/fullchain.pem
+      keyFile: /etc/ssl/example.com/privkey.pem

@@ -66,6 +66,8 @@ FLOW = [
     ("Enable nightly backups", "\r", None),
     ("Do you already run a reverse proxy", "\r", None),
     ("Who can open the admin UI's public address", "\r", None),
+    ("Change any of these ports", "\r", "the ports of this host the stack listens on, the next free one where something listens"),
+    ("How your proxy has their certificates", "\r", None),
     ("write .env and the examples now", "2", "the review: every answer, the secrets it generates named"),
     ("Public URL of the Sync server", "\r", "a part changed from the review: its questions again"),
     ("listens on", "\r", None),

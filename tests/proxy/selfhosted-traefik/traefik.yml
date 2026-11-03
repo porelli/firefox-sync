@@ -2,8 +2,9 @@
 # filename or directory): put this file there, Traefik reads it again by itself. Traefik on this host
 # (the stack's ports are on 127.0.0.1); in a container, see the labels (PROXY=traefik). Entry points:
 # TRAEFIK_ENTRYPOINTS, TRAEFIK_HTTP_ENTRYPOINT; certificates: TRAEFIK_CERTRESOLVER (empty: the default)
-# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
-# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+# Written by prepare_environment.sh from @WORK@/selfhosted-traefik.env (changed 2026-01-01 00:00:00 UTC).
+# Again by --upgrade and --render-proxy: a change of yours is then kept aside, as
+# <file>.before-<...>-<time>. See docs/reverse-proxy.md
 http:
   routers:
     # the Sync server (SYNC_PUBLIC_URL), to SYNC_EXPORT_PORT

@@ -1,0 +1,16 @@
+# one certificate for every host name (a wildcard of yours, PROXY_CERTS=one), your own proxy:
+# the self-hosted accounts, the pairing server, the admin UI on a public address
+deploy=compose
+SYNC_PUBLIC_URL=https://sync.example.com
+COMPOSE_PROFILES=admin,pairing
+COMPOSE_PROJECT_NAME=firefox-sync
+FXA_MYSQL_PASSWORD=not-a-placeholder
+FXA_CONTENT_URL=https://accounts.example.com
+FXA_AUTH_URL=https://api.example.com
+FXA_PROFILE_URL=https://profile.example.com
+FXA_PAIRING_URL=wss://pairing.example.com
+ADMIN_OIDC_REDIRECT_URL=https://admin.example.com/auth/callback
+PROXY_CERTS=one
+PROXY_CERT_FILE=/etc/ssl/example.com/fullchain.pem
+PROXY_CERT_KEY_FILE=/etc/ssl/example.com/privkey.pem
+PROXY_CERT_NAMES=*.example.com

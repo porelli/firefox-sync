@@ -31,8 +31,10 @@ SETUP_STEPS=(
     "@Backups"
     backups
     "@Reverse proxy"
-    proxy proxy_admin_allow caddy_email caddy_ca caddy_http_port caddy_https_port traefik_network
-    traefik_entrypoints traefik_http_entrypoint traefik_certresolver
+    proxy proxy_admin_allow ports admin_listen fxa_content_listen fxa_auth_listen fxa_profile_listen
+    fxa_profile_static_listen admin_gate_listen pairing_listen proxy_certs proxy_cert_file
+    proxy_cert_key_file proxy_nginx_ssl_include proxy_cert_names caddy_email caddy_ca caddy_http_port
+    caddy_https_port traefik_network traefik_entrypoints traefik_http_entrypoint traefik_certresolver
     "@Review"
     confirm
 )
@@ -452,6 +454,105 @@ run_steps() {
     done
 }
 
+# --- the ports of this host the stack listens on for your reverse proxy (setup/ports.sh)
+# listen_default <setting>: its [address:]port of before (run again on an install: what its .env
+# has, SYNC_EXPORT_PORT's old name too), else that of .env-example
+listen_default() {
+    local v=""
+    if [ -f "${SCRIPT_DIR}/.env" ]; then
+        v=$(env_plain "${1}")
+        [ -n "${v}" ] || [ "${1}" != SYNC_EXPORT_PORT ] || v=$(env_plain CONTAINER_EXPORT_PORT)
+    fi
+    [ -n "${v}" ] || v=$(ENV_READ="${SCRIPT_DIR}/.env-example" env_plain "${1}")
+    printf '%s' "${v}"
+}
+# the settings of the ports the stack publishes with the answers so far, separated by spaces
+listen_published() { export_ports_published "${SELF_HOST_FXA:-no}" "${ADMIN_UI:-no}" "${PAIRING:-no}"; }
+# listen_taken <setting>: the ports chosen for the published ones before it (EXPORT_PORTS' order)
+listen_taken() {
+    local e name value taken="" published
+    published=" $(listen_published) "
+    for e in "${EXPORT_PORTS[@]}"; do
+        name=${e%%|*}
+        [ "${name}" = "${1}" ] && break
+        case "${published}" in *" ${name} "*) ;; *) continue ;; esac
+        value=${name}_V value=${!value:-}
+        valid_export_port "${value}" || continue
+        port_split "${value}"
+        taken="${taken} $((10#${PORT_NUM}))"
+    done
+    printf '%s' "${taken# }"
+}
+# listen_auto <setting>: its port of before (listen_default) in LISTEN_BASE, and in LISTEN_AUTO the
+# next free one from it: not in use on this host (but by this stack), nor another component's
+listen_auto() {
+    LISTEN_BASE=$(listen_default "${1}")
+    LISTEN_AUTO=${LISTEN_BASE}
+    valid_export_port "${LISTEN_BASE}" || return 0
+    # (asked once, in this shell: what listens, what this stack publishes)
+    own_ports
+    host_listeners
+    # (an install's own port, and its containers could not be listed: it may be theirs, kept)
+    [ "${FFS_OWN_KNOWN}" = no ] && [ -f "${SCRIPT_DIR}/.env" ] && env_has "${1}" && return 0
+    LISTEN_AUTO=$(port_free_from "${LISTEN_BASE}" "$(listen_taken "${1}")") || LISTEN_AUTO=${LISTEN_BASE}
+}
+# ask_listen <setting> <id> <question> [ask|auto]: where a component listens on this host,
+# [address:]port, in <setting>_V. Its default: the port of before, or the next free one when
+# something else listens there (said: PORT_NOTE_<setting>). auto: that, not asked (unless given
+# by its id). A port given that is in use: kept, with a WARNING; one of another component's:
+# asked again. A value of the .env of before this check does not know: kept as it is
+ask_listen() {
+    local setting=${1} id=${2} question=${3} mode=${4:-ask} value
+    listen_auto "${setting}"
+    printf -v "PORT_NOTE_${setting}" '%s' ""
+    if [ "${mode}" = auto ] && ! answer_given "${id}"; then
+        printf -v "${setting}_V" '%s' "${LISTEN_AUTO}"
+        [ "${LISTEN_AUTO}" = "${LISTEN_BASE}" ] || printf -v "PORT_NOTE_${setting}" '%s' "$(port_moved_note "${setting}" "${LISTEN_BASE}" "${LISTEN_AUTO}")"
+        return 0
+    fi
+    [ "${LISTEN_AUTO}" = "${LISTEN_BASE}" ] || hint "  $(port_moved_note "${setting}" "${LISTEN_BASE}" "${LISTEN_AUTO}") by default"
+    while :; do
+        ask "${id}" "${question}" "${LISTEN_AUTO}" || return
+        value=${ANSWER}
+        if [ -n "${FFS_DEFAULTED}" ]; then
+            # what an install has is kept as it is, also a value this check does not know
+            if ! valid_export_port "${value}"; then
+                echo "WARNING: ${setting}='${value}' of .env is not [address:]port as this script knows it: kept"
+            elif [ "${value}" != "${LISTEN_BASE}" ]; then
+                printf -v "PORT_NOTE_${setting}" '%s' "$(port_moved_note "${setting}" "${LISTEN_BASE}" "${value}")"
+            fi
+            printf -v "${setting}_V" '%s' "${value}"
+            return 0
+        fi
+        case "${value}" in
+            *[!0-9]*) ;;
+            *) value=127.0.0.1:${value} ;;
+        esac
+        if ! valid_export_port "${value}"; then
+            ui_error "not a port or an address and port: '${value}' (e.g. 5000, 127.0.0.1:5000, 0.0.0.0:5000, [::]:5000)"
+        else
+            port_split "${value}"
+            case " $(listen_taken "${setting}") " in
+                *" $((10#${PORT_NUM})) "*) ui_error "port $((10#${PORT_NUM})) is another component's of this stack already: each listens on a port of its own" ;;
+                *)
+                    port_busy "${value}" && echo "WARNING: ${value}: something else listens on this host there already (not this stack): $(export_port_what "${setting}") cannot start until it is free"
+                    printf -v "${setting}_V" '%s' "${value}"
+                    return 0 ;;
+            esac
+        fi
+        retry
+    done
+}
+# listen_step <setting> <id> <question>: a port of the reverse proxy's part, asked when the
+# answer to ports is yes (else the default, said in its hint); not published: as before
+listen_step() {
+    case " $(listen_published) " in
+        *" ${1} "*) ;;
+        *) printf -v "${1}_V" '%s' "$(listen_default "${1}")"; printf -v "PORT_NOTE_${1}" '%s' ""; return 0 ;;
+    esac
+    ask_listen "${1}" "${2}" "${3}" "$([ "${PORTS_CHANGE}" = yes ] && echo ask || echo auto)"
+}
+
 # --- 1) Deployment
 step_dir() {
     hint "The checkout of firefox-sync: .env and the examples of config/ are written there"
@@ -524,34 +625,11 @@ step_sync_url() {
 step_sync_listen() {
     # where the Sync server listens for your reverse proxy, [address:]port: on this host only by
     # default, as the other ports; a port alone is 127.0.0.1:<port>, 0.0.0.0:<port> (or [::]:<port>)
-    # every interface. Run again on an install: what its .env has, as it is
-    local default=127.0.0.1:5000 previous
-    if [ -f "${SCRIPT_DIR}/.env" ]; then
-        previous=$(env_plain SYNC_EXPORT_PORT); previous=${previous:-$(env_plain CONTAINER_EXPORT_PORT)}
-        default=${previous:-${default}}
-    fi
+    # every interface. Run again on an install: what its .env has, as it is; in use: the next port
     hint "Where your reverse proxy reaches the Sync server: [address:]port, a port alone is on 127.0.0.1"
     hint "  (this host only); 0.0.0.0:<port> or [::]:<port> is every interface"
-    while :; do
-        SYNC_EXPORT_KEPT=""
-        ask sync_listen "Address and port the Sync server listens on" "${default}" || return
-        SYNC_EXPORT_PORT=${ANSWER}
-        if [ -n "${FFS_DEFAULTED}" ]; then
-            # what an install has is kept as it is, also a value this check does not know
-            if ! valid_export_port "${SYNC_EXPORT_PORT}"; then
-                echo "WARNING: SYNC_EXPORT_PORT='${SYNC_EXPORT_PORT}' of .env is not [address:]port as this script knows it: kept"
-                SYNC_EXPORT_KEPT=yes
-            fi
-            return 0
-        fi
-        case "${SYNC_EXPORT_PORT}" in
-            *[!0-9]*) ;;
-            *) SYNC_EXPORT_PORT=127.0.0.1:${SYNC_EXPORT_PORT} ;;
-        esac
-        valid_export_port "${SYNC_EXPORT_PORT}" && return 0
-        ui_error "not a port or an address and port: '${SYNC_EXPORT_PORT}' (e.g. 5000, 127.0.0.1:5000, 0.0.0.0:5000, [::]:5000)"
-        retry
-    done
+    ask_listen SYNC_EXPORT_PORT sync_listen "Address and port the Sync server listens on" || return
+    SYNC_EXPORT_PORT=${SYNC_EXPORT_PORT_V}
 }
 step_sync_image_tag() {
     hint "latest follows the newest release (docs/upgrading.md#sync-server); a release's tag pins it"
@@ -1267,6 +1345,121 @@ step_proxy_admin_allow() {
         retry
     done
 }
+step_ports() {
+    # the ports of this host the stack listens on for your proxy, but the Sync server's (part 2):
+    # each the next free one from its default when something else listens there, shown; yes:
+    # each asked (also given by id: admin_listen...)
+    local e id name what value
+    PORTS_CHANGE=no
+    [ "$(listen_published)" != SYNC_EXPORT_PORT ] || return 0
+    hint "The stack listens on these ports of this host, for your reverse proxy (the Sync server: ${SYNC_EXPORT_PORT}, part 2);"
+    hint "  inside the stack its containers reach each other on their own ports, which never change:"
+    for e in "${EXPORT_PORTS[@]}"; do
+        name=${e%%|*} what=${e##*|} id=${e#*|}
+        id=${id%%|*}
+        [ "${name}" != SYNC_EXPORT_PORT ] || continue
+        case " $(listen_published) " in *" ${name} "*) ;; *) continue ;; esac
+        listen_auto "${name}"
+        value=${LISTEN_AUTO}
+        if answer_given "${id}" && [ -n "${ANSWER}" ]; then
+            value=${ANSWER}
+            case "${value}" in *[!0-9]*) ;; *) value=127.0.0.1:${value} ;; esac
+        fi
+        # (the ones after it are chosen with it taken)
+        printf -v "${name}_V" '%s' "${value}"
+        if [ "${value}" = "${LISTEN_AUTO}" ] && [ "${LISTEN_AUTO}" != "${LISTEN_BASE}" ]; then
+            hint "  ${what}: ${value} ($(port_split "${LISTEN_BASE}"; printf '%s' "${PORT_NUM}") is in use on this host)"
+        else
+            hint "  ${what}: ${value}"
+        fi
+    done
+    ask_yn ports "Change any of these ports?" no || return
+    PORTS_CHANGE=${YN}
+}
+step_admin_listen() { listen_step ADMIN_EXPORT_PORT admin_listen "Address and port the admin UI listens on"; }
+step_fxa_content_listen() { listen_step FXA_CONTENT_EXPORT_PORT fxa_content_listen "Address and port the accounts pages listen on"; }
+step_fxa_auth_listen() { listen_step FXA_AUTH_EXPORT_PORT fxa_auth_listen "Address and port the accounts API listens on"; }
+step_fxa_profile_listen() { listen_step FXA_PROFILE_EXPORT_PORT fxa_profile_listen "Address and port the profile server listens on"; }
+step_fxa_profile_static_listen() { listen_step FXA_PROFILE_STATIC_EXPORT_PORT fxa_profile_static_listen "Address and port the avatars listen on"; }
+step_admin_gate_listen() { listen_step ADMIN_GATE_EXPORT_PORT admin_gate_listen "Address and port the sign-up gate listens on"; }
+step_pairing_listen() { listen_step FXA_PAIRING_EXPORT_PORT pairing_listen "Address and port the pairing server listens on"; }
+
+# the host names over TLS of the answers (https, wss), separated by spaces
+setup_tls_hosts() {
+    local name url hosts=""
+    for name in SYNC_URL FXA_CONTENT_URL_V FXA_AUTH_URL_V FXA_PROFILE_URL_V FXA_PAIRING_URL_V ADMIN_URL; do
+        url=${!name:-}
+        case "${url}" in https://*|wss://*) ;; *) continue ;; esac
+        case " ${hosts} " in *" $(url_host "${url}") "*) ;; *) hosts="${hosts:+${hosts} }$(url_host "${url}")" ;; esac
+    done
+    printf '%s' "${hosts}"
+}
+step_proxy_certs() {
+    # your own proxy: a certificate per host name (certbot's paths, in proxy/nginx.conf), or one
+    # for them all (a wildcard; setup/proxy.sh renders its files)
+    PROXY_CERTS_V=$(previous_setting PROXY_CERTS per-host)
+    [ "${PROXY_CERTS_V}" = one ] || PROXY_CERTS_V=per-host
+    [ "${PROXY}" = own ] && [ -n "$(setup_tls_hosts)" ] || return 0
+    hint "The certificates of $(setup_tls_hosts | sed 's/ /, /g') in your proxy (docs/reverse-proxy.md#certificates):"
+    hint "  per host name where certbot puts them, or one for all, e.g. a wildcard *.${DOMAIN} your other sites use too"
+    ask_menu proxy_certs "How your proxy has their certificates" "${PROXY_CERTS_V}" \
+        "per-host|a certificate for each host name, where certbot puts it (/etc/letsencrypt/live/<host>/)" \
+        "one|one certificate for all of them (a wildcard): its files, asked next" || return
+    PROXY_CERTS_V=${CHOICE}
+}
+# ask_cert_path <id> <question> <setting> <default> [empty]: an absolute path, in <setting>_V;
+# empty: none is an answer
+ask_cert_path() {
+    local value
+    value=$(previous_setting "${3}" "")
+    while :; do
+        ask "${1}" "${2}" "${value:-${4}}" || return
+        if [ -z "${ANSWER}" ] && [ "${5:-}" = empty ]; then printf -v "${3}_V" '%s' ""; return 0; fi
+        # (written into nginx, Caddy and YAML as it is)
+        if [[ "${ANSWER}" =~ ^/[A-Za-z0-9._/@+=,-]+$ ]]; then printf -v "${3}_V" '%s' "${ANSWER}"; return 0; fi
+        ui_error "not an absolute path (letters, digits and . _ / @ + = , - only): '${ANSWER}'"
+        retry
+    done
+}
+step_proxy_cert_file() {
+    PROXY_CERT_FILE_V=$(previous_setting PROXY_CERT_FILE "")
+    [ "${PROXY}" = own ] && [ "${PROXY_CERTS_V}" = one ] || return 0
+    hint "Its files as your proxy reads them (on this host; Traefik in a container: in it)"
+    ask_cert_path proxy_cert_file "The certificate (with its chain)" PROXY_CERT_FILE "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+}
+step_proxy_cert_key_file() {
+    PROXY_CERT_KEY_FILE_V=$(previous_setting PROXY_CERT_KEY_FILE "")
+    [ "${PROXY}" = own ] && [ "${PROXY_CERTS_V}" = one ] || return 0
+    ask_cert_path proxy_cert_key_file "Its private key" PROXY_CERT_KEY_FILE "$(dirname "${PROXY_CERT_FILE_V}")/privkey.pem"
+}
+step_proxy_nginx_ssl_include() {
+    PROXY_NGINX_SSL_INCLUDE_V=$(previous_setting PROXY_NGINX_SSL_INCLUDE "")
+    [ "${PROXY}" = own ] && [ "${PROXY_CERTS_V}" = one ] || return 0
+    hint "nginx: a file of yours that your other sites include, with the ssl_certificate lines (and your"
+    hint "  ssl_* settings), included instead of them; empty: the two files above"
+    ask_cert_path proxy_nginx_ssl_include "nginx: include this file instead (empty: none)" PROXY_NGINX_SSL_INCLUDE "" empty
+}
+step_proxy_cert_names() {
+    local default
+    PROXY_CERT_NAMES_V=$(previous_setting PROXY_CERT_NAMES "")
+    [ "${PROXY}" = own ] && [ "${PROXY_CERTS_V}" = one ] || return 0
+    default=${PROXY_CERT_NAMES_V:-*.${DOMAIN}}
+    hint "The names it is for (openssl x509 -noout -ext subjectAltName -in <file>), to check it covers every host"
+    hint "  name: a wildcard covers exactly one label, *.${DOMAIN} is sync.${DOMAIN} but not sync.firefox.${DOMAIN}"
+    while :; do
+        ask proxy_cert_names "The names of the certificate, comma-separated" "${default}" || return
+        ANSWER=$(printf '%s' "${ANSWER}" | tr -d ' ')
+        if cert_names_valid "${ANSWER}"; then
+            PROXY_CERT_NAMES_V=$(lower "${ANSWER}")
+            break
+        fi
+        ui_error "not a list of host names and wildcards (*.example.com), comma-separated: '${ANSWER}'"
+        retry
+    done
+    # shellcheck disable=SC2046 # (the host names, one word each)
+    [ -n "${FFS_REPLAYED_NOW}" ] || cert_cover_check "${PROXY_CERT_NAMES_V}" $(setup_tls_hosts)
+    return 0
+}
 step_caddy_email() {
     CADDY_ACME_EMAIL_V=$(previous_setting CADDY_ACME_EMAIL "")
     [ "${PROXY}" = caddy ] || return 0
@@ -1455,7 +1648,7 @@ secrets_report() {
 password_way() { [ "${ADMIN_KEEP_PASSWORD}" = yes ] && printf ', or the password' || printf '; no password (single sign-on only)'; }
 # setup_summary: what the answers set up, part by part, the secrets not shown
 setup_summary() {
-    local db
+    local db value
     echo ""
     echo "${UI_BOLD}What will be written${UI_OFF}"
     local how="docker compose" invite=${SYNC_ALLOWED_ACCOUNTS}
@@ -1465,6 +1658,7 @@ setup_summary() {
     echo "  1 Deployment: ${how}, in ${SCRIPT_DIR}"
     [ -f "${SCRIPT_DIR}/.env" ] && echo "     its .env written again with new passwords (the one of before kept as a copy)"
     echo "  2 Sync server: ${SYNC_URL}, listening on ${SYNC_EXPORT_PORT}, image tag ${SYNC_IMAGE_TAG}"
+    [ -z "${PORT_NOTE_SYNC_EXPORT_PORT:-}" ] || echo "     ${PORT_NOTE_SYNC_EXPORT_PORT}"
     if [ "${EXTERNAL_DB}" = yes ]; then
         if [ "${DATABASE_BACKEND}" = postgres ]; then db="${SYNC_POSTGRES_NAME} (user ${SYNC_POSTGRES_USER})"
         else db="${SYNC_TOKENSERVER_DB_NAME} (user ${SYNC_TOKENSERVER_DB_USER}) and ${SYNC_STORAGE_DB_NAME} (user ${SYNC_STORAGE_DB_USER})"; fi
@@ -1506,6 +1700,27 @@ setup_summary() {
         traefik) echo "  6 Reverse proxy: your Traefik, labels for its network ${TRAEFIK_NETWORK_V}, entry points ${TRAEFIK_ENTRYPOINTS_V}${TRAEFIK_HTTP_ENTRYPOINT_V:+ (HTTP: ${TRAEFIK_HTTP_ENTRYPOINT_V})}, ${TRAEFIK_CERTRESOLVER_V:+certificate resolver ${TRAEFIK_CERTRESOLVER_V}}${TRAEFIK_CERTRESOLVER_V:-its default certificate}" ;;
     esac
     [ -z "${ADMIN_URL}" ] || echo "     the admin UI's public address from: ${PROXY_ADMIN_ALLOW_V:-anybody}"
+    if [ "${PROXY}" = own ] && [ -n "$(setup_tls_hosts)" ]; then
+        if [ "${PROXY_CERTS_V}" = one ]; then
+            echo "     certificates: one for all (${PROXY_CERT_NAMES_V}), ${PROXY_NGINX_SSL_INCLUDE_V:+nginx includes ${PROXY_NGINX_SSL_INCLUDE_V}; }${PROXY_CERT_FILE_V} and ${PROXY_CERT_KEY_FILE_V}"
+        else
+            echo "     certificates: one per host name, where certbot puts them"
+        fi
+    fi
+    local e name list="" note
+    for e in "${EXPORT_PORTS[@]}"; do
+        name=${e%%|*}
+        [ "${name}" != SYNC_EXPORT_PORT ] || continue
+        case " $(listen_published) " in *" ${name} "*) ;; *) continue ;; esac
+        value=${name}_V
+        list="${list:+${list}, }${e##*|} ${!value}"
+    done
+    [ -z "${list}" ] || echo "     ports of this host: ${list}"
+    for e in "${EXPORT_PORTS[@]}"; do
+        name=${e%%|*} note=PORT_NOTE_${e%%|*}
+        [ "${name}" != SYNC_EXPORT_PORT ] && [ -n "${!note:-}" ] || continue
+        echo "     ${!note}"
+    done
     secrets_report review
 }
 step_confirm() {

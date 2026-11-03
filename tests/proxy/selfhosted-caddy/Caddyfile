@@ -2,8 +2,9 @@
 # caddy reload. Caddy gets the certificates itself (Let's Encrypt), and redirects HTTP to HTTPS.
 # Snippets of yours in caddy.d/ next to it are imported: sites*.caddy beside these sites, <site>*.caddy
 # (sync, content, api, profile, pairing, admin) in that site, public*.caddy in the five Firefox reaches
-# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
-# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+# Written by prepare_environment.sh from @WORK@/selfhosted-caddy.env (changed 2026-01-01 00:00:00 UTC).
+# Again by --upgrade and --render-proxy: a change of yours is then kept aside, as
+# <file>.before-<...>-<time>. See docs/reverse-proxy.md
 
 import caddy.d/sites*.caddy
 

@@ -18,8 +18,8 @@ How to read the tables:
 | `SYNC_ALLOWED_ACCOUNTS` | `allowedAccounts` | empty: off | invite-only Sync, the uids that can start to sync: `<uid>,...`, `fixed:<uid>,...`, `admin` or `initial:<uid>,...`. The forms: [Limits](../limits.md#sync_allowed_accounts) | |
 | `SYNC_MASTER_SECRET` | Secret: `SYNC_MASTER_SECRET` | generated | signs the Sync tokens. A new one signs every Firefox out | |
 | `SYNC_METRICS_HASH_SECRET` | Secret: `METRICS_HASH_SECRET` | generated | the key of the hash of the account ids in the metrics | `METRICS_HASH_SECRET` |
-| `SYNC_EXPORT_PORT` | – (the Service, port `syncstorage.service.port`, `8000`) | `127.0.0.1:5000` | where the host publishes the Sync server for your reverse proxy: `[address:]port`. A port alone in `.env` publishes it on every interface: [Host names and ports](../reverse-proxy.md#host-names-and-ports) | `CONTAINER_EXPORT_PORT` |
-| `FXA_OAUTH_SERVER_URL` | `fxa.oauthServerUrl` | `https://oauth.accounts.firefox.com/v1` | where the tokenserver checks the sign-in tokens. Self-hosted accounts: `http://fxa-auth:9000/v1` (Helm: the chart sets it with `fxa.enabled`) | |
+| `SYNC_EXPORT_PORT` | – (the Service, port `syncstorage.service.port`, `8000`) | `127.0.0.1:5000` | where the host publishes the Sync server for your reverse proxy: `[address:]port`. A port alone in `.env` publishes it on every interface: [Host names and ports](../reverse-proxy.md#host-names-and-ports). The setup takes the next free port when something else listens there, as for every `*_EXPORT_PORT` ([Ports in use](../reverse-proxy.md#ports-in-use)) | `CONTAINER_EXPORT_PORT` |
+| `FXA_OAUTH_SERVER_URL` | `fxa.oauthServerUrl` | `https://oauth.accounts.firefox.com/v1` | where the tokenserver checks the sign-in tokens. Self-hosted accounts: `http://fxa-auth:9000/v1` always, container-to-container: inside the stack the accounts API listens on 9000, whatever the host port `FXA_AUTH_EXPORT_PORT` is ([Sign-in keys: connection refused](../troubleshooting.md#sign-in-keys-connection-refused); Helm: the chart sets it with `fxa.enabled`) | |
 | `FXA_EMAIL_DOMAIN` | `fxa.emailDomain` | `api.accounts.firefox.com` | the tokenserver keeps each account as `<uid>@FXA_EMAIL_DOMAIN`. Self-hosted accounts: the host of `FXA_AUTH_URL` (Helm: set by the chart). A new value makes every account a new one | |
 | `COMPOSE_FILE` | – | unset: `docker-compose.yml`, Sync on MariaDB (installs from before `compose/`) | the compose files, separated by `:`: `compose/sync.yml`, the Sync database's, the accounts', the reverse proxy's ([The compose files](../install/compose.md#the-compose-files)) | |
 | `COMPOSE_PROJECT_NAME` | – | unset: the directory of the first compose file | the compose project, which names the containers and volumes: `prepare_environment.sh` writes the checkout's directory, as compose names it (lowercase, `a-z 0-9 _ -`, no `_` or `-` first), and keeps a name already there. A copy of the checkout keeps the name of the original, and its `docker compose down -v` removes the original's volumes: a copy, or a second stack, needs a name of its own here. The setup and `--upgrade` warn when the name is not the directory's ([The compose files](../install/compose.md#the-compose-files)) | |
@@ -210,12 +210,12 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `FXA_PAIRING_TRUSTED_PROXIES` | `fxa.pairing.trustedProxies` | unset: `127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16` | the proxies the pairing server trusts for the client address (not with the Quadlets: they have no pairing server) | |
 | `FXA_LOG_LEVEL` | `fxa.logLevel` | unset: `INFO` | the log level of the auth server: `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE` | |
 | `FXA_CONTENT_EXPORT_PORT` | – (the Service `<release>-firefox-sync-fxa-content`, port 3030) | `127.0.0.1:3030` | where the host publishes the accounts pages | |
-| `FXA_AUTH_EXPORT_PORT` | – (`-fxa-auth`, 9000) | `127.0.0.1:9000` | the accounts API | |
+| `FXA_AUTH_EXPORT_PORT` | – (`-fxa-auth`, 9000) | `127.0.0.1:9000` | the accounts API, for your reverse proxy only: a port of the host, never in `FXA_OAUTH_SERVER_URL` | |
 | `FXA_PROFILE_EXPORT_PORT` | – (`-fxa-profile`, 1111) | `127.0.0.1:1111` | the profile server | |
 | `FXA_PROFILE_STATIC_EXPORT_PORT` | – (`-fxa-profile`, 1112) | `127.0.0.1:1112` | the profile server's static files (avatars) | |
 | `FXA_PAIRING_EXPORT_PORT` | – (`-fxa-pairing`, 8000) | `127.0.0.1:8058` | the pairing server | |
 
-Which host name goes to which port: [Host names and ports](../reverse-proxy.md#host-names-and-ports).
+Which host name goes to which port: [Host names and ports](../reverse-proxy.md#host-names-and-ports). These are ports of the host: the setup (and `--upgrade`) takes the next free one where something else listens ([Ports in use](../reverse-proxy.md#ports-in-use)); inside the stack the containers keep their own ports.
 
 ## Reverse proxy
 
@@ -225,6 +225,10 @@ What `prepare_environment.sh` writes into `proxy/` from `.env`, the configuratio
 |---|---|---|---|---|
 | `PROXY` | – | `own` | which reverse proxy: `own` (yours, with the file of `proxy/`), `caddy` ([the bundled Caddy](../reverse-proxy.md#the-bundled-caddy): `compose/caddy.yml` in `COMPOSE_FILE`, or its Quadlet) or `traefik` ([labels for your Traefik](../reverse-proxy.md#traefik-labels): `proxy/traefik-compose.yml` in `COMPOSE_FILE`). `--upgrade` puts the file of `PROXY` in `COMPOSE_FILE`, and takes out the other's | |
 | `PROXY_ADMIN_ALLOW` | – | `127.0.0.1,::1` | who reaches the admin UI's public address (`ADMIN_OIDC_REDIRECT_URL`) through the proxy: addresses and CIDRs, comma-separated; empty: anybody. Not the containers' networks behind published ports ([The admin UI](../reverse-proxy.md#the-admin-ui)) | |
+| `PROXY_CERTS` | – | `per-host` | your own proxy's certificates in `proxy/nginx.conf`, `Caddyfile`, `traefik.yml`: `per-host` (certbot's, `/etc/letsencrypt/live/<host>/`; Caddy gets its own) or `one`, one certificate for every host name, such as a wildcard ([Certificates](../reverse-proxy.md#certificates)) | |
+| `PROXY_CERT_FILE`, `PROXY_CERT_KEY_FILE` | – | empty | `PROXY_CERTS=one`: the certificate (with its chain) and its key, as your proxy reads them: nginx's `ssl_certificate`, Caddy's `tls`, Traefik's `tls.certificates` | |
+| `PROXY_NGINX_SSL_INCLUDE` | – | empty: the two files | `PROXY_CERTS=one`: an nginx file of yours with the `ssl_*` lines, which each server block includes instead | |
+| `PROXY_CERT_NAMES` | – | empty | `PROXY_CERTS=one`: the names the certificate is for, comma-separated (`*.example.com,example.com`): the setup, `--upgrade` and `--render-proxy` warn of a host name it does not cover (a wildcard covers one label only) | |
 | `CADDY_IMAGE` | – | `caddy:latest` | `PROXY=caddy`: its image | |
 | `CADDY_HTTP_PORT`, `CADDY_HTTPS_PORT` | – | `80`, `443` | `PROXY=caddy`: the ports of this host it listens on, on the host's network ([Rootless Podman and ports under 1024](../reverse-proxy.md#rootless-podman-and-ports-under-1024)) | |
 | `CADDY_ACME_CA` | – | `letsencrypt` | `PROXY=caddy`: where its certificates come from, `letsencrypt`, `staging` (Let's Encrypt's test CA) or `internal` (Caddy's own CA) | |

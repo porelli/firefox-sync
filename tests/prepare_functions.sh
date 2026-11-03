@@ -115,6 +115,58 @@ for p in "" 0 65536 123456 abc localhost:5000 256.1.1.1:5000 1.2.3:5000 1.2.3.4.
   check "$(valid_export_port "${p}" || echo refused)" refused "valid_export_port refuses '${p}'"
 done
 
+echo "== setup/ports.sh: the ports of this host in use, the next free one"
+# what listens, as ss -Hltn prints it (host_listeners reads it); this stack's own containers publish 5000
+ports_case() { (
+  own_ports() { FFS_OWN_KNOWN=yes FFS_OWN_PORTS="5000"; }
+  ss() { printf '%s\n' "LISTEN 0 4096 *:5000 *:*" "LISTEN 0 4096 127.0.0.1:9000 0.0.0.0:*" "LISTEN 0 511 [::ffff:127.0.0.1]:8091 [::]:*" \
+    "LISTEN 0 4096 127.0.0.2:1111 0.0.0.0:*" "LISTEN 0 4096 0.0.0.0:3030 0.0.0.0:*" "LISTEN 0 4096 [::]:4000 [::]:*" "LISTEN 0 4096 [::1]:4100 [::]:*" \
+    "LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*"; }
+  "$@"
+) }
+for c in "127.0.0.1:9000 busy" "0.0.0.0:9000 busy" "9000 busy" "[::]:9000 busy" "[::1]:9000 free" "127.0.0.1:8091 busy" \
+  "127.0.0.1:1111 free" "127.0.0.2:1111 busy" "0.0.0.0:1111 busy" "127.0.0.1:3030 busy" "[::1]:3030 busy" "127.0.0.1:4000 busy" \
+  "[::1]:4100 busy" "127.0.0.1:4100 free" "127.0.0.1:5000 free" "127.0.0.1:9001 free" "127.0.0.53:53 busy" "53 busy"; do
+  check "$(ports_case port_busy "${c% *}" && echo busy || echo free)" "${c#* }" "port_busy ${c% *}: ${c#* }"
+done
+check "$(ports_case port_free_from 127.0.0.1:9000 "") $(ports_case port_free_from 127.0.0.1:9000 "9001 9002") $(ports_case port_free_from 3030 "") $(ports_case port_free_from "[::]:8091" "") $(ports_case port_free_from 127.0.0.1:5000 "")" \
+  "127.0.0.1:9001 127.0.0.1:9003 3031 [::]:8092 127.0.0.1:5000" "port_free_from: the next port neither in use nor taken, its address kept; this stack's own: free"
+# the ports of this stack's running containers, as docker and podman ps print them (consecutive
+# ones as a range); a runtime that cannot be asked: not known
+check "$( (unset COMPOSE_PROJECT_NAME; SCRIPT_DIR=${WORK}
+  docker() { printf '%s\n' "127.0.0.1:5000->8000/tcp" "0.0.0.0:3030->3030/tcp, :::3030->3030/tcp"; }
+  podman() { printf '%s\n' "127.0.0.1:8090-8091->8080-8081/tcp" "[::1]:9000->9000/tcp, 127.0.0.1:1111-1112->1111-1112/tcp" "53/udp"; }
+  own_ports; echo "${FFS_OWN_KNOWN} ${FFS_OWN_PORTS}") )" "yes 5000 3030 8090 8091 9000 1111 1112" "own_ports: the host ports of docker and podman ps, ranges too"
+check "$( (SCRIPT_DIR=${WORK}; docker() { return 1; }; podman() { echo "127.0.0.1:5000->8000/tcp"; }; own_ports; echo "${FFS_OWN_KNOWN} ${FFS_OWN_PORTS}") )" "no 5000" \
+  "own_ports: docker not answering, not known (podman's still counted)"
+check "$(port_moved_note FXA_AUTH_EXPORT_PORT 127.0.0.1:9000 127.0.0.1:9001)" "9000 is in use on this host: the accounts API listens on 127.0.0.1:9001" "port_moved_note"
+check "$(export_ports_published no no no) | $(export_ports_published yes yes no) | $(export_ports_published yes no yes)" \
+  "SYNC_EXPORT_PORT | SYNC_EXPORT_PORT ADMIN_EXPORT_PORT FXA_CONTENT_EXPORT_PORT FXA_AUTH_EXPORT_PORT FXA_PROFILE_EXPORT_PORT FXA_PROFILE_STATIC_EXPORT_PORT ADMIN_GATE_EXPORT_PORT | SYNC_EXPORT_PORT FXA_CONTENT_EXPORT_PORT FXA_AUTH_EXPORT_PORT FXA_PROFILE_EXPORT_PORT FXA_PROFILE_STATIC_EXPORT_PORT FXA_PAIRING_EXPORT_PORT" \
+  "export_ports_published: the ports of the choices"
+# every *_EXPORT_PORT that compose and the Quadlets publish is one of EXPORT_PORTS
+published=$(cat "${CODE}"/compose/*.yml "${CODE}"/config/quadlet/*.container "${CODE}"/config/quadlet/*/*.container "${CODE}"/config/quadlet/*/*/*.container 2> /dev/null \
+  | grep -oE '(\$\{|%)[A-Z_]+_EXPORT_PORT' | tr -d '${%' | grep -v '^CONTAINER_EXPORT_PORT$' | sort -u | tr '\n' ' ')
+known=$(for e in "${EXPORT_PORTS[@]}"; do echo "${e%%|*}"; done | sort -u | tr '\n' ' ')
+check "${published}" "${known}" "EXPORT_PORTS has every port compose and the Quadlets publish"
+
+echo "== setup/proxy.sh: one certificate for all, the names it covers (cert_covers)"
+for c in "*.example.com sync.example.com yes" "*.example.com sync.firefox.example.com no" "*.example.com example.com no" \
+  "*.example.com,example.com example.com yes" "*.EXAMPLE.com Sync.Example.COM yes" "sync.example.com sync.example.com yes" \
+  "sync.example.com api.example.com no" "*.firefox.example.com,*.example.com sync.firefox.example.com yes" "*.example.com x.example.org no"; do
+  set -- ${c}
+  check "$(cert_covers "$1" "$2" && echo yes || echo no)" "$3" "cert_covers $1 $2: $3"
+done
+check "$(cert_names_valid '*.example.com,example.com' && echo ok) $(cert_names_valid '*.*.example.com' || echo refused) $(cert_names_valid 'a b' || echo refused) $(cert_names_valid '' || echo refused)" \
+  "ok refused refused refused" "cert_names_valid"
+
+echo "== setup/validate.sh: FXA_OAUTH_SERVER_URL is the stack's accounts API on its own port (oauth_url_check)"
+for c in "http://fxa-auth:9000/v1 0" "http://fxa-auth:9010/v1 1" "http://fxa-auth/v1 1" "https://oauth.accounts.firefox.com/v1 0" "https://api.example.com/v1 0"; do
+  printf 'FXA_MYSQL_PASSWORD=x\nFXA_OAUTH_SERVER_URL=%s\n' "${c% *}" > "${WORK}/oauth.env"
+  check "$(ENV_READ=${WORK}/oauth.env oauth_url_check | grep -c 'FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy')" "${c#* }" "oauth_url_check ${c% *}"
+done
+printf 'FXA_MYSQL_PASSWORD=<REPLACE_WITH_SOMETHING_SECURE>\nFXA_OAUTH_SERVER_URL=http://fxa-auth:9010/v1\n' > "${WORK}/oauth.env"
+check "$(ENV_READ=${WORK}/oauth.env oauth_url_check | wc -l | tr -d ' ')" 0 "oauth_url_check: Mozilla's accounts, nothing said"
+
 echo "== setup/env.sh: .env written through a symlink (replace_env)"
 mkdir -p "${WORK}/real" "${WORK}/dir" "${WORK}/ro"
 mode() { stat -c %a "$1" 2> /dev/null || stat -f %Lp "$1"; }
@@ -430,7 +482,9 @@ sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|s3cret|' -e 's|<REPLACE_WITH_YOUR_DOMA
   -e 's|^SYNC_IMAGE=.*|SYNC_IMAGE=syncstorage-rs-postgres|' -e 's|^SYNC_POSTGRES_APP_PASSWORD=.*|SYNC_POSTGRES_APP_PASSWORD=app|' "${CODE}/.env-example" > "${WORK}/up/.env"
 chmod 644 "${WORK}/up/.env"
 # (docker compose on Docker here, also on a host with Podman: compose_on_podman is tested above)
-(unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; FFS_ENTRY_DIR=${WORK}/up QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade.log" 2>&1
+# (nothing listens here, no container runs: the ports of this host do not count)
+no_listeners() { own_ports() { FFS_OWN_KNOWN=yes FFS_OWN_PORTS=""; }; host_listeners() { FFS_LISTEN_HOW=ss FFS_LISTENERS=""; }; }
+(unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; no_listeners; FFS_ENTRY_DIR=${WORK}/up QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade.log" 2>&1
 up_rc=$?
 upv() { ENV_READ=${WORK}/up/.env SCRIPT_DIR=${WORK}/up env_plain "$1"; }
 check "${up_rc} $(upv COMPOSE_FILE) $(upv COMPOSE_PROJECT_NAME) $(upv SYNC_PUBLIC_URL) $(upv SYNC_MAX_USERS) $(grep -c '^\(SYNCSTORAGE_DOMAIN\|MAX_USERS\)=' "${WORK}/up/.env")" \
@@ -439,7 +493,7 @@ check "${up_rc} $(upv COMPOSE_FILE) $(upv COMPOSE_PROJECT_NAME) $(upv SYNC_PUBLI
 check "$(upv ADMIN_DB_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$') $(upv SYNC_POSTGRES_IMAGE) $(mode "${WORK}/up/.env") $(ls "${WORK}/up"/.env.before-upgrade-* | wc -l | tr -d ' ') $(grep -c '^Then: docker compose pull && docker compose up -d$' "${WORK}/upgrade.log")" \
   "1 postgres:18 600 1 1" "upgrade_env: the missing password, the PostgreSQL major of before, .env this user's only, the old one kept, what to run next" \
   || cat "${WORK}/upgrade.log"
-(unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; FFS_ENTRY_DIR=${WORK}/up QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade-again.log" 2>&1
+(unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; no_listeners; FFS_ENTRY_DIR=${WORK}/up QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade-again.log" 2>&1
 check "$? $(ls "${WORK}/up"/.env.before-upgrade-* | wc -l | tr -d ' ') $(grep -c '^Updated ' "${WORK}/upgrade-again.log")" "0 1 0" "upgrade_env run again: nothing changes"
 
 [ "${FAILED}" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"

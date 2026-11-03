@@ -24,7 +24,7 @@ This page installs the Sync server with docker compose. Read [What you need](../
 
    It asks its questions, one component at a time, shows what it will write, then writes `.env` and, in `proxy/`, the configuration of your reverse proxy with your values. See [What the setup script asks](#what-the-setup-script-asks); to answer from a file instead, [Answers by name](#answers-by-name).
 
-1. Set up your reverse proxy: put the file of yours from `proxy/` (`nginx.conf`, `Caddyfile`, `traefik.yml`) into it, see [Your own proxy](../reverse-proxy.md#your-own-proxy). With the bundled Caddy or the labels for Traefik, nothing to do here: `docker compose up -d` runs them ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy), [Traefik labels](../reverse-proxy.md#traefik-labels)).
+1. Set up your reverse proxy: put the file of yours from `proxy/` (`nginx.conf`, `Caddyfile`, `traefik.yml`) into it, see [Your own proxy](../reverse-proxy.md#your-own-proxy). The script's last lines list the host names it must serve and the ports of this host they go to, with the path of the file: a port in use on this host was moved to the next free one ([Ports in use](../reverse-proxy.md#ports-in-use)). With the bundled Caddy or the labels for Traefik, nothing to do here: `docker compose up -d` runs them ([The bundled Caddy](../reverse-proxy.md#the-bundled-caddy), [Traefik labels](../reverse-proxy.md#traefik-labels)).
 
 1. Check the optional services before the first start: the admin UI, the nightly backups and, with self-hosted accounts, your own pairing server. The script asked for each and listed those you chose in `COMPOSE_PROFILES` of `.env`. Only those start: to add or remove one, see [Optional services](#optional-services).
 
@@ -55,7 +55,7 @@ The questions go one component at a time, in seven parts, each with its number (
 1. **The accounts**: Mozilla's or self-hosted. With Mozilla's: invite-only Sync. Self-hosted: the public URLs of the accounts pages, API and profile server, their database, the SMTP server for their emails, who can sign up, the most accounts, the security history and the pairing server.
 1. **The admin UI**: on or off, how admins sign in (the password; the self-hosted accounts; another OpenID Connect provider; a header of your reverse proxy), who is an admin, whether a password stays a way in with single sign-on, its public URL when a provider sends you back to it, and where its alerts go.
 1. **Backups**: the nightly backups.
-1. **Reverse proxy**: whether you run one already (its configuration is in `proxy/` in any case), else the bundled Caddy (its certificates, its ports) or the labels for your Traefik (its network, entry points and certificate resolver); who can open the admin UI's public address.
+1. **Reverse proxy**: whether you run one already (its configuration is in `proxy/` in any case), else the bundled Caddy (its certificates, its ports) or the labels for your Traefik (its network, entry points and certificate resolver); who can open the admin UI's public address; the ports of this host the stack listens on for it (each the next free one when something else listens there, shown, and changed if you say so); with your own proxy, its certificates: one per host name, or one for all (a wildcard: its files, and the names it covers).
 1. **Review**: what will be written, part by part, with the passwords and secrets the script generates (named, not shown). Write it, change a part (its questions again, the parts after it keep their answers), or quit with nothing written.
 
 At a question:
@@ -71,7 +71,7 @@ At the end the script lists the passwords and secrets it generated, and how to c
 | Question | What it changes | More |
 |---|---|---|
 | the public URL of the Sync server | `SYNC_PUBLIC_URL`, its host in `proxy/` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
-| where the Sync server listens, `127.0.0.1:5000` | `SYNC_EXPORT_PORT` | [Reverse proxy](../reverse-proxy.md#host-names-and-ports) |
+| where the Sync server listens, `127.0.0.1:5000` (in use: the next free port) | `SYNC_EXPORT_PORT` | [Reverse proxy](../reverse-proxy.md#ports-in-use) |
 | the image tag of the Sync server | `SYNC_IMAGE_TAG` (`latest`) | [Upgrading](../upgrading.md#sync-server) |
 | the engine of the Sync server's database: `mariadb`, `mysql` or `postgres` | `SYNC_DB`, and its file in `COMPOSE_FILE` | [Databases](../databases.md) |
 | the Sync server's database on your own server | `SYNC_DB_CONTAINERS=0`, and a `database-setup.sql` to run there | [Your own server](../databases.md#with-docker-compose) |
@@ -84,6 +84,8 @@ At the end the script lists the passwords and secrets it generated, and how to c
 | with self-hosted accounts, your own pairing server (not with Quadlets) | `pairing` in `COMPOSE_PROFILES`, `FXA_PAIRING_URL`, its host in `proxy/` | [Pairing](../reverse-proxy.md#pairing) |
 | your reverse proxy: yours, the bundled Caddy, the labels for Traefik | `PROXY`, `compose/caddy.yml` or `proxy/traefik-compose.yml` in `COMPOSE_FILE`, `CADDY_*`, `TRAEFIK_*` | [Reverse proxy](../reverse-proxy.md) |
 | who can open the admin UI's public address | `PROXY_ADMIN_ALLOW` | [The admin UI](../reverse-proxy.md#the-admin-ui) |
+| the other ports of this host the stack listens on (in use: the next free port) | `ADMIN_EXPORT_PORT`, `FXA_*_EXPORT_PORT`, `ADMIN_GATE_EXPORT_PORT` | [Ports in use](../reverse-proxy.md#ports-in-use) |
+| your own proxy's certificates: per host name, or one for all | `PROXY_CERTS`, `PROXY_CERT_FILE`, `PROXY_CERT_KEY_FILE`, `PROXY_NGINX_SSL_INCLUDE`, `PROXY_CERT_NAMES` | [Certificates](../reverse-proxy.md#certificates) |
 
 Every setting is in [Settings](../reference/settings.md). Coming from another Sync server: read [Migrating](../migrating.md) before you run the script.
 
@@ -143,7 +145,7 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `container_user` | without Quadlets: the user of `config/systemd/syncstorage-rs.service` | a user name | `$USER` |
 | `domain` | your domain, of the default host names | a domain | `example.com` |
 | `sync_url` | public URL of the Sync server | see [The public addresses](#the-public-addresses) | `https://sync.<domain>` |
-| `sync_listen` | where the Sync server listens | `[address:]port`, a port alone on `127.0.0.1` | `127.0.0.1:5000` (an install's: its own) |
+| `sync_listen` | where the Sync server listens | `[address:]port`, a port alone on `127.0.0.1` | `127.0.0.1:5000` (an install's: its own), in use: the next free port |
 | `sync_image_tag` | image tag of the Sync server | a tag | `latest` |
 | `sync_db` | engine of the Sync server's database | `mariadb`, `mysql`, `postgres` | `mariadb` |
 | `sync_db_own` | the Sync server's database on your own server? | yes, no | no |
@@ -179,6 +181,12 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `backups` | nightly backups? | yes, no | no (an install's: its own) |
 | `proxy` | do you already run a reverse proxy? | `own`, `caddy` (the bundled Caddy; not with `admin_signin=header`), `traefik` (labels for your Traefik; not with Quadlets) | `own` (an install's: its own) |
 | `proxy_admin_allow` | with the admin UI's public URL: who can open it | addresses and CIDRs, comma-separated; `anybody` | `127.0.0.1,::1` (this host) |
+| `ports` | change any of the other ports of this host the stack listens on? (shown with their defaults) | yes, no | no |
+| `admin_listen`, `fxa_content_listen`, `fxa_auth_listen`, `fxa_profile_listen`, `fxa_profile_static_listen`, `admin_gate_listen`, `pairing_listen` | where the admin UI, the accounts pages, API, profile server, avatars, the sign-up gate and the pairing server listen (asked with `ports=yes`; given here, taken as they are) | `[address:]port`, a port alone on `127.0.0.1`; one in use is kept, with a warning | `ADMIN_EXPORT_PORT`... of `.env-example` (an install's: its own), in use: the next free port |
+| `proxy_certs` | `own`: how your proxy has the certificates | `per-host`, `one` (one for all, a wildcard) | `per-host` (an install's: its own) |
+| `proxy_cert_file`, `proxy_cert_key_file` | `one`: the certificate (with its chain) and its key | absolute paths | `/etc/letsencrypt/live/<domain>/fullchain.pem`, `privkey.pem` beside it |
+| `proxy_nginx_ssl_include` | `one`: an nginx include of yours with the `ssl_*` lines, instead of the two files | an absolute path; empty: none | none |
+| `proxy_cert_names` | `one`: the names the certificate is for, to check it covers every host name | names and wildcards, comma-separated | `*.<domain>` |
 | `caddy_email` | `caddy`: the email for Let's Encrypt | an email; empty: none | none |
 | `caddy_ca` | `caddy`: where its certificates come from | `letsencrypt`, `staging`, `internal` | `letsencrypt` |
 | `caddy_http_port`, `caddy_https_port` | `caddy`: its ports on this host | ports | `80`, `443` |

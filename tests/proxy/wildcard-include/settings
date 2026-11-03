@@ -1,0 +1,9 @@
+# one certificate for every host name, nginx including a file of yours with its ssl_* lines
+# instead (PROXY_NGINX_SSL_INCLUDE; Caddy and Traefik: the files), Quadlets, Mozilla's accounts
+deploy=quadlets
+SYNC_PUBLIC_URL=https://sync.example.com
+PROXY_CERTS=one
+PROXY_CERT_FILE=/etc/ssl/example.com/fullchain.pem
+PROXY_CERT_KEY_FILE=/etc/ssl/example.com/privkey.pem
+PROXY_NGINX_SSL_INCLUDE=/etc/nginx/snippets/ssl-example.com.conf
+PROXY_CERT_NAMES=*.example.com,example.com

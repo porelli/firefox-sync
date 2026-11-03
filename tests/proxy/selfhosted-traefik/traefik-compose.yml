@@ -3,8 +3,9 @@
 # their routers. That network must exist, with Traefik on it and nothing else: docker network create
 # ffs-proxy, docker network connect ffs-proxy <your Traefik> (docs/reverse-proxy.md#traefik-labels).
 # Applied by docker compose up -d; also on the Podman socket
-# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and
-# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.
+# Written by prepare_environment.sh from @WORK@/selfhosted-traefik.env (changed 2026-01-01 00:00:00 UTC).
+# Again by --upgrade and --render-proxy: a change of yours is then kept aside, as
+# <file>.before-<...>-<time>. See docs/reverse-proxy.md
 services:
   syncstorage:
     networks:

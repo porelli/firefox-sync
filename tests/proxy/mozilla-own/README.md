@@ -4,7 +4,7 @@ Written by `prepare_environment.sh` from `.env`: the public URLs, the ports the 
 
 Pick the file of your proxy, put it where it says, reload:
 
-- `nginx.conf`: nginx. Into `/etc/nginx/conf.d/` (or `sites-enabled/`), with the certificates where `ssl_certificate` says first (`certbot certonly --standalone -d <host>`, nginx stopped), then `nginx -t && systemctl reload nginx`.
+- `nginx.conf`: nginx. Into `/etc/nginx/conf.d/` (or `sites-enabled/`), with the certificates where `ssl_certificate` says first: with nginx running, `certbot certonly --nginx -d <host>` (or `--webroot`) for each host; `--standalone` only on a host with no web server, it needs port 80 for itself. Then `nginx -t && systemctl reload nginx`.
 - `Caddyfile`: Caddy. As your Caddyfile, or `import` it from yours, then `caddy reload`. Your own snippets go in `caddy.d/` next to it (see its first lines): they stay when it is written again.
 - `traefik.yml`: Traefik, its file provider (`providers.file`). Into its directory, Traefik reads it by itself.
 

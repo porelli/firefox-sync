@@ -59,20 +59,32 @@ done
 # the checksums of db/db-setup.sh print (database-setup.sql): sha256sum, else shasum (macOS)
 for tool in sha256sum shasum; do prog=$(command -v "${tool}") && ln -s "${prog}" "${WORK}/sys/${tool}"; done
 # the stubs: postgres:latest is PostgreSQL 18, no volume, no image, no container, no timer
-cat > "${WORK}/runtime" <<'EOF'
+# (ps: the ports of this stack's running containers, ${WORK}/own-ports, none by default)
+cat > "${WORK}/runtime" <<EOF
 #!/bin/sh
-case "$*" in
+case "\$*" in
     *"--entrypoint postgres "*"--version"*) echo "postgres (PostgreSQL) 18.1 (Debian 18.1-1.pgdg13+2)" ;;
-    ps*) exit 0 ;;
+    ps*) [ -f "${WORK}/own-ports" ] && cat "${WORK}/own-ports"; exit 0 ;;
     *) exit 1 ;;
 esac
 EOF
 printf '#!/bin/sh\ncase "$*" in *is-enabled*) exit 1 ;; esac\nexit 0\n' > "${WORK}/systemctl"
 printf '#!/bin/sh\nexit 1\n' > "${WORK}/skopeo"
-chmod +x "${WORK}/runtime" "${WORK}/systemctl" "${WORK}/skopeo"
+# ss -Hltn: what listens on this host, the lines of ${WORK}/listeners (none by default: the ports
+# of this host do not count, the same files on any host); with "sport = :<port>" those of that port
+cat > "${WORK}/ss" <<EOF
+#!/bin/sh
+[ -f "${WORK}/listeners" ] || exit 0
+case "\$*" in
+    *"sport = :"*) port=\${*##*sport = :}; grep ":\${port} " "${WORK}/listeners" ;;
+    *) cat "${WORK}/listeners" ;;
+esac
+exit 0
+EOF
+chmod +x "${WORK}/runtime" "${WORK}/systemctl" "${WORK}/skopeo" "${WORK}/ss"
 for stubs in stubs-docker stubs-podman; do
     cp "${WORK}/runtime" "${WORK}/${stubs}/docker"
-    cp "${WORK}/systemctl" "${WORK}/skopeo" "${WORK}/${stubs}/"
+    cp "${WORK}/systemctl" "${WORK}/skopeo" "${WORK}/ss" "${WORK}/${stubs}/"
 done
 cp "${WORK}/runtime" "${WORK}/stubs-podman/podman"
 
@@ -115,7 +127,8 @@ collect() {
     done
     [ -f "${W}/.env" ] || return 0
     sed_file=${WORK}/mask.sed
-    : > "${sed_file}"
+    # (and the time of .env in the first lines of proxy/)
+    echo 's/ (changed [0-9-]* [0-9:]* UTC)/ (changed @TIME@)/' > "${sed_file}"
     while IFS='=' read -r key value; do
         case "${value}" in
             ''|*[!A-Za-z0-9]*) continue ;;
@@ -389,10 +402,11 @@ check "$(grep -cE '^  (SYNC_POSTGRES_PASSWORD|SYNC_DB_BOOTSTRAP_PASSWORD): ' "${
 echo "== the interactive flow, on stdin: < goes back, a part changed in the review"
 # as mozilla-mariadb: dir, container user, domain, Sync URL, listen, image tag, engine, own
 # server, max users (5, then < from the accounts: 2), accounts, invite-only, admin UI, sign-in,
-# alerts, backups, the reverse proxy; in the review < (back to the proxy), then 2 (the Sync server again: its
-# answers of before as the defaults, < once more), the parts after it replayed, then write
+# alerts, backups, the reverse proxy, its ports (the admin UI's: not changed), its certificates; in
+# the review < (back to the certificates), then 2 (the Sync server again: its answers of before
+# as the defaults, < once more), the parts after it replayed, then write
 reset_checkout new
-printf '%s\n' "" "" example.org "" "" "" "" "" 5 "<" 2 "" "" "" "" "" "" "" \
+printf '%s\n' "" "" example.org "" "" "" "" "" 5 "<" 2 "" "" "" "" "" "" "" "" "" \
     "<" "" sync \
     "" "" "" "" "" "<" "" 2 \
     write | run_setup docker "${WORK}/interactive.log"
@@ -637,6 +651,99 @@ if command -v docker > /dev/null 2>&1 && docker compose version > /dev/null 2>&1
 else
     echo "SKIP: docker compose: no docker compose here (the pairing server's image as compose reads it)"
 fi
+
+echo "== the ports of this host: in use, the next free one; this stack's own count as free"
+# what listens (the ss stub): the Sync server's 5000 on every interface, the accounts API's 9000
+# and the sign-up gate's 8091 on 127.0.0.1, 1111 on another address only
+printf '%s\n' "LISTEN 0 4096 *:5000 *:*" "LISTEN 0 4096 127.0.0.1:9000 0.0.0.0:*" "LISTEN 0 511 [::ffff:127.0.0.1]:8091 [::]:*" \
+    "LISTEN 0 4096 127.0.0.2:1111 0.0.0.0:*" > "${WORK}/listeners"
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com > "${WORK}/ports.answers"
+run_setup docker "${WORK}/ports.log" --answers "${WORK}/ports.answers" --non-interactive < /dev/null
+check "$? $(ev SYNC_EXPORT_PORT) $(ev FXA_AUTH_EXPORT_PORT) $(ev ADMIN_GATE_EXPORT_PORT) $(ev ADMIN_EXPORT_PORT) $(ev FXA_PROFILE_EXPORT_PORT) $(ev FXA_OAUTH_SERVER_URL)" \
+    "0 127.0.0.1:5001 127.0.0.1:9001 127.0.0.1:8092 127.0.0.1:8090 127.0.0.1:1111 http://fxa-auth:9000/v1" \
+    "busy ports: the next free one (127.0.0.2:1111 is another address), the internal URL as it is"
+check "$(grep -cx '     9000 is in use on this host: the accounts API listens on 127.0.0.1:9001' "${WORK}/ports.log") $(grep -cx '     5000 is in use on this host: the Sync server listens on 127.0.0.1:5001' "${WORK}/ports.log") $(grep -c '^NOTE: 8091 is in use on this host: the sign-up gate of the admin UI listens on 127.0.0.1:8092 (ADMIN_GATE_EXPORT_PORT in .env)$' "${WORK}/ports.log")" \
+    "1 1 1" "busy ports: said in the review and at the end"
+P=${W}/proxy
+check "$(grep -c 'proxy_pass http://127.0.0.1:9001;' "${P}/nginx.conf") $(grep -c 'proxy_pass http://127.0.0.1:9000;' "${P}/nginx.conf") $(grep -c 'reverse_proxy 127.0.0.1:5001$' "${P}/Caddyfile") $(grep -c 'url: "http://127.0.0.1:8092"' "${P}/traefik.yml")" \
+    "1 0 1 1" "busy ports: proxy/ forwards to the ports chosen"
+check "$(grep -c '^Reverse proxy: your reverse proxy must serve these host names, forwarding to these ports of this host:$' "${WORK}/ports.log") $(grep -cE '^  https://api\.example\.com +-> 127\.0\.0\.1:9001 +the accounts API$' "${WORK}/ports.log") $(grep -cE '^  https://api\.example\.com/v1/account/create +-> 127\.0\.0\.1:8092 ' "${WORK}/ports.log") $(grep -c '^  the file to install: /.*/ffs/proxy/nginx.conf (nginx; Caddy: proxy/Caddyfile, Traefik: proxy/traefik.yml),$' "${WORK}/ports.log")" \
+    "1 1 1 1" "the end: the host names your proxy serves and their ports, the file to install"
+# given by id: kept (one in use: a WARNING); another component's port: refused
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com fxa_auth_listen=9000 admin_listen=0.0.0.0:8100 > "${WORK}/ports-given.answers"
+run_setup docker "${WORK}/ports-given.log" --answers "${WORK}/ports-given.answers" --non-interactive < /dev/null
+check "$? $(ev FXA_AUTH_EXPORT_PORT) $(ev ADMIN_EXPORT_PORT) $(grep -c '^WARNING: 127.0.0.1:9000: something else listens on this host there already (not this stack): the accounts API cannot start until it is free$' "${WORK}/ports-given.log")" \
+    "0 127.0.0.1:9000 0.0.0.0:8100 1" "ports given by id: as given, one in use warned of"
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com fxa_profile_listen=3030 > "${WORK}/ports-dup.answers"
+run_setup docker "${WORK}/ports-dup.log" --answers "${WORK}/ports-dup.answers" --non-interactive < /dev/null
+check "$? $(grep -c "port 3030 is another component's of this stack already" "${WORK}/ports-dup.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" "a port of another component: refused"
+# run again on an install that runs: the ports of its own containers are free
+reset_checkout new
+sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|keepme|' -e 's|^FXA_MYSQL_PASSWORD=.*|FXA_MYSQL_PASSWORD=before|' -e 's|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=admin|' "${W}/.env-example" > "${W}/.env"
+# (as podman ps prints them: consecutive ports as a range)
+printf '%s\n' "127.0.0.1:5000->8000/tcp" "127.0.0.1:9000->9000/tcp, 127.0.0.1:8090-8091->8080-8081/tcp" > "${WORK}/own-ports"
+printf '%s\n' existing=new domain=example.com accounts=self-hosted smtp_host=smtp.example.com > "${WORK}/ports-rerun.answers"
+run_setup docker "${WORK}/ports-rerun.log" --answers "${WORK}/ports-rerun.answers" --non-interactive < /dev/null
+check "$? $(ev SYNC_EXPORT_PORT) $(ev FXA_AUTH_EXPORT_PORT) $(ev ADMIN_GATE_EXPORT_PORT) $(grep -c 'is in use on this host' "${WORK}/ports-rerun.log")" "0 127.0.0.1:5000 127.0.0.1:9000 127.0.0.1:8091 0" \
+    "set up again on a running install: the ports of its own containers stay"
+# --upgrade: its own ports stay; one that something else took: the next free one, proxy/ follows
+reset_checkout new
+sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|keepme|' -e 's|^FXA_MYSQL_PASSWORD=.*|FXA_MYSQL_PASSWORD=before|' -e 's|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=admin|' \
+    -e 's|^FXA_AUTH_URL=.*|FXA_AUTH_URL=https://api.example.com|' "${W}/.env-example" > "${W}/.env"
+run_setup docker "${WORK}/ports-upgrade.log" --upgrade < /dev/null
+check "$? $(ev FXA_AUTH_EXPORT_PORT) $(ev SYNC_EXPORT_PORT) $(grep -c 'is in use on this host' "${WORK}/ports-upgrade.log")" "0 127.0.0.1:9000 127.0.0.1:5000 0" "--upgrade of a running install: its own ports stay"
+rm -f "${WORK}/own-ports"
+run_setup docker "${WORK}/ports-upgrade2.log" --upgrade < /dev/null
+check "$? $(ev FXA_AUTH_EXPORT_PORT) $(ev SYNC_EXPORT_PORT) $(ev ADMIN_GATE_EXPORT_PORT) $(grep -c '^NOTE: 9000 is in use on this host: the accounts API listens on 127.0.0.1:9001 now (FXA_AUTH_EXPORT_PORT; proxy/ follows' "${WORK}/ports-upgrade2.log") $(grep -c 'proxy_pass http://127.0.0.1:9001;' "${P}/nginx.conf")" \
+    "0 127.0.0.1:9001 127.0.0.1:5001 127.0.0.1:8092 1 1" "--upgrade, the ports taken by something else: the next free ones, said, proxy/ follows"
+rm -f "${WORK}/listeners"
+
+echo "== FXA_OAUTH_SERVER_URL: container-to-container, fxa-auth:9000"
+sed -i.bak 's|^FXA_OAUTH_SERVER_URL=.*|FXA_OAUTH_SERVER_URL=http://fxa-auth:9010/v1|' "${W}/.env" && rm -f "${W}/.env.bak"
+for opt in --upgrade --render-proxy; do
+    run_setup docker "${WORK}/oauth.log" "${opt}" < /dev/null
+    check "$? $(grep -c '^WARNING: FXA_OAUTH_SERVER_URL=http://fxa-auth:9010/v1 in .env: FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy.$' "${WORK}/oauth.log") $(ev FXA_OAUTH_SERVER_URL)" \
+        "0 1 http://fxa-auth:9010/v1" "${opt}: FXA_OAUTH_SERVER_URL at fxa-auth on another port, said (not changed)"
+done
+
+echo "== your own proxy's certificates: one for all (a wildcard)"
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com proxy_certs=one \
+    proxy_cert_file=/etc/ssl/example.com/fullchain.pem proxy_cert_key_file=/etc/ssl/example.com/privkey.pem > "${WORK}/certs.answers"
+run_setup docker "${WORK}/certs.log" --answers "${WORK}/certs.answers" --non-interactive < /dev/null
+check "$? $(ev PROXY_CERTS) $(ev PROXY_CERT_FILE) $(ev PROXY_CERT_NAMES) [$(ev PROXY_NGINX_SSL_INCLUDE)] $(grep -c WARNING "${WORK}/certs.log")" \
+    "0 one /etc/ssl/example.com/fullchain.pem *.example.com [] 0" "one certificate: .env, its names *.<domain> by default, every host covered"
+check "$(grep -cx '  ssl_certificate /etc/ssl/example.com/fullchain.pem;' "${P}/nginx.conf") $(grep -cx '  ssl_certificate_key /etc/ssl/example.com/privkey.pem;' "${P}/nginx.conf") $(grep -c letsencrypt "${P}/nginx.conf") $(grep -cx '	tls /etc/ssl/example.com/fullchain.pem /etc/ssl/example.com/privkey.pem' "${P}/Caddyfile") $(grep -cx '    - certFile: /etc/ssl/example.com/fullchain.pem' "${P}/traefik.yml") $(grep -c 'certResolver' "${P}/traefik.yml")" \
+    "4 4 0 4 1 0" "one certificate: in each server of nginx.conf, each site of the Caddyfile, tls.certificates of traefik.yml"
+check "$(grep -c '^     certificates: one for all (\*.example.com), /etc/ssl/example.com/fullchain.pem and /etc/ssl/example.com/privkey.pem$' "${WORK}/certs.log")" 1 "one certificate: in the review"
+# nginx: an include of yours instead; a host of two labels under the wildcard: warned of
+reset_checkout new
+printf '%s\n' domain=example.com accounts=self-hosted smtp_host=smtp.example.com fxa_content_url=accounts.firefox.example.com proxy_certs=one \
+    proxy_cert_file=/etc/ssl/example.com/fullchain.pem proxy_cert_key_file=/etc/ssl/example.com/privkey.pem \
+    proxy_nginx_ssl_include=/etc/nginx/snippets/ssl-example.com.conf "proxy_cert_names=*.example.com, example.com" > "${WORK}/certs-inc.answers"
+run_setup docker "${WORK}/certs-inc.log" --answers "${WORK}/certs-inc.answers" --non-interactive < /dev/null
+check "$? $(grep -cx '  include /etc/nginx/snippets/ssl-example.com.conf;' "${P}/nginx.conf") $(grep -c 'ssl_certificate' "${P}/nginx.conf") $(grep -c '	tls /etc/ssl/example.com/fullchain.pem' "${P}/Caddyfile") $(ev PROXY_CERT_NAMES)" \
+    "0 4 0 4 *.example.com,example.com" "nginx: the include of yours instead of ssl_certificate; Caddy: the files"
+check "$(grep -c '^WARNING: the certificate (\*.example.com, example.com) does not cover accounts.firefox.example.com: a wildcard covers exactly one label,$' "${WORK}/certs-inc.log") $(grep -c 'does not cover' "${WORK}/certs-inc.log")" "1 1" \
+    "a host of two labels under the wildcard: warned of, the others covered"
+# --render-proxy checks them too
+run_setup docker "${WORK}/certs-render.log" --render-proxy < /dev/null
+check "$? $(grep -c 'does not cover accounts.firefox.example.com' "${WORK}/certs-render.log")" "0 1" "--render-proxy: the hosts the certificate does not cover, said"
+
+echo "== the nginx examples of an earlier setup (config/nginx/*.conf): moved out of the way"
+reset_checkout new
+printf 'server { server_name old.example.com; }\n' > "${W}/config/nginx/syncstorage-rs.conf"
+printf 'server { server_name accounts.old.example.com; }\n' > "${W}/config/nginx/fxa.conf"
+run_setup docker "${WORK}/nginx-old.log" --answers "${WORK}/certs.answers" --non-interactive < /dev/null
+check "$? [$(ls "${W}/config/nginx")] $(ls "${W}"/proxy/old/syncstorage-rs.conf-* "${W}"/proxy/old/fxa.conf-* 2> /dev/null | wc -l | tr -d ' ') $(grep -c '^WARNING: config/nginx/\*.conf are no longer written: use proxy/nginx.conf (moved the old ones to proxy/old/' "${WORK}/nginx-old.log") $(tail -4 "${WORK}/nginx-old.log" | grep -c 'config/nginx/\*.conf are no longer written')" \
+    "0 [access-control-example.conf] 2 2 1" "the setup: config/nginx/*.conf of before moved into proxy/old/, said (again at the end)"
+printf 'server { server_name old.example.com; }\n' > "${W}/config/nginx/syncstorage-rs.conf"
+run_setup docker "${WORK}/nginx-old-up.log" --upgrade < /dev/null
+check "$? [$(ls "${W}/config/nginx")] $(ls "${W}"/proxy/old/syncstorage-rs.conf-* | wc -l | tr -d ' ') $(grep -c 'config/nginx/\*.conf are no longer written' "${WORK}/nginx-old-up.log") $(grep -c '^# Written by prepare_environment.sh from /.*/ffs/.env (changed [0-9-]* [0-9:]* UTC)\.$' "${P}/nginx.conf")" \
+    "0 [access-control-example.conf] 2 1 1" "--upgrade: the same; proxy/nginx.conf says the .env it is of, and when that changed"
 
 [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit "${FAILED}"

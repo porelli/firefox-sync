@@ -300,7 +300,8 @@ if [ "${FXA_DB}" = mysql ]; then
   check "$(image_of fxa-db) $(dc logs fxa-db 2>&1 | grep -q 'keep-major.sh: this database is MySQL 8, the image is MySQL' && echo said)" "mysql:lts said" \
     "without FXA_MYSQL_IMAGE fxa-db on mysql:lts refuses the MySQL 8 data, and says why"
   UP=${WORK}/prepare && mkdir -p "${UP}" && cp -r "${CODE}/prepare_environment.sh" "${CODE}/setup" "${CODE}/.env-example" "${CODE}/db" "${UP}/" && mkdir -p "${UP}/config/fxa" && cp "${CODE}/config/fxa/fixed-in" "${UP}/config/fxa/" && cp "${ENV_FILE}" "${UP}/.env"
-  (cd "${UP}" && ./prepare_environment.sh --upgrade) > "${WORK}/prepare-upgrade.log" 2>&1
+  # (the compose project of this test: its running containers publish their ports, not taken by another)
+  (cd "${UP}" && COMPOSE_PROJECT_NAME=${PROJECT} ./prepare_environment.sh --upgrade) > "${WORK}/prepare-upgrade.log" 2>&1
   check "$? $(grep '^FXA_MYSQL_IMAGE=' "${UP}/.env") [$(sed -n 's/^FXA_MYSQL_ARGS=//p' "${UP}/.env")] $(grep -c 'stays on MySQL 8 with mysql_native_password' "${WORK}/prepare-upgrade.log")" \
     "0 FXA_MYSQL_IMAGE=mysql:8 [${NATIVE_ARGS}] 1" "prepare_environment.sh --upgrade pins the accounts on MySQL 8 with mysql_native_password"
   cp "${UP}/.env" "${ENV_FILE}"

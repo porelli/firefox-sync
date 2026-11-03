@@ -33,6 +33,21 @@ Symptoms and their fixes, by area. Each entry starts with what you see: an error
 - **The accounts services stay `(health: starting)`.** They can take a few minutes after a start or an upgrade.
 - **A new release runs on the old schema with Quadlets.** `podman auto-update` replaced the accounts services without running the migrations: see [Quadlets](upgrading.md#quadlets).
 - **Firefox refuses to sign in to your accounts server.** The release is too old for that Firefox (for example Firefox 154 needs a recent one, because it switched to Bearer tokens). Upgrade: see [Self-hosted accounts](upgrading.md#self-hosted-accounts).
+- **Firefox signs in to the account, but Sync never starts; the admin UI's setup check says "Sign-in keys (FXA_OAUTH_SERVER_URL) ... connection refused".** See [Sign-in keys: connection refused](#sign-in-keys-connection-refused).
+- **`docker compose up -d` fails with `bind: address already in use`** for a port of the host (`127.0.0.1:9000`, `127.0.0.1:5000`...). Something else on the host has that port. Run `./prepare_environment.sh --upgrade`: it moves the ports something else took to the next free ones and writes `proxy/` again ([Ports in use](reverse-proxy.md#ports-in-use)); then put the new `proxy/` file into your proxy. By hand: change only that `*_EXPORT_PORT` in `.env`, then `./prepare_environment.sh --render-proxy`.
+
+### Sign-in keys: connection refused
+
+The Sync server checks every sign-in of Firefox with the keys at `FXA_OAUTH_SERVER_URL`. With the self-hosted accounts that is `http://fxa-auth:9000/v1`, container-to-container: inside the stack the accounts API always listens on `fxa-auth:9000`. `FXA_AUTH_EXPORT_PORT` is something else, the port of the host your reverse proxy reaches it on (`127.0.0.1:9000` by default). Changing the host port, for example to `127.0.0.1:9010` because the host had 9000 in use already, must not change `FXA_OAUTH_SERVER_URL`: set to `http://fxa-auth:9010/v1`, nothing answers there, every sign-in to Sync fails, and the admin UI's setup check **Sign-in keys** says `connection refused` (with the explicit `FXA_OAUTH_SERVER_URL is container-to-container` message). `prepare_environment.sh --upgrade` and `--render-proxy` warn of it too.
+
+Fix `.env`:
+
+```ini
+FXA_OAUTH_SERVER_URL=http://fxa-auth:9000/v1
+FXA_AUTH_EXPORT_PORT=127.0.0.1:9010
+```
+
+then `docker compose up -d` (Quadlets: `./prepare_environment.sh --render-units`, then restart the units it names). The setup itself picks a free host port for you when one is in use ([Ports in use](reverse-proxy.md#ports-in-use)), and never changes the ports inside the stack.
 
 ## Backups
 

@@ -55,13 +55,42 @@ The accounts' hosts are there with [self-hosted accounts](accounts.md); the pair
 
 A URL with a port of its own (`https://sync.example.com:8443`) gets a server on that port, and the redirect from HTTP to it; an `http://` URL (on a network of your own: Firefox needs HTTPS but on `localhost`) a plain server, without a redirect.
 
-The ports take the form of a compose port, `[address:]port`. `127.0.0.1:5000`, the default, keeps them to a proxy on the same host. For a proxy on another host, `0.0.0.0:5000` (or a bare port, such as `5000`; `[::]:5000` with IPv6 too) listens on every address of the host: then point the files of `proxy/` at this host's address instead of `127.0.0.1`. The setup script asks for `SYNC_EXPORT_PORT` and takes a port alone as `127.0.0.1:<port>`, and keeps with a warning a value of an existing `.env` it does not recognize; `proxy/` then proxies to `127.0.0.1:<port>` (`[::1]` for `[::]`), not `localhost`, which nginx would try on `::1` first. The other ports: see [Settings](reference/settings.md#accounts).
+The ports take the form of a compose port, `[address:]port`. `127.0.0.1:5000`, the default, keeps them to a proxy on the same host. For a proxy on another host, `0.0.0.0:5000` (or a bare port, such as `5000`; `[::]:5000` with IPv6 too) listens on every address of the host: then point the files of `proxy/` at this host's address instead of `127.0.0.1`. The setup script asks for `SYNC_EXPORT_PORT` (the others in part 6, see [Ports in use](#ports-in-use)) and takes a port alone as `127.0.0.1:<port>`, and keeps with a warning a value of an existing `.env` it does not recognize; `proxy/` then proxies to `127.0.0.1:<port>` (`[::1]` for `[::]`), not `localhost`, which nginx would try on `::1` first. The other ports: see [Settings](reference/settings.md#accounts).
 
-An install set up before this default has `SYNC_EXPORT_PORT=5000`, on every address, and keeps it (`--upgrade` changes nothing there). To keep it to the proxy on the same host, set `SYNC_EXPORT_PORT=127.0.0.1:5000` in `.env`, then `docker compose up -d`, or with Quadlets `./prepare_environment.sh --render-units` and `systemctl --user restart firefox-sync-syncstorage.service`.
+An install set up before this default has `SYNC_EXPORT_PORT=5000`, on every address, and keeps it (`--upgrade` changes the address of no port, only a port something else took: [Ports in use](#ports-in-use)). To keep it to the proxy on the same host, set `SYNC_EXPORT_PORT=127.0.0.1:5000` in `.env`, then `docker compose up -d`, or with Quadlets `./prepare_environment.sh --render-units` and `systemctl --user restart firefox-sync-syncstorage.service`.
+
+### Ports in use
+
+The setup checks every port of this host the stack publishes for your proxy (the `*_EXPORT_PORT` settings of the table above, those of your choices) against what listens there already: `ss` where it is installed, else a connection to the port on `127.0.0.1`. One in use takes the next free port, and the setup says so in its review and at the end, for example `9000 is in use on this host: the accounts API listens on 127.0.0.1:9001`. The ports of this stack's own running containers count as free: set up again or upgraded, a running install keeps its ports. Each port is also a question of the setup's part 6 (`Change any of these ports?`), and an [answer by name](install/compose.md#answers-by-name) (`fxa_auth_listen=127.0.0.1:9100`); a port you give that is in use is kept, with a warning. `./prepare_environment.sh --upgrade` moves a port that something else took to the next free one too, and writes `proxy/` again.
+
+These are ports of the host only. Inside the stack the containers reach each other at their own ports, which never change: `FXA_OAUTH_SERVER_URL` stays `http://fxa-auth:9000/v1` whatever `FXA_AUTH_EXPORT_PORT` is ([Troubleshooting](troubleshooting.md#sign-in-keys-connection-refused)).
+
+At its end the setup prints what your proxy must serve, the host names and the ports of this host they go to, and the path of the file to install:
+
+```text
+Reverse proxy: your reverse proxy must serve these host names, forwarding to these ports of this host:
+  https://sync.example.com                  -> 127.0.0.1:5000    the Sync server
+  https://accounts.example.com              -> 127.0.0.1:3030    the accounts pages
+  https://api.example.com/v1/account/create -> 127.0.0.1:8091    the sign-up gate of the admin UI (POST only)
+  https://api.example.com                   -> 127.0.0.1:9001    the accounts API
+  ...
+  the file to install: /home/me/firefox-sync/proxy/nginx.conf (nginx; Caddy: proxy/Caddyfile, Traefik: proxy/traefik.yml),
+```
+
+Compare it with what your proxy serves: a proxy configured for other host names, or a file of an earlier setup, forwards nothing. The first lines of each file of `proxy/` name the `.env` it was written from, and when that changed. The setup of earlier releases wrote nginx examples into `config/nginx/` (`syncstorage-rs.conf`, `fxa.conf`): the setup and `--upgrade` move those into `proxy/old/` and say so, use `proxy/nginx.conf` instead.
 
 ## Your own proxy
 
 Take the file of your proxy from `proxy/`, put it where `proxy/README.md` says, and reload the proxy. The certificates are yours to get, but with Caddy, which gets them itself.
+
+### Certificates
+
+The setup asks how your proxy has the certificates of the public host names (`proxy_certs`, `PROXY_CERTS`):
+
+- `per-host` (the default): a certificate for each host name, where certbot puts it, `/etc/letsencrypt/live/<host>/`. Get them before nginx loads the file, which does not start without them. With nginx running already (a host with other sites): `sudo certbot certonly --nginx -d sync.example.com -d accounts.example.com ...`, or `--webroot -w <its root>`, which leave it running. `certbot certonly --standalone` needs port 80 for itself, so nginx stopped: only on a host with no web server at all, never on one that serves other sites.
+- `one`: one certificate for every host name, typically a wildcard (`*.example.com`) your other sites use too. The setup asks for its certificate (with its chain) and key, as your proxy reads them (`PROXY_CERT_FILE`, `PROXY_CERT_KEY_FILE`); for nginx, optionally an include file of yours with its `ssl_*` lines, which each server block includes instead (`PROXY_NGINX_SSL_INCLUDE`). nginx gets `ssl_certificate` and `ssl_certificate_key` (or the `include`) in each server block, Caddy `tls <cert> <key>` in each site, Traefik a `tls.certificates` entry (its routers without a resolver).
+
+With `one`, the setup also asks for the names the certificate is for (`PROXY_CERT_NAMES`, default `*.<domain>`; `openssl x509 -noout -ext subjectAltName -in <file>` lists them) and warns of each host name it does not cover, also on `--upgrade` and `--render-proxy`. A wildcard covers exactly one label: `*.example.com` covers `sync.example.com`, not `sync.firefox.example.com` nor `example.com`. Add the names to the certificate, or answer host names it covers.
 
 ### nginx
 
@@ -72,7 +101,7 @@ sudo cp proxy/nginx.conf /etc/nginx/conf.d/firefox-sync.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-nginx does not start without the certificates it names: get them first, for example with `certbot certonly --standalone -d sync.example.com` (one `-d` per host, nginx stopped while it runs), or change the `ssl_certificate` lines to yours. `http2 on;` needs nginx 1.25.1 or later: on an older one, remove the line and put `http2` after `ssl` in `listen`.
+nginx does not start without the certificates it names: get them first, see [Certificates](#certificates) (with nginx running, `certbot certonly --nginx -d sync.example.com`, one `-d` per host), or answer `one` for a certificate of yours that covers them all. `http2 on;` needs nginx 1.25.1 or later: on an older one, remove the line and put `http2` after `ssl` in `listen`.
 
 The Sync server's block, for example:
 
@@ -103,7 +132,7 @@ Client certificates or Authelia in front of the accounts pages: [access-control-
 
 ### Caddy
 
-`proxy/Caddyfile` has a site per host. Caddy gets their certificates from Let's Encrypt by itself, and redirects HTTP to HTTPS. Use it as your Caddyfile, or import it from yours (`import /etc/caddy/firefox-sync.caddy`), then `caddy reload` (`systemctl reload caddy`).
+`proxy/Caddyfile` has a site per host. Caddy gets their certificates from Let's Encrypt by itself (with `PROXY_CERTS=one`, each site has `tls <cert> <key>` of yours instead), and redirects HTTP to HTTPS. Use it as your Caddyfile, or import it from yours (`import /etc/caddy/firefox-sync.caddy`), then `caddy reload` (`systemctl reload caddy`).
 
 Your own additions go in `caddy.d/` next to the file, as snippets that it imports, and that stay when it is written again: `sites*.caddy` beside its sites (sites of your own), `<site>*.caddy` in that site (`sync`, `content`, `api`, `profile`, `pairing`, `admin`), `public*.caddy` in the five Firefox reaches (all but `admin`). A pattern that matches no file imports nothing. For example, the forward auth of Authelia in front of the accounts pages, in `caddy.d/content.caddy`: see [Single sign-on and client certificates](single-sign-on.md).
 
@@ -120,7 +149,7 @@ api.example.com {
 
 ### Traefik
 
-`proxy/traefik.yml` is a dynamic configuration of Traefik's [file provider](https://doc.traefik.io/traefik/providers/file/): put it where `providers.file` reads (`filename`, or a file of its `directory`), Traefik reads it again by itself. Its routers are on the entry points `TRAEFIK_ENTRYPOINTS` (`websecure`), with the certificates of `TRAEFIK_CERTRESOLVER` (empty: Traefik's default certificate), the redirect from HTTP on `TRAEFIK_HTTP_ENTRYPOINT` (`web`, empty: none), names of yours in [Settings](reference/settings.md#reverse-proxy) (then `--render-proxy`). Its services are on `127.0.0.1`: Traefik on this host, not in a container (there, see [Traefik labels](#traefik-labels)).
+`proxy/traefik.yml` is a dynamic configuration of Traefik's [file provider](https://doc.traefik.io/traefik/providers/file/): put it where `providers.file` reads (`filename`, or a file of its `directory`), Traefik reads it again by itself. Its routers are on the entry points `TRAEFIK_ENTRYPOINTS` (`websecure`), with the certificates of `TRAEFIK_CERTRESOLVER` (empty: Traefik's default certificate; with `PROXY_CERTS=one` your certificate, in its `tls.certificates`), the redirect from HTTP on `TRAEFIK_HTTP_ENTRYPOINT` (`web`, empty: none), names of yours in [Settings](reference/settings.md#reverse-proxy) (then `--render-proxy`). Its services are on `127.0.0.1`: Traefik on this host, not in a container (there, see [Traefik labels](#traefik-labels)).
 
 ### Another proxy
 

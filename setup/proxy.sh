@@ -132,20 +132,72 @@ proxy_tls_hosts() {
 }
 # proxy_header <comment lines...>: the first lines of a file, with # (both nginx and Caddy, YAML)
 proxy_header() {
-    local line
+    local line env when
     for line in "$@"; do printf '# %s\n' "${line}"; done
-    printf '# Written by prepare_environment.sh from .env (docs/reverse-proxy.md), again by --upgrade and\n'
-    printf '# --render-proxy: a change of yours is then kept aside, as <file>.before-<...>-<time>.\n'
+    env=$(env_file_read)
+    when=$(date -u -r "${env}" '+%Y-%m-%d %H:%M:%S UTC' 2> /dev/null) || when=""
+    printf '# Written by prepare_environment.sh from %s%s.\n' "${env}" "${when:+ (changed ${when})}"
+    printf '# Again by --upgrade and --render-proxy: a change of yours is then kept aside, as\n'
+    printf '# <file>.before-<...>-<time>. See docs/reverse-proxy.md\n'
+}
+# the certificates of your own proxy: per-host (certbot's, by host name), else one for all of
+# them (PROXY_CERTS=one: PROXY_CERT_FILE and PROXY_CERT_KEY_FILE, nginx also PROXY_NGINX_SSL_INCLUDE)
+proxy_certs_one() {
+    [ "$(proxy_env PROXY_CERTS)" = one ] && [ -n "$(proxy_env PROXY_CERT_FILE)" ] && [ -n "$(proxy_env PROXY_CERT_KEY_FILE)" ] && return 0
+    [ "$(proxy_env PROXY_CERTS)" = one ] && [ -n "$(proxy_env PROXY_NGINX_SSL_INCLUDE)" ] && [ "${1:-}" = nginx ]
+}
+# cert_names_valid <names>: host names and wildcards (*.example.com), comma-separated
+cert_names_valid() {
+    local name names=()
+    [ -n "${1}" ] || return 1
+    IFS=, read -r -a names <<< "${1}"
+    for name in ${names[@]+"${names[@]}"}; do
+        valid_hostname "${name#\*.}" || return 1
+    done
+}
+# cert_covers <names> <host>: a name of the certificate is the host, or a wildcard of exactly
+# the labels after its first one (*.example.com: sync.example.com, not sync.firefox.example.com)
+cert_covers() {
+    local name names=() host
+    host=$(lower "${2}")
+    IFS=, read -r -a names <<< "$(lower "${1}")"
+    for name in ${names[@]+"${names[@]}"}; do
+        [ "${name}" = "${host}" ] && return 0
+        case "${name}" in \*.*) [ "${host#*.}" = "${name#\*.}" ] && [ "${host%%.*}" != "${host}" ] && return 0 ;; esac
+    done
+    return 1
+}
+# cert_cover_check <names> <host...>: a WARNING for each host the certificate does not cover
+cert_cover_check() {
+    local list=${1} host wild
+    shift
+    for host in "$@"; do
+        cert_covers "${list}" "${host}" && continue
+        wild="*.${host#*.}"
+        echo "WARNING: the certificate (${list//,/, }) does not cover ${host}: a wildcard covers exactly one label,"
+        echo "  ${wild} would be ${host}, *.example.com is sync.example.com but not sync.firefox.example.com. Browsers and Firefox"
+        echo "  refuse ${host} with it: add ${host} (or ${wild}) to the certificate, or use a host name it covers"
+    done
+    return 0
 }
 
 # --- nginx: render_nginx <local|network>. network: the containers by name (Docker's DNS,
 # looked up again while it runs), for an nginx on the stack's network (the tests)
 render_nginx() {
     local mode=${1} r site="" port ports=" " hosts allow a
-    proxy_header "Firefox Sync behind nginx: put this file into nginx's configuration (/etc/nginx/conf.d/ or" \
-        "sites-enabled/), with the certificates where ssl_certificate says first (nginx does not start" \
-        "without them: certbot certonly --standalone -d <host> for each host below, nginx stopped, or" \
-        "certbot --nginx on a server of its own), then: nginx -t && systemctl reload nginx"
+    local one="" cert key inc
+    if proxy_certs_one nginx; then
+        one=yes cert=$(proxy_env PROXY_CERT_FILE) key=$(proxy_env PROXY_CERT_KEY_FILE) inc=$(proxy_env PROXY_NGINX_SSL_INCLUDE)
+        proxy_header "Firefox Sync behind nginx: put this file into nginx's configuration (/etc/nginx/conf.d/ or" \
+            "sites-enabled/), then: nginx -t && systemctl reload nginx. One certificate for every host below" \
+            "(PROXY_CERTS=one): ${inc:-${cert}}, which must cover each of their names (docs/reverse-proxy.md#certificates)"
+    else
+        proxy_header "Firefox Sync behind nginx: put this file into nginx's configuration (/etc/nginx/conf.d/ or" \
+            "sites-enabled/), with the certificates where ssl_certificate says first: nginx does not start" \
+            "without them. nginx running: certbot certonly --nginx -d <host> (or --webroot) for each host below;" \
+            "--standalone only on a host with no web server (docs/reverse-proxy.md#certificates). Then:" \
+            "nginx -t && systemctl reload nginx"
+    fi
     [ "${mode}" = network ] && printf '\n# the containers by name, looked up again while nginx runs (a new container has a new address)\nresolver 127.0.0.11 valid=10s ipv6=off;\n'
     # HTTP to HTTPS, per public port of the hosts over TLS
     for r in ${PROXY_ROUTES[@]+"${PROXY_ROUTES[@]}"}; do
@@ -172,7 +224,13 @@ render_nginx() {
                 printf '  listen %s ssl;\n' "${port}"
                 [ "${mode}" = network ] || printf '  listen [::]:%s ssl;\n' "${port}"
                 printf '  http2 on;\n  server_name %s;\n' "${R_HOST}"
-                printf '  ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;\n  ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;\n' "${R_HOST}" "${R_HOST}"
+                if [ -z "${one}" ]; then
+                    printf '  ssl_certificate /etc/letsencrypt/live/%s/fullchain.pem;\n  ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;\n' "${R_HOST}" "${R_HOST}"
+                elif [ -n "${inc}" ]; then
+                    printf '  include %s;\n' "${inc}"
+                else
+                    printf '  ssl_certificate %s;\n  ssl_certificate_key %s;\n' "${cert}" "${key}"
+                fi
             else
                 printf '  listen %s;\n' "${port}"
                 [ "${mode}" = network ] || printf '  listen [::]:%s;\n' "${port}"
@@ -229,9 +287,10 @@ render_nginx() {
 # the file is written again: sites*.caddy beside the sites, <site>*.caddy in that site (sync,
 # content, api, profile, pairing, admin), public*.caddy in the five Firefox reaches
 render_caddy() {
-    local mode=${1} bundled=${2:-} r site="" up allow email ca http https global=""
+    local mode=${1} bundled=${2:-} r site="" up allow email ca http https global="" tls=""
+    [ -z "${bundled}" ] && proxy_certs_one && tls="$(proxy_env PROXY_CERT_FILE) $(proxy_env PROXY_CERT_KEY_FILE)"
     proxy_header "Firefox Sync behind Caddy: put this file as your Caddyfile (or import it from yours), then:" \
-        "caddy reload. Caddy gets the certificates itself (Let's Encrypt), and redirects HTTP to HTTPS." \
+        "caddy reload. $([ -n "${tls}" ] && echo "Every site has your certificate (PROXY_CERTS=one, tls), Caddy" || echo "Caddy gets the certificates itself (Let's Encrypt), and") redirects HTTP to HTTPS." \
         "Snippets of yours in caddy.d/ next to it are imported: sites*.caddy beside these sites, <site>*.caddy" \
         "(sync, content, api, profile, pairing, admin) in that site, public*.caddy in the five Firefox reaches"
     if [ -n "${bundled}" ]; then
@@ -269,6 +328,7 @@ render_caddy() {
             printf '%s%s {\n' "${R_HOST}" "${R_PORT:+:${R_PORT}}"
             [ "${R_SITE}" = admin ] || printf '\timport caddy.d/public*.caddy\n'
             printf '\timport caddy.d/%s*.caddy\n' "${R_SITE}"
+            [ -z "${tls}" ] || ! proxy_tls || printf '\ttls %s\n' "${tls}"
             case "${R_SITE}" in
                 sync) printf '\t# (docs/reverse-proxy.md#request-size)\n\trequest_body {\n\t\tmax_size %s\n\t}\n' "${PROXY_BODY_CADDY}" ;;
                 admin)
@@ -337,12 +397,14 @@ traefik_redirect_rule() {
 }
 # render_traefik_file: the dynamic configuration of the file provider, the stack on this host
 render_traefik_file() {
-    local p r mw ep resolver http rule
+    local p r mw ep resolver http rule one=""
     p=$(proxy_prefix "${1}") resolver=$(proxy_env TRAEFIK_CERTRESOLVER) http=$(proxy_env TRAEFIK_HTTP_ENTRYPOINT)
+    # one certificate for all: in tls.certificates below, no resolver
+    proxy_certs_one && one=yes resolver=""
     proxy_header "Firefox Sync behind Traefik: a dynamic configuration of its file provider (providers.file," \
         "filename or directory): put this file there, Traefik reads it again by itself. Traefik on this host" \
         "(the stack's ports are on 127.0.0.1); in a container, see the labels (PROXY=traefik). Entry points:" \
-        "TRAEFIK_ENTRYPOINTS, TRAEFIK_HTTP_ENTRYPOINT; certificates: TRAEFIK_CERTRESOLVER (empty: the default)"
+        "TRAEFIK_ENTRYPOINTS, TRAEFIK_HTTP_ENTRYPOINT; certificates: $([ -n "${one}" ] && echo "PROXY_CERT_FILE, tls.certificates at the end" || echo "TRAEFIK_CERTRESOLVER (empty: the default)")"
     printf 'http:\n  routers:\n'
     for r in ${PROXY_ROUTES[@]+"${PROXY_ROUTES[@]}"}; do
         proxy_split "${r}"
@@ -383,6 +445,10 @@ render_traefik_file() {
         proxy_split "${r}"
         printf '    %s-%s:\n      loadBalancer:\n        servers:\n          - url: "http://%s"\n' "${p}" "${R_NAME}" "${R_LOCAL}"
     done
+    if [ -n "${one}" ]; then
+        printf '# one certificate for every host (PROXY_CERTS=one): Traefik picks it by the names it is for\n'
+        printf 'tls:\n  certificates:\n    - certFile: %s\n      keyFile: %s\n' "$(proxy_env PROXY_CERT_FILE)" "$(proxy_env PROXY_CERT_KEY_FILE)"
+    fi
 }
 # render_traefik_labels: a compose file (COMPOSE_FILE, PROXY=traefik) that puts the public
 # containers on TRAEFIK_NETWORK too, with the labels of Traefik's Docker provider for them
@@ -445,7 +511,11 @@ render_proxy_readme() {
     printf '# The configuration of your reverse proxy\n\n'
     printf 'Written by `prepare_environment.sh` from `.env`: the public URLs, the ports the stack listens on and the `PROXY` settings. Again by `./prepare_environment.sh --upgrade` (and `--render-units`, `--render-proxy`): a file you changed is then kept as `<file>.before-<...>-<time>`. See docs/reverse-proxy.md.\n\n'
     printf 'Pick the file of your proxy, put it where it says, reload:\n\n'
-    printf -- '- `nginx.conf`: nginx. Into `/etc/nginx/conf.d/` (or `sites-enabled/`), with the certificates where `ssl_certificate` says first (`certbot certonly --standalone -d <host>`, nginx stopped), then `nginx -t && systemctl reload nginx`.\n'
+    if proxy_certs_one nginx; then
+        printf -- '- `nginx.conf`: nginx. Into `/etc/nginx/conf.d/` (or `sites-enabled/`), then `nginx -t && systemctl reload nginx`. Every host has your one certificate (`PROXY_CERTS=one`).\n'
+    else
+        printf -- '- `nginx.conf`: nginx. Into `/etc/nginx/conf.d/` (or `sites-enabled/`), with the certificates where `ssl_certificate` says first: with nginx running, `certbot certonly --nginx -d <host>` (or `--webroot`) for each host; `--standalone` only on a host with no web server, it needs port 80 for itself. Then `nginx -t && systemctl reload nginx`.\n'
+    fi
     printf -- '- `Caddyfile`: Caddy. As your Caddyfile, or `import` it from yours, then `caddy reload`. Your own snippets go in `caddy.d/` next to it (see its first lines): they stay when it is written again.\n'
     printf -- '- `traefik.yml`: Traefik, its file provider (`providers.file`). Into its directory, Traefik reads it by itself.\n'
     printf '\nThese three proxy to the ports of this host (127.0.0.1): your proxy runs on this host.\n'
@@ -513,6 +583,14 @@ write_proxy() {
         written+=("${name} (removed)")
     done
     rm -rf "${stage}"
+    # the nginx examples of the setup of before, config/nginx/*.conf: no longer written, out of
+    # the way (proxy/old/), so that nobody copies those of an old run instead of proxy/nginx.conf
+    [ -n "${3:-}" ] || nginx_old_move
+    # one certificate for all: the names it is for cover every host (the setup checked them already)
+    if [ "${why}" != setup ] && [ "$(proxy_env PROXY)" = own ] && proxy_certs_one && [ -n "$(proxy_env PROXY_CERT_NAMES)" ]; then
+        # shellcheck disable=SC2046 # (the host names, one word each)
+        cert_cover_check "$(proxy_env PROXY_CERT_NAMES)" $(proxy_routes "${deploy}" && proxy_tls_hosts)
+    fi
     # (the bundled Caddy and a trusted-header sign-in set by hand: refused by the setup)
     if [ "$(proxy_env PROXY)" = caddy ] && [ -n "$(proxy_env ADMIN_AUTH_HEADER)" ]; then
         echo "WARNING: PROXY=caddy with ADMIN_AUTH_HEADER: the bundled Caddy reaches the admin UI from 127.0.0.1, which every process"
@@ -528,6 +606,48 @@ write_proxy() {
     return 0
 }
 
+# the files of config/nginx/ the setup wrote before proxy/ (from config/nginx/*-example.conf, which
+# are gone), moved into proxy/old/ as <name>-<UTC time>: NGINX_OLD_MOVED, said
+NGINX_OLD_MOVED=""
+nginx_old_move() {
+    local f dest moved=()
+    for f in syncstorage-rs.conf fxa.conf; do
+        [ -f "${SCRIPT_DIR}/config/nginx/${f}" ] || continue
+        mkdir -p "${SCRIPT_DIR}/proxy/old" || return 0
+        dest=$(backup_name "${SCRIPT_DIR}/proxy/old/${f}")
+        mv "${SCRIPT_DIR}/config/nginx/${f}" "${dest}" && moved+=("proxy/old/$(basename "${dest}")")
+    done
+    [ "${#moved[@]}" = 0 ] && return 0
+    NGINX_OLD_MOVED=${moved[*]}
+    nginx_old_said
+}
+nginx_old_said() {
+    [ -n "${NGINX_OLD_MOVED}" ] || return 0
+    echo "WARNING: config/nginx/*.conf are no longer written: use proxy/nginx.conf (moved the old ones to ${NGINX_OLD_MOVED// /, }:"
+    echo "  their host names and ports are those of an earlier setup; remove them from your nginx if you copied them there)"
+}
+# proxy_table <compose|quadlets>: the host names your proxy serves and where each goes, a line each
+proxy_table() {
+    local r what width=0 lines=()
+    proxy_routes "${1}"
+    for r in ${PROXY_ROUTES[@]+"${PROXY_ROUTES[@]}"}; do
+        proxy_split "${r}"
+        what="${R_SCHEME}://${R_HOST}${R_PORT:+:${R_PORT}}"
+        case "${R_PATH}" in /) ;; =*) what="${what}${R_PATH#=}" ;; *) what="${what}${R_PATH}" ;; esac
+        [ "${#what}" -le "${width}" ] || width=${#what}
+        lines+=("${what}|${R_LOCAL}|${R_NAME}")
+    done
+    for r in ${lines[@]+"${lines[@]}"}; do
+        IFS='|' read -r what R_LOCAL R_NAME <<< "${r}"
+        case "${R_NAME}" in
+            sync) r="the Sync server" ;; content) r="the accounts pages" ;; api) r="the accounts API" ;;
+            gate) r="the sign-up gate of the admin UI (POST only)" ;; img) r="the avatars, without /img" ;;
+            profile) r="the profile server" ;; pairing) r="the pairing server, a websocket" ;; admin) r="the admin UI" ;;
+        esac
+        printf '  %-*s -> %-17s %s\n' "${width}" "${what}" "${R_LOCAL}" "${r}"
+    done
+}
+
 # --render-proxy: proxy/ again from .env, nothing else (after a change of .env)
 render_proxy_cli() {
     SCRIPT_DIR=${FFS_ENTRY_DIR}
@@ -536,6 +656,7 @@ render_proxy_cli() {
     units_installed && units_of_here && deploy=quadlets
     echo "Writing the configuration of the reverse proxy from ${SCRIPT_DIR}/.env (${deploy})..."
     write_proxy "${deploy}" render || exit 1
+    oauth_url_check
     # (the compose file of PROXY in COMPOSE_FILE: --upgrade puts it there)
     if [ "${deploy}" = compose ] && [ -n "$(env_value COMPOSE_FILE)" ] \
         && [ "$(compose_files_proxy "$(env_value COMPOSE_FILE)" "$(proxy_env PROXY)")" != "$(env_value COMPOSE_FILE)" ]; then
@@ -545,7 +666,9 @@ render_proxy_cli() {
         caddy) [ "${deploy}" = quadlets ] && echo "Then: systemctl --user restart firefox-sync-caddy.service" \
             || echo "Then: docker compose up -d && docker compose restart caddy" ;;
         traefik) echo "Then: docker compose up -d (the labels of proxy/traefik-compose.yml)" ;;
-        *) echo "Then: the file of your proxy into its configuration, and reload it (the README of proxy/)" ;;
+        *) echo "Then: the file of your proxy into its configuration (${SCRIPT_DIR}/proxy/nginx.conf, Caddyfile or traefik.yml), and"
+            echo "  reload it (the README of proxy/). It serves these host names, forwarding to these ports of this host:"
+            proxy_table "${deploy}" ;;
     esac
     exit 0
 }
