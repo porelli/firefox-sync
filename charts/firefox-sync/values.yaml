@@ -212,7 +212,12 @@ fxa:
     enabled: false
     # FXA_PAIRING_URL (required with enabled), e.g. wss://pairing.example.com
     url: ""
-    # FXA_PAIRING_IMAGE, empty: <image.repository>:fxa-channelserver-latest
+    # its image: repository (FXA_PAIRING_REPOSITORY, empty: the accounts' fxa.image.repository,
+    # else image.repository) and tag (FXA_PAIRING_VERSION); image (FXA_PAIRING_IMAGE), a full
+    # reference, wins over both, e.g. Mozilla's own docker.io/mozilla/channelserver:<tag> (amd64
+    # only), needed with Mozilla's accounts image (fxa.image.repository docker.io/mozilla/fxa-mono)
+    repository: ""
+    tag: fxa-channelserver-latest
     image: ""
     # FXA_PAIRING_TRUSTED_PROXIES: the proxies whose X-Forwarded-For it reads
     trustedProxies: "127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"

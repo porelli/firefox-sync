@@ -6,12 +6,14 @@ compose/fxa-mysql.yml, compose/fxa-mariadb.yml): their images, hosts, env blocks
 {{/*
 The image of the accounts (name "fxa": compose's ${FXA_IMAGE}:${FXA_VERSION}, fxa.image.repository
 empty: image.repository) or of the pairing server (name "pairing": FXA_PAIRING_IMAGE, empty:
-<image.repository>:fxa-channelserver-latest). Accepts a dict with "root" and "name"
+${FXA_PAIRING_REPOSITORY}:${FXA_PAIRING_VERSION}, fxa.pairing.repository empty: the accounts'
+repository, fxa.pairing.tag empty: fxa-channelserver-latest). Accepts a dict with "root" and "name"
 */}}
 {{- define "firefox-sync.fxaImage" -}}
 {{- $v := .root.Values }}
 {{- if eq .name "pairing" }}
-{{- $v.fxa.pairing.image | default (printf "%s:fxa-channelserver-latest" $v.image.repository) }}
+{{- $p := $v.fxa.pairing }}
+{{- $p.image | default (printf "%s:%s" ($p.repository | default $v.fxa.image.repository | default $v.image.repository) ($p.tag | default "fxa-channelserver-latest")) }}
 {{- else }}
 {{- printf "%s:%s" ($v.fxa.image.repository | default $v.image.repository) ($v.fxa.image.tag | default "fxa-mono-latest") }}
 {{- end }}
@@ -255,6 +257,9 @@ firefox-sync.checkValues
 {{- end }}
 {{- if and $f.pairing.enabled (not $f.pairing.url) }}
 {{- fail "firefox-sync: fxa.pairing.enabled needs fxa.pairing.url, the public wss:// URL of the pairing server" }}
+{{- end }}
+{{- if and $f.pairing.enabled (not $f.pairing.image) (not $f.pairing.repository) (hasSuffix "/fxa-mono" ($f.image.repository | default "")) }}
+{{- fail (printf "firefox-sync: the pairing server's image follows fxa.image.repository, %s (Mozilla's accounts image), which has no pairing server: set fxa.pairing.image (Mozilla's: docker.io/mozilla/channelserver:<tag>) or fxa.pairing.repository (ours: ghcr.io/porelli/firefox-sync)" $f.image.repository) }}
 {{- end }}
 {{- /* every public host of its own (an Ingress each): host names case-insensitive, a
 trailing dot the same host, the port ignored; the Sync server's two (syncDomain's, ingress.host)

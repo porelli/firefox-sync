@@ -230,6 +230,8 @@ With self-hosted accounts, a phone pairs with a computer through Mozilla's pairi
 
 1. Start it: `docker compose up -d`.
 
+Its image follows the accounts' `FXA_IMAGE`, with the tag `fxa-channelserver-latest` (`FXA_PAIRING_VERSION`): our build for amd64 and arm64, from a mirror too when `FXA_IMAGE` is one. `FXA_PAIRING_REPOSITORY` takes it from another repository, and `FXA_PAIRING_IMAGE`, a full image reference, wins over both: with Mozilla's accounts image, which has no pairing server, set `FXA_PAIRING_IMAGE=docker.io/mozilla/channelserver:latest` (amd64 only) or `FXA_PAIRING_REPOSITORY=ghcr.io/porelli/firefox-sync`. Helm: `fxa.pairing.repository`, `.tag` and `.image` ([Settings](reference/settings.md#accounts)).
+
 ## Client IP address
 
 The accounts service limits sign-in attempts per client IP address. It takes the address from `X-Forwarded-For`, at a fixed position from the end: `FXA_CLIENT_ADDRESS_DEPTH` (`2`), for one reverse proxy in front of the stack.

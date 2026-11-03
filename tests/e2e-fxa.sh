@@ -9,7 +9,7 @@
 #   FXA_IMAGE        accounts image (default: REPOSITORY, i.e. our builds)
 #   FXA_VERSION      accounts image tag (default: fxa-mono-latest)
 #   FXA_ARCH         amd64 or arm64 (default: this machine)
-#   FXA_PAIRING_IMAGE pairing server image (default: REPOSITORY:fxa-channelserver-latest)
+#   FXA_PAIRING_IMAGE pairing server image (default: none, it follows FXA_IMAGE: <FXA_IMAGE>:fxa-channelserver-latest)
 #   ADMIN_IMAGE      admin UI and sign-up policy image, used as is (default: built from admin/)
 #   KEEP             set to 1 to leave the stack running (its settings: KEPT_ENV)
 #   RERUN            set to 1 to run only the Python tests again, against the stack left
@@ -116,12 +116,11 @@ slot_fxa_ports "${ENV_FILE}"
 [ -n "${DEMO:-}" ] && sed -i -e "s|^FXA_SIGNUP_ALLOWLIST=.*|FXA_SIGNUP_ALLOWLIST=@example.com,carol@example.org|" "${ENV_FILE}"
 # by default the accounts images of the registry under test, for this machine
 case "$(uname -m)" in aarch64|arm64) default_arch=arm64 ;; *) default_arch=amd64 ;; esac
-sed -i -e "s|^FXA_IMAGE=.*|FXA_IMAGE=${REPOSITORY}|" -e "s|^FXA_ARCH=.*|FXA_ARCH=${default_arch}|" \
-    -e "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${REPOSITORY}:fxa-channelserver-latest|" "${ENV_FILE}"
+sed -i -e "s|^FXA_IMAGE=.*|FXA_IMAGE=${REPOSITORY}|" -e "s|^FXA_ARCH=.*|FXA_ARCH=${default_arch}|" "${ENV_FILE}"
 [ -n "${FXA_VERSION:-}" ] && sed -i "s|^FXA_VERSION=.*|FXA_VERSION=${FXA_VERSION}|" "${ENV_FILE}"
 [ -n "${FXA_IMAGE:-}" ] && sed -i "s|^FXA_IMAGE=.*|FXA_IMAGE=${FXA_IMAGE}|" "${ENV_FILE}"
 [ -n "${FXA_ARCH:-}" ] && sed -i "s|^FXA_ARCH=.*|FXA_ARCH=${FXA_ARCH}|" "${ENV_FILE}"
-[ -n "${FXA_PAIRING_IMAGE:-}" ] && sed -i "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${FXA_PAIRING_IMAGE}|" "${ENV_FILE}"
+[ -n "${FXA_PAIRING_IMAGE:-}" ] && sed -i "s|^# FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${FXA_PAIRING_IMAGE}|" "${ENV_FILE}"
 case "${FXA_DB:-mysql}" in mysql|mariadb) sed -i "s|^FXA_DB=.*|FXA_DB=${FXA_DB:-mysql}|" "${ENV_FILE}" ;; *) echo "FXA_DB: mysql or mariadb"; exit 2 ;; esac
 # MariaDB lts (12) needs mozilla/fxa#21494 in the accounts image (upstream-patches.yml, the
 # label our builds set; not in Mozilla's images nor in ours built before): MariaDB 11 without
@@ -440,6 +439,9 @@ notify_answers=(fxa_max_accounts=5 fxa_account_events=yes "admin_notify='ntfy://
 prepare "${WORK}/setup.log" "${notify_answers[@]}" backups=yes pairing=yes
 check "$(grep -c '^COMPOSE_PROFILES=admin,backup,pairing$' "${SETUP}/.env") $(grep -c '^FXA_PAIRING_URL=wss://pairing.example.org$' "${SETUP}/.env") $(setup_compose config --services | grep -cxE 'backup|backup-fxa|fxa-pairing')" \
   "1 1 3" "the backups and the pairing server chosen: COMPOSE_PROFILES=admin,backup,pairing, FXA_PAIRING_URL, their services"
+# its image follows FXA_IMAGE (no FXA_PAIRING_IMAGE written): <FXA_IMAGE>:fxa-channelserver-latest, as before
+check "$(grep -c '^FXA_PAIRING_IMAGE=' "${SETUP}/.env") $(setup_compose config fxa-pairing | sed -n 's/^    image: //p')" \
+  "0 $(sed -n 's/^FXA_IMAGE=//p' "${SETUP}/.env"):fxa-channelserver-latest" "the pairing server's image follows FXA_IMAGE"
 # proxy/: a server for each of the six hosts and the redirect, the pairing server's a websocket
 check "$(grep -cx 'server {' "${SETUP}/proxy/nginx.conf") $(grep -cxE '  server_name pairing\.example\.org;|    proxy_pass http://127\.0\.0\.1:8058;|  ssl_certificate /etc/letsencrypt/live/pairing\.example\.org/fullchain\.pem;|    proxy_set_header Upgrade \$http_upgrade;' "${SETUP}/proxy/nginx.conf") $(grep -cx 'pairing.example.org {' "${SETUP}/proxy/Caddyfile")" \
   "7 4 1" "the pairing server in proxy/ (nginx.conf, Caddyfile)"

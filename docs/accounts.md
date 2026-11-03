@@ -182,7 +182,7 @@ Privacy, plainly:
 
 - Tested on every release: sign-up, email confirmation, sign-in, OAuth for Sync, syncing, and a second device. A real Firefox signs up on one profile through the accounts pages, and a second profile signs in and receives its bookmark.
 - Send tab to device uses Mozilla's public push service, as Firefox does with Mozilla accounts.
-- Pairing a phone with a QR code ([Pair a phone](firefox.md#pair-a-phone)) uses Mozilla's channel server, unless you run your own: see [Pairing](reverse-proxy.md#pairing).
+- Pairing a phone with a QR code ([Pair a phone](firefox.md#pair-a-phone)) uses Mozilla's channel server, unless you run your own: see [Pairing](reverse-proxy.md#pairing). Its image follows `FXA_IMAGE`; with Mozilla's accounts image, set `FXA_PAIRING_IMAGE` too.
 - The accounts service rate-limits sign-in attempts itself, in Redis, with upstream's `rate-limit-rules.txt`. For example: 5 failed sign-ins per IP address and email in 15 minutes. It reads the client's address from `X-Forwarded-For`, see [Client IP address](reverse-proxy.md#client-ip-address).
 - Not available: payments and subscriptions, the recovery phone (SMS), sign-in with Google or Apple, and the deferred clean-up tasks and event notifications to other services. They need Google Cloud. The [security history](#security-history) does not.
 

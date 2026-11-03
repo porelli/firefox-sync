@@ -39,7 +39,7 @@ The images here are built as close to Mozilla's as possible. They add arm64, Mar
 - `fxa-mono-latest` is the newest release that passed the tests on both architectures, including a real Firefox signing up and syncing, and an install of the previous release upgraded to it.
 - Source: [mozilla/fxa](https://github.com/mozilla/fxa). Code changes: only the [upstream patches](#upstream-patches).
 - Built by [fxa.yml](/.github/workflows/fxa.yml).
-- Settings: `FXA_IMAGE`, `FXA_VERSION` (`fxa-mono-latest` by default) and `FXA_ARCH`, and `FXA_PAIRING_IMAGE` for the pairing server.
+- Settings: `FXA_IMAGE`, `FXA_VERSION` (`fxa-mono-latest` by default) and `FXA_ARCH`. The pairing server follows `FXA_IMAGE` with the tag `FXA_PAIRING_VERSION` (`fxa-channelserver-latest`), or `FXA_PAIRING_REPOSITORY`, or a full `FXA_PAIRING_IMAGE` ([Settings](settings.md#accounts)).
 
 Mozilla's own image works too, on amd64:
 
@@ -47,6 +47,8 @@ Mozilla's own image works too, on amd64:
 FXA_IMAGE=docker.io/mozilla/fxa-mono
 FXA_VERSION=v1.347.1
 FXA_ARCH=amd64
+# with the pairing server: Mozilla's, as FXA_IMAGE has none
+FXA_PAIRING_IMAGE=docker.io/mozilla/channelserver:latest
 ```
 
 It has none of the upstream patches, so it needs an older database major: see [Supported versions](../databases.md#supported-versions).

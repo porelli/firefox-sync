@@ -585,5 +585,58 @@ proxy_admin_allow=everyone|not a list of addresses or CIDRs"; do
     check "$? $(grep -c "${bad##*|}" "${WORK}/bad.log") [$(ls "${W}/.env" 2> /dev/null)]" "1 1 []" "refused: ${bad##*|}"
 done
 
+echo "== the pairing server's image: it follows FXA_IMAGE, FXA_PAIRING_IMAGE a full override"
+# an .env of before: FXA_PAIRING_IMAGE written by its setup, <FXA_IMAGE>:fxa-channelserver-latest
+# (a mirror here), none of the new lines; --upgrade comments it out (the image it follows anyway),
+# and again changes nothing; any other value is kept, and said so
+old_pairing_env() { # <FXA_IMAGE> <FXA_PAIRING_IMAGE>
+    sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|keepme|' -e 's|<REPLACE_WITH_YOUR_DOMAIN>|sync.example.org|' \
+        -e '/^# FXA_PAIRING_REPOSITORY=/d' -e '/^# FXA_PAIRING_VERSION=/d' \
+        -e "s|^FXA_IMAGE=.*|FXA_IMAGE=${1}|" -e "s|^# FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${2}|" "${W}/.env-example" > "${W}/.env"
+}
+reset_checkout new
+old_pairing_env registry.example.org:5000/ffs registry.example.org:5000/ffs:fxa-channelserver-latest
+run_setup docker "${WORK}/upgrade-pairing.log" --upgrade < /dev/null
+check "$? $(grep -c '^FXA_PAIRING_IMAGE=' "${W}/.env") $(grep -cx '# FXA_PAIRING_IMAGE=registry.example.org:5000/ffs:fxa-channelserver-latest' "${W}/.env") $(grep -c '^FXA_PAIRING_IMAGE: commented out, the pairing server follows FXA_IMAGE now (the same image, registry.example.org:5000/ffs:fxa-channelserver-latest)$' "${WORK}/upgrade-pairing.log")" \
+    "0 0 1 1" "--upgrade: FXA_PAIRING_IMAGE of the setup of before (<FXA_IMAGE>:fxa-channelserver-latest) commented out"
+run_setup docker "${WORK}/upgrade-pairing-again.log" --upgrade < /dev/null
+check "$? $(grep -c 'FXA_PAIRING_IMAGE' "${WORK}/upgrade-pairing-again.log") $(grep -c '^Nothing to add' "${WORK}/upgrade-pairing-again.log")" "0 0 1" "--upgrade again: nothing changes"
+for own in docker.io/mozilla/channelserver:latest ghcr.io/porelli/firefox-sync:fxa-channelserver-latest registry.example.org:5000/ffs:fxa-channelserver-v1; do
+    reset_checkout new
+    old_pairing_env registry.example.org:5000/ffs "${own}"
+    run_setup docker "${WORK}/upgrade-pairing-own.log" --upgrade < /dev/null
+    check "$? $(ev FXA_PAIRING_IMAGE) $(grep -c "^NOTE: FXA_PAIRING_IMAGE=${own}: kept, your own image" "${WORK}/upgrade-pairing-own.log")" "0 ${own} 1" \
+        "--upgrade: FXA_PAIRING_IMAGE=${own} with FXA_IMAGE=registry.example.org:5000/ffs: kept, said so"
+done
+# Mozilla's accounts image (no pairing server there) with the pairing profile and no FXA_PAIRING_IMAGE: warned of
+reset_checkout new
+old_pairing_env docker.io/mozilla/fxa-mono ""
+sed -i.bak 's|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=admin,pairing|' "${W}/.env" && rm -f "${W}/.env.bak"
+run_setup docker "${WORK}/upgrade-pairing-mozilla.log" --upgrade < /dev/null
+check "$? $(grep -c '^WARNING: the pairing server follows FXA_IMAGE=docker.io/mozilla/fxa-mono (Mozilla.s accounts image), which has no$' "${WORK}/upgrade-pairing-mozilla.log")" "0 1" \
+    "--upgrade: Mozilla's accounts image with the pairing profile and no FXA_PAIRING_IMAGE: warned of"
+# docker compose (where it is installed: outside the stubs, the PATH of this test) resolves the
+# image of a new install as the setup of before wrote it, and follows FXA_IMAGE; FXA_PAIRING_*
+# (from the environment, over .env)
+if command -v docker > /dev/null 2>&1 && docker compose version > /dev/null 2>&1; then
+    reset_checkout new
+    printf '%s\n' domain=example.org accounts=self-hosted smtp_host=smtp.example.org pairing=yes > "${WORK}/pairing.answers"
+    run_setup docker "${WORK}/pairing.log" --answers "${WORK}/pairing.answers" --non-interactive < /dev/null
+    check "$? $(grep -c '^FXA_PAIRING_IMAGE=' "${W}/.env") $(ev FXA_IMAGE)" "0 0 ghcr.io/porelli/firefox-sync" "a new install with the pairing server: no FXA_PAIRING_IMAGE written"
+    pairing_image() { (cd "${W}" && env -i PATH="${PATH}" HOME="${HOME}" ${DOCKER_HOST:+DOCKER_HOST="${DOCKER_HOST}"} "$@" docker compose config fxa-pairing 2> "${WORK}/compose.err") | sed -n 's/^    image: //p'; }
+    for c in "|ghcr.io/porelli/firefox-sync:fxa-channelserver-latest" \
+        "FXA_IMAGE=registry.example.org:5000/ffs|registry.example.org:5000/ffs:fxa-channelserver-latest" \
+        "FXA_IMAGE=|ghcr.io/porelli/firefox-sync:fxa-channelserver-latest" \
+        "FXA_IMAGE=registry.example.org/ffs FXA_PAIRING_VERSION=fxa-channelserver-v1|registry.example.org/ffs:fxa-channelserver-v1" \
+        "FXA_IMAGE=docker.io/mozilla/fxa-mono FXA_PAIRING_REPOSITORY=ghcr.io/porelli/firefox-sync|ghcr.io/porelli/firefox-sync:fxa-channelserver-latest" \
+        "FXA_IMAGE=registry.example.org/ffs FXA_PAIRING_REPOSITORY=registry.example.org/other FXA_PAIRING_VERSION=v2 FXA_PAIRING_IMAGE=docker.io/mozilla/channelserver:latest|docker.io/mozilla/channelserver:latest"; do
+        settings=${c%|*}
+        # shellcheck disable=SC2086 # (the settings, one word each)
+        check "$(pairing_image ${settings})" "${c#*|}" "docker compose: the pairing server's image with ${settings:-the .env of a new install}" || cat "${WORK}/compose.err"
+    done
+else
+    echo "SKIP: docker compose: no docker compose here (the pairing server's image as compose reads it)"
+fi
+
 [ "${FAILED}" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit "${FAILED}"

@@ -59,7 +59,7 @@ With the Helm chart:
 1. `helm upgrade` as in [Helm](#helm). The auth pod stops, and its new pod runs the migrations, then the sign-up policy, in its init containers before it serves. The content and profile servers wait for it.
 1. Check `kubectl logs deploy/ffs-firefox-sync-fxa-auth -c migrations`, and the admin UI's overview as above. A failed migration keeps the auth pod in `Init:Error` and out of its Service. To go back to the older release, restore the backup ([Restore on Kubernetes](backups.md#restore-on-kubernetes)).
 
-To move from Mozilla's image to the builds of this repository, or back, change `FXA_IMAGE`, `FXA_VERSION` and `FXA_ARCH` together (Helm: `fxa.image.repository` and `.tag`), then follow the same steps. For example from `FXA_IMAGE=docker.io/mozilla/fxa-mono`, `FXA_VERSION=v1.345.2`, `FXA_ARCH=amd64` to `FXA_IMAGE=ghcr.io/porelli/firefox-sync`, `FXA_VERSION=fxa-mono-latest`, `FXA_ARCH=arm64`. It is the same software: the databases and the keys stay.
+To move from Mozilla's image to the builds of this repository, or back, change `FXA_IMAGE`, `FXA_VERSION` and `FXA_ARCH` together (Helm: `fxa.image.repository` and `.tag`), then follow the same steps. The pairing server follows `FXA_IMAGE`: with Mozilla's image set `FXA_PAIRING_IMAGE` too (Helm: `fxa.pairing.image`), see [Pairing](reverse-proxy.md#pairing). For example from `FXA_IMAGE=docker.io/mozilla/fxa-mono`, `FXA_VERSION=v1.345.2`, `FXA_ARCH=amd64` to `FXA_IMAGE=ghcr.io/porelli/firefox-sync`, `FXA_VERSION=fxa-mono-latest`, `FXA_ARCH=arm64`. It is the same software: the databases and the keys stay.
 
 Don't stay too far behind: Firefox refuses to sign in to accounts servers that are too old for it. For example Firefox 154 needs a recent release, because it switched to Bearer tokens.
 
@@ -212,7 +212,8 @@ Moving to the newer major later is up to you, with a backup first: [MariaDB](#ma
     - it writes the files of `compose/` in `COMPOSE_FILE`, and `COMPOSE_PROJECT_NAME` ([Files that moved](#files-that-moved));
     - it sets `ADMIN_DB_PASSWORD`, the password of the admin UI's database users: at the next start the event log and the audit trail move out of the Sync server's reach ([The admin UI's own database](#the-admin-uis-own-database));
     - with the PostgreSQL container, it sets `SYNC_POSTGRES_APP_USER` and `SYNC_POSTGRES_APP_PASSWORD`, a role of the Sync server's own that is no superuser;
-    - it writes the database majors the install runs ([Database majors](#database-majors)).
+    - it writes the database majors the install runs ([Database majors](#database-majors));
+    - it comments out `FXA_PAIRING_IMAGE` when it is the value the setup of before wrote: the pairing server follows `FXA_IMAGE` now ([Pairing server image](#pairing-server-image)).
 
     Don't skip it: without it the admin UI keeps the event log in the tokenserver database, which the Sync server's user can rewrite, and its setup check fails. With your own database server, run the `database-setup.sql` it writes there first. Run it before the next step: a line of `.env-example` added under its new name before the rename would hide your value under the old one (compose reads the new name first).
 1. Add the lines of [.env-example](/.env-example) that your `.env` lacks, with their default values, and change none of yours:
@@ -232,6 +233,17 @@ Put back the old files and images, with the `.env.before-upgrade-<time>` of the 
 
 - An older admin UI (from before `ADMIN_DB_PASSWORD`) creates its tables again, empty, in the tokenserver database, and records there, within the Sync server's reach. The event log and the audit trail since the upgrade stay in `ffs_admin`, which it does not read. Going forward again later, the newer admin UI does not copy those tables a second time: its setup check names them. Drop them as the tokenserver user once you have looked at them.
 - An older init image with the newer admin UI: on MariaDB and MySQL the admin UI's reader `ffs_admin_sync` changes the tokenserver database only through the init container's procedures (`ffs_set_max_users`, `ffs_delete_user_row`, `ffs_drop_admin_tables`), which an older init image does not create. On the databases of before (the backup), the max users edits, the resets that free a slot and the deleted accounts then fail with a missing procedure. Pin the init image back only together with the admin UI (`ADMIN_IMAGE`), or keep the init image of this release as long as its admin UI runs.
+
+### Pairing server image
+
+The pairing server's image now follows the accounts' `FXA_IMAGE`: `<FXA_IMAGE>:fxa-channelserver-latest`, so that a mirror or another registry in `FXA_IMAGE` moves it too. The setup of before wrote it out as `FXA_PAIRING_IMAGE=<FXA_IMAGE>:fxa-channelserver-latest`, which kept it where it was when `FXA_IMAGE` changed. `FXA_PAIRING_IMAGE` stays: a full image reference that wins, for your own image or Mozilla's.
+
+`./prepare_environment.sh --upgrade`:
+
+- `FXA_PAIRING_IMAGE` with the value the setup wrote, `<FXA_IMAGE>:fxa-channelserver-latest` (the image it follows anyway): commented out. The same image as before.
+- Any other value (Mozilla's `docker.io/mozilla/channelserver`, another repository, a pinned tag): kept, and it says so. To follow `FXA_IMAGE`, comment it out; to pin a tag only, `FXA_PAIRING_VERSION`.
+
+Without `--upgrade` nothing changes: the `FXA_PAIRING_IMAGE` of your `.env` wins as before. With Mozilla's accounts image (`FXA_IMAGE=docker.io/mozilla/fxa-mono`), which has no pairing server, and `FXA_PAIRING_IMAGE` removed, set it again or set `FXA_PAIRING_REPOSITORY=ghcr.io/porelli/firefox-sync`: `prepare_environment.sh` warns when the pairing profile is on. Helm: `fxa.pairing.image` empty is now `<fxa.image.repository>:<fxa.pairing.tag>` (the accounts' repository, before `image.repository`'s); the chart refuses to render with Mozilla's `fxa-mono` repository there and no `fxa.pairing.image` or `fxa.pairing.repository`.
 
 ### The admin UI's own database
 

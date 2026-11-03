@@ -279,6 +279,13 @@ compose_settings_check() {
         echo "NOTE: COMPOSE_FILE is exported where this runs ($(printenv COMPOSE_FILE)), which docker compose takes over .env's (${file:-none}): change it there too (your shell, a unit's Environment=)"
     [ -n "$(printenv COMPOSE_PROJECT_NAME)" ] && [ "$(printenv COMPOSE_PROJECT_NAME)" != "${project}" ] && \
         echo "NOTE: COMPOSE_PROJECT_NAME is exported where this runs ($(printenv COMPOSE_PROJECT_NAME)), which docker compose takes over .env's (${project:-none}): change it there too (your shell, a unit's Environment=)"
+    # the pairing server follows FXA_IMAGE: Mozilla's accounts image has no pairing server tag
+    if [[ "$(env_value FXA_IMAGE)" == */fxa-mono ]] && [[ ",$(env_plain COMPOSE_PROFILES)," == *,pairing,* ]] \
+        && [ -z "$(env_plain FXA_PAIRING_IMAGE)" ] && [ -z "$(env_plain FXA_PAIRING_REPOSITORY)" ]; then
+        echo "WARNING: the pairing server follows FXA_IMAGE=$(env_value FXA_IMAGE) (Mozilla's accounts image), which has no"
+        echo "  pairing server: set FXA_PAIRING_IMAGE (Mozilla's: docker.io/mozilla/channelserver:<tag>) or"
+        echo "  FXA_PAIRING_REPOSITORY (ours: ghcr.io/porelli/firefox-sync) in .env (docs/reverse-proxy.md#pairing)"
+    fi
     return 0
 }
 # docker compose on the Podman socket: DOCKER_HOST is Podman's, the project's containers are

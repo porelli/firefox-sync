@@ -381,7 +381,9 @@ services:
 
   # optional, COMPOSE_PROFILES=pairing and FXA_PAIRING_URL=wss://pairing.example.com in .env
   fxa-pairing:
-    image: ${FXA_PAIRING_IMAGE:-ghcr.io/porelli/firefox-sync:fxa-channelserver-latest}
+    # FXA_PAIRING_IMAGE (a full image reference) wins; else FXA_PAIRING_REPOSITORY (default: the
+    # accounts' FXA_IMAGE) and FXA_PAIRING_VERSION
+    image: ${FXA_PAIRING_IMAGE:-${FXA_PAIRING_REPOSITORY:-${FXA_IMAGE:-ghcr.io/porelli/firefox-sync}}:${FXA_PAIRING_VERSION:-fxa-channelserver-latest}}
     platform: linux/${FXA_ARCH:-amd64}
     profiles: [pairing]
     environment:

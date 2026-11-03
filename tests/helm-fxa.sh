@@ -229,11 +229,31 @@ fxa_lint() {
   [[ "$(jq -r '[.fxa, .pairing, .db, .allowlist] | join("|")' <<< "${out}")" == \
     "docker.io/mozilla/fxa-mono:v1.347.1|docker.io/mozilla/channelserver:v0.9|fxadb.example.test 3307 fxa docker.io/library/mariadb:lts|a@x.test,@y.test" ]] \
     || fail "the helpers with your own accounts server: ${out}"
+  # the pairing server's image follows the accounts' repository (compose: FXA_IMAGE), with
+  # fxa.pairing.tag; fxa.pairing.repository another one; fxa.pairing.image wins over both
+  local args want
+  for c in "--set fxa.image.repository=registry.example.test/ffs|registry.example.test/ffs:fxa-channelserver-latest" \
+    "--set image.repository=registry.example.test/sync|registry.example.test/sync:fxa-channelserver-latest" \
+    "--set fxa.image.repository=registry.example.test:5000/ffs --set fxa.pairing.tag=fxa-channelserver-v1|registry.example.test:5000/ffs:fxa-channelserver-v1" \
+    "--set fxa.image.repository=docker.io/mozilla/fxa-mono --set fxa.pairing.repository=ghcr.io/porelli/firefox-sync|ghcr.io/porelli/firefox-sync:fxa-channelserver-latest" \
+    "--set fxa.pairing.repository=registry.example.test/other --set fxa.pairing.tag=v2 --set fxa.pairing.image=docker.io/mozilla/channelserver:latest|docker.io/mozilla/channelserver:latest"; do
+    args=${c%|*} want=${c#*|}
+    # shellcheck disable=SC2086 # (its words)
+    out=$(helpers -f "${fxa}" ${args} | jq -r '.pairing')
+    [[ "${out}" == "${want}" ]] || fail "the pairing server's image with ${args}: ${out}, not ${want}"
+  done
+  # Mozilla's accounts image has no pairing server: refused without fxa.pairing.image or .repository
+  out=$(helm template test-release "${CHART_DIR}" -f "${fxa}" --set fxa.image.repository=docker.io/mozilla/fxa-mono 2>&1) \
+    && fail "the pairing server on Mozilla's fxa-mono repository: rendered"
+  grep -q "the pairing server's image follows fxa.image.repository, docker.io/mozilla/fxa-mono (Mozilla's accounts image), which has no pairing server" <<< "${out}" \
+    || fail "the pairing server on Mozilla's fxa-mono repository: not the error: ${out}"
+  helm template test-release "${CHART_DIR}" -f "${fxa}" --set fxa.image.repository=docker.io/mozilla/fxa-mono --set fxa.pairing.enabled=false > /dev/null \
+    || fail "Mozilla's fxa-mono repository without the pairing server: not rendered"
   out=$(helpers -f "${CHART_DIR}/ci/default-values.yaml")
   [[ "$(jq -r '[.oauth, .email] | join("|")' <<< "${out}")" == "https://oauth.accounts.firefox.com/v1|api.accounts.firefox.com" ]] \
     || fail "accounts off: fxaOauthServerUrl, fxaEmailDomain not fxa.oauthServerUrl, fxa.emailDomain: ${out}"
   [[ "$(jq -r '.smtp' <<< "${out}")" == '{"host":"","port":"587","secure":"false","sender":"","user":""}' ]] || fail "firefox-sync.smtp: $(jq -r '.smtp' <<< "${out}")"
-  check "helpers: fxaImage, fxaDb*, fxaHost, fxaOauthServerUrl, fxaEmailDomain (derived with the accounts), fxaAllowlist, fxaMysqlEnv, smtp, security contexts"
+  check "helpers: fxaImage (the pairing server's following the accounts' repository, fxa.pairing.repository, .tag, .image; Mozilla's fxa-mono refused), fxaDb*, fxaHost, fxaOauthServerUrl, fxaEmailDomain (derived with the accounts), fxaAllowlist, fxaMysqlEnv, smtp, security contexts"
 
   fxa_objects_lint
   fxa_ingress_lint
@@ -977,8 +997,8 @@ fxa_e2e() {
   # the fixtures' images (tests/helm/traefik.yaml, tests/helm/fxa-fixtures.yaml)
   TRAEFIK_IMAGE=docker.io/library/traefik:latest
   MAILPIT_IMAGE=docker.io/axllent/mailpit:latest
-  # the pairing server's (fxa.pairing.image empty: <image.repository>:fxa-channelserver-latest)
-  PAIRING_IMAGE="${repository}:fxa-channelserver-latest"
+  # the pairing server's (fxa.pairing.image and .repository empty: <fxa.image.repository>:fxa-channelserver-latest)
+  PAIRING_IMAGE="${fxa_image%:*}:fxa-channelserver-latest"
   BROWSER_IMAGE="ffs-fxa-browser:src-$(cd "${SCRIPT_DIR}/browser" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
   POD_SELECTOR="app.kubernetes.io/instance=${REL},app.kubernetes.io/component=fxa-auth"
   local sync_db_image

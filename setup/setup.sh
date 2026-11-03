@@ -209,11 +209,11 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     for name in FXA_MYSQL_PASSWORD FXA_ADMIN_DB_PASSWORD FXA_AUTH_SECRET FXA_OAUTH_SECRET FXA_PROFILE_SECRET FXA_FLOW_ID_KEY FXA_SESSION_TOKEN_HANDLE_KEY FXA_CONTENT_SESSION_SECRET; do
         apply_sed "${NEW_ENV}" "s|^${name}=.*|${name}=$(generate_random_string 32)|"
     done
-    # the accounts images come from the same registry as the sync images, for this host's architecture
+    # the accounts images (and the pairing server's, which follows FXA_IMAGE) come from the same
+    # registry as the sync images, for this host's architecture
     FXA_REGISTRY=$(grep '^IMAGE_REPOSITORY=' "${NEW_ENV}" | cut -d= -f2)
     FXA_ARCH=$(host_arch)
     apply_sed "${NEW_ENV}" "s|^FXA_IMAGE=.*|FXA_IMAGE=${FXA_REGISTRY}|"
-    apply_sed "${NEW_ENV}" "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${FXA_REGISTRY}:fxa-channelserver-latest|"
     apply_sed "${NEW_ENV}" "s|^FXA_ARCH=.*|FXA_ARCH=${FXA_ARCH}|"
     apply_sed "${NEW_ENV}" "s|^FXA_CONTENT_URL=.*|FXA_CONTENT_URL=${FXA_CONTENT_URL_V}|"
     apply_sed "${NEW_ENV}" "s|^FXA_AUTH_URL=.*|FXA_AUTH_URL=${FXA_AUTH_URL_V}|"

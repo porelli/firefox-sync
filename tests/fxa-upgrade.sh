@@ -118,7 +118,6 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "s|^FXA_IMAGE=.*|FXA_IMAGE=${INSTALLED%:*}|" \
     -e "s|^FXA_VERSION=.*|FXA_VERSION=${INSTALLED##*:}|" \
     -e "s|^FXA_ARCH=.*|FXA_ARCH=${from_arch}|" \
-    -e "s|^FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${REPOSITORY}:fxa-channelserver-latest|" \
     -e "s|^PROXY=.*|PROXY=caddy|" \
     -e "s|^CADDY_ACME_CA=.*|CADDY_ACME_CA=internal|" \
     -e "/^COMPOSE_FILE=/d" > "${ENV_FILE}"

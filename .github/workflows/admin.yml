@@ -227,7 +227,6 @@ jobs:
           FXA_IMAGE: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
           FXA_VERSION: fxa-mono-latest
           FXA_ARCH: ${{ matrix.arch }}
-          FXA_PAIRING_IMAGE: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:fxa-channelserver-latest
           SKIP_PULL: 1
           CLIENT_CERT: ${{ matrix.client_cert || '' }}
           SSO: ${{ matrix.sso || '' }}

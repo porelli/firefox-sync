@@ -427,6 +427,12 @@
               "type": "string",
               "pattern": "^(wss?://.+)?$"
             },
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
             "image": {
               "type": "string"
             },
