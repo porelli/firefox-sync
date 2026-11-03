@@ -753,6 +753,8 @@ func (a *App) configHints(r *http.Request, status *SyncStatus, components []Comp
 			auth := httpsURL(configLookup("FXA_AUTH_URL"))
 			if !strings.HasSuffix(host, "fxa-auth") && (auth == nil || host != auth.Hostname()) {
 				hints = append(hints, attention{Text: fmt.Sprintf("FXA_OAUTH_SERVER_URL is %s, not the accounts of this server: the Sync server refuses their sign-ins. With self-hosted accounts: http://fxa-auth:9000/v1.", oauth.Redacted()), Href: "#sync-settings", Link: "Sync server"})
+			} else if wrong := oauthInternalPort(configLookup("FXA_OAUTH_SERVER_URL")); wrong != "" && a.deployment.Kubernetes() == nil {
+				hints = append(hints, attention{Text: fmt.Sprintf("FXA_OAUTH_SERVER_URL is %s: %s Every sign-in of Firefox to Sync fails until it is http://fxa-auth:9000/v1.", oauth.Redacted(), wrong), Href: "#sync-settings", Link: "Sync server"})
 			}
 		}
 	}

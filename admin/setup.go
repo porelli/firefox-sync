@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -119,14 +120,9 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		checks = append(checks, c)
 	}
 	for _, comp := range components {
-		if comp.Name != oauthKeysCheck {
-			continue
+		if comp.Name == oauthKeysCheck {
+			checks = append(checks, oauthKeysSetupCheck(comp, a.deployment, os.Getenv("FXA_OAUTH_SERVER_URL")))
 		}
-		c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + "."}
-		if !comp.Up {
-			c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL, which do not answer (" + comp.Error + "): nobody gets a Sync token. " + a.deployment.checkOAuth()
-		}
-		checks = append(checks, c)
 	}
 	if a.fxa != nil {
 		c := accountsSMTPCheck(smtpServer())
@@ -145,6 +141,40 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		}
 	}
 	return checks
+}
+
+// oauthKeysSetupCheck: the Sync server checks every sign-in of Firefox with the keys of
+// FXA_OAUTH_SERVER_URL (the hidden component of the health checks, oauthKeysCheck). Pointing
+// at the stack's accounts API on another port than its own (fxa-auth:9010, a port of the host
+// copied over): said as such, it never answers there
+func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupCheck {
+	c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + "."}
+	if !comp.Up {
+		c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL, which do not answer (" + comp.Error + "): nobody gets a Sync token. " + d.checkOAuth()
+	}
+	if hint := oauthInternalPort(oauthURL); hint != "" && d.Kubernetes() == nil {
+		c.OK = false
+		c.Text = "FXA_OAUTH_SERVER_URL is " + oauthURL + ": " + hint + " Set FXA_OAUTH_SERVER_URL=http://fxa-auth:9000/v1 in .env: until then nobody gets a Sync token"
+		if comp.Error != "" {
+			c.Text += " (" + comp.Error + ")"
+		}
+		c.Text += "."
+	}
+	return c
+}
+
+// oauthInternalPort: FXA_OAUTH_SERVER_URL at the stack's accounts API (fxa-auth, the chart's
+// <release>-fxa-auth) on another port than 9000, the one it listens on: what is wrong, else ""
+func oauthInternalPort(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "fxa-auth" && !strings.HasSuffix(host, "-fxa-auth") || u.Port() == "9000" {
+		return ""
+	}
+	return "FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy."
 }
 
 // oldNamesCheck: the Sync settings that .env (or compose's environment) still has under their old names
