@@ -227,32 +227,42 @@ func (h *Health) oauthKeys(ctx context.Context, jwks string) (string, error) {
 	return jwks + " answers", nil
 }
 
-// publicChecksOf: the checks of the public URLs, and of FXA_OAUTH_SERVER_URL
+// publicChecksOf: the checks of the public URLs, and of FXA_OAUTH_SERVER_URL. Each goes
+// through a part of the stack (after): in the startup grace it waits for it, and runs
+// again at once when it comes back up, with fast retries while it fails
 func (h *Health) publicChecksOf(app *App) []check {
 	var checks []check
 	// while one fails, a few rounds apart: an unreachable name can hold the health
 	// loop for the whole timeout of each check
 	every, retry := time.Hour, 5*time.Duration(envInt("HEALTH_CHECK_SECONDS", 60))*time.Second
 	if publicChecks() {
-		checks = append(checks, check{name: "Public Sync URL", run: h.syncNodes, every: every, retry: retry})
+		checks = append(checks, check{name: "Public Sync URL", run: h.syncNodes, every: every, retry: retry, after: []string{"Sync server"}, fast: true})
 		if app.fxa != nil {
-			for _, p := range []struct{ name, url string }{
-				{"Public accounts pages", env("FXA_CONTENT_URL", "")},
-				{"Public accounts API", env("FXA_AUTH_URL", "")},
-				{"Public profile server", env("FXA_PROFILE_URL", "")},
+			for _, p := range []struct{ name, url, part string }{
+				{"Public accounts pages", env("FXA_CONTENT_URL", ""), "Accounts pages"},
+				{"Public accounts API", env("FXA_AUTH_URL", ""), "Accounts API"},
+				{"Public profile server", env("FXA_PROFILE_URL", ""), "Profile server"},
 			} {
 				if httpsURL(p.url) != nil {
-					checks = append(checks, check{name: p.name, run: func(ctx context.Context) (string, error) { return h.publicURL(ctx, p.url) }, every: every, retry: retry})
+					checks = append(checks, check{name: p.name, run: func(ctx context.Context) (string, error) { return h.publicURL(ctx, p.url) }, every: every, retry: retry,
+						after: []string{p.part}, fast: true})
 				}
 			}
 			if auth := env("FXA_AUTH_URL", ""); httpsURL(auth) != nil {
-				checks = append(checks, check{name: "Sign-up gate", run: func(ctx context.Context) (string, error) { return h.gateProbe(ctx, auth) }, every: every, retry: retry})
+				checks = append(checks, check{name: "Sign-up gate", run: func(ctx context.Context) (string, error) { return h.gateProbe(ctx, auth) }, every: every, retry: retry,
+					after: []string{"Accounts API"}, fast: true})
 			}
 		}
 	}
-	// on the internet (Mozilla's accounts) only with the public checks
+	// on the internet (Mozilla's accounts) only with the public checks; the stack's own
+	// accounts API answers once it is up
 	if jwks := oauthKeysURL(env("FXA_OAUTH_SERVER_URL", "")); jwks != "" && (publicChecks() || !strings.HasPrefix(jwks, "https://")) {
-		checks = append(checks, check{name: oauthKeysCheck, run: func(ctx context.Context) (string, error) { return h.oauthKeys(ctx, jwks) }, every: every, retry: retry, hidden: true})
+		var after []string
+		if app.fxa != nil {
+			after = []string{"Accounts API"}
+		}
+		checks = append(checks, check{name: oauthKeysCheck, run: func(ctx context.Context) (string, error) { return h.oauthKeys(ctx, jwks) }, every: every, retry: retry, hidden: true,
+			after: after, fast: true})
 	}
 	return checks
 }

@@ -74,7 +74,8 @@ func TestSMTPHealthRow(t *testing.T) {
 	if smtp == nil || smtp.every != time.Hour {
 		t.Fatalf("no hourly SMTP check: %+v", h.checks)
 	}
-	h.checks = []check{*smtp}
+	// past the startup grace: the failure is a failure (startup_test.go has the grace)
+	h.checks, h.grace = []check{*smtp}, 0
 	h.checkAll(context.Background())
 	comps := h.Components()
 	if len(comps) != 1 || comps[0].Up || !strings.Contains(comps[0].Error, "535") {
@@ -89,7 +90,10 @@ func TestSMTPHealthRow(t *testing.T) {
 	if h.Components()[0].Up {
 		t.Error("checked again before the retry")
 	}
-	h.lastRun["Email (SMTP)"] = time.Now().Add(-11 * time.Minute)
+	if next := h.nextRun["Email (SMTP)"]; next.Sub(time.Now()) < 9*time.Minute {
+		t.Errorf("SMTP again at %v, not in 10 minutes", next)
+	}
+	h.nextRun["Email (SMTP)"] = time.Now().Add(-time.Second)
 	h.checkAll(context.Background())
 	if c := h.Components()[0]; !c.Up || c.Detail != "127.0.0.1:"+smtpPort(server)+", signs in as mailer" {
 		t.Errorf("back up: %+v", c)

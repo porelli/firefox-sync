@@ -16,6 +16,25 @@ A health light on every page ("All up", "1 part to check", "2 parts down") links
 
 ![Health](../images/admin/health.png)
 
+### When it was checked
+
+Each row of the Health table, and each [setup check](#setup-checks), says when it was checked and when it is checked next, in the admin UI's [time zone](README.md#time-zone): `18:25, next 18:30`. The checks of a round are due a minute later, the [public checks](#public-checks) an hour later, or sooner while they fail. Most setup checks are read at every load of the overview: `18:25, again at every load`.
+
+**Check now**, in the Health and Setup checks cards, runs every health check and setup check at once, without waiting for their next time, then shows the overview again. It is a form with the session's token, like the other buttons (see [Confirm pages](README.md#confirm-pages)), and runs at most every 30 seconds, whoever asks: a click sooner says when it can run again. It changes nothing, so it is not in the audit trail. When the checks take longer than 45 seconds (a public name that does not answer), the overview comes back first and the results show up a moment later.
+
+### Startup grace
+
+The admin UI starts with the stack, often before the parts it checks: after `docker compose up -d` of the whole stack, or on Kubernetes, where the pods start in any order (the chart's admin UI waits only for the Sync server and the accounts API). For the first 10 minutes after it starts:
+
+- A part that has not been up since the start shows `starting`, with what it saw, not `down`. The health light, the Health tile and [Needs attention](#needs-attention) do not count it, it raises no event or alert, and it has no `ffs_up` sample.
+- A check that goes through a part (the public Sync URL through the Sync server, the public accounts pages, accounts API and profile server through their services, the sign-up gate and the sign-in keys of `FXA_OAUTH_SERVER_URL` through the accounts API) waits for that part: `checked as soon as Sync server is up`. Once it is up, the check runs in the same round.
+- A round runs every 10 seconds while something is starting, not every minute.
+- A part that comes up from `starting` raises no `is back up`: its down was never announced.
+
+A part that was up once and then fails, in the 10 minutes or after, is down at once, with its event and alert. One still not up after 10 minutes is checked again then and is down, with its event and alert: a real failure always shows.
+
+Whenever a part comes back up (after the start too), the checks that go through it run again at once, and so does any failing public check. While they fail after the start or after such a return, they run again after 30 seconds, then 1, 2 and 5 minutes, then at their usual retry (every 5 rounds). The public URL behind a reverse proxy that is still starting does not stay down for 5 minutes.
+
 ## Needs attention
 
 The top of the overview lists what to look at now, one line each, with a link to where it is fixed. A line is amber, or red when a component is down. With nothing to list it says "Everything is working", in green.
@@ -53,7 +72,7 @@ Every hour the admin UI looks at your server from the outside, the way Firefox d
 1. It opens a TLS connection and reads the certificate.
 1. It asks `/__heartbeat__` through your reverse proxy.
 
-The Health table then shows `reachable, certificate expires in N days`. Under 14 days left, or when the URL does not answer, the row turns to a problem, with an event and an alert. While a check fails it runs again every 5 rounds of checks, so a name the server cannot reach does not hold up the other checks. A Sync node the tokenserver no longer hands out (downed or removed) leaves the metrics.
+The Health table then shows `reachable, certificate expires in N days`. Under 14 days left, or when the URL does not answer, the row turns to a problem, with an event and an alert. While a check fails it runs again every 5 rounds of checks, so a name the server cannot reach does not hold up the other checks; after the start of the admin UI, or after the part it goes through came back up, sooner: see [Startup grace](#startup-grace). A Sync node the tokenserver no longer hands out (downed or removed) leaves the metrics.
 
 With self-hosted accounts it also checks that `POST /v1/account/create` of `FXA_AUTH_URL` reaches the sign-up gate (see [Who can sign up](../accounts.md#who-can-sign-up)). It sends a request with an empty body and a header carrying a random token of this start of the admin UI:
 
@@ -72,7 +91,7 @@ The overview lists settings that must agree with each other, each with what goes
 - **Event log** (`ADMIN_DB_PASSWORD`): where the event log, the audit trail and the notes are. Without `ADMIN_DB_PASSWORD` (an install from before it) they are in the tokenserver database, which the Sync server's database user can read and change: the check says how to move them, see [The admin UI's own database](../upgrading.md#the-admin-uis-own-database). It also warns when the admin UI's database holds something its user does not own (the admin UI does not start again until it is dropped), when admin UI tables of before are still, or again, in the tokenserver database, and on PostgreSQL when the Sync tables belong to a superuser, which can still read the event log.
 - **Database users and grants** (`database-setup.sql`), with your own database server (`SYNC_DB_CONTAINERS=0`): the grants of the admin UI's own two users. On MariaDB and MySQL, those of their `GRANT` lines: `ADMIN_DB_USER` on `ADMIN_DB_NAME`, `ADMIN_DB_SYNC_USER` on the tokenserver and storage databases. On PostgreSQL, that `ADMIN_DB_NAME` belongs to `ADMIN_DB_USER`, and that neither it nor the tokenserver database lets every role connect. What is missing is named with the statement that gives it, see [When a release needs new users or grants](../databases.md#when-a-release-needs-new-users-or-grants).
 - **Sync node**: the tokenserver hands out the Sync node of its `nodes` table, which the init container sets from `SYNC_PUBLIC_URL` when it starts. When they differ (`.env` changed, the stack not restarted), the warning names both: Firefox syncs with the one of the table.
-- **Sign-in keys** (`FXA_OAUTH_SERVER_URL`): the Sync server checks every sign-in of Firefox with the keys at `FXA_OAUTH_SERVER_URL/jwks` (`/v1` added when missing). Checked every hour. With Mozilla's accounts that is Mozilla's server, so it is checked only with the public checks on. With self-hosted accounts it is `http://fxa-auth:9000/v1`: pointing at `fxa-auth` on another port (the host port of `FXA_AUTH_EXPORT_PORT` copied over, `fxa-auth:9010`), it fails and says `FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy`, also on the Settings page ([Sign-in keys: connection refused](../troubleshooting.md#sign-in-keys-connection-refused)).
+- **Sign-in keys** (`FXA_OAUTH_SERVER_URL`): the Sync server checks every sign-in of Firefox with the keys at `FXA_OAUTH_SERVER_URL/jwks` (`/v1` added when missing). Checked every hour; with self-hosted accounts after the accounts API (see [Startup grace](#startup-grace)): right after a start it says it waits for it, not that nobody gets a Sync token. With Mozilla's accounts that is Mozilla's server, so it is checked only with the public checks on. With self-hosted accounts it is `http://fxa-auth:9000/v1`: pointing at `fxa-auth` on another port (the host port of `FXA_AUTH_EXPORT_PORT` copied over, `fxa-auth:9010`), it fails and says `FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy`, also on the Settings page ([Sign-in keys: connection refused](../troubleshooting.md#sign-in-keys-connection-refused)).
 - **Email of the accounts** (`FXA_SMTP_HOST`), with self-hosted accounts: without an SMTP server nobody can sign up or sign in, see [Do you need an SMTP server?](alerts.md#do-you-need-an-smtp-server). Without self-hosted accounts there is no such check.
 - **Sync node load**: the tokenserver counts a refused new account in its node's load (see [`SYNC_ALLOWED_ACCOUNTS`](../limits.md#sync_allowed_accounts)): the admin UI counts it again from the node's accounts every few minutes, at once when it is off by 10 or more. That last case is a warning for a day, with the counts: many refused tries in a short time.
 - **Pending accounts list**, with [invite-only Sync](../limits.md#sync_allowed_accounts): accounts refused without a record because its list of 1000 was full, for a week after the last one.
@@ -296,7 +315,7 @@ scrape_configs:
 
 | Metric | |
 |---|---|
-| `ffs_up{component}` | 1 if the component answers its health check |
+| `ffs_up{component}` | 1 if the component answers its health check; no sample while it is starting (see [Startup grace](#startup-grace)) |
 | `ffs_sync_accounts`, `ffs_sync_max_users` | accounts using Sync, and the limit (no `ffs_sync_max_users` with `SYNC_MAX_USERS=unlimited`) |
 | `ffs_sync_near_max_users`, `ffs_sync_full` | 1 when 90% of max users or more are taken, 1 when all are |
 | `ffs_sync_pending_accounts`, `ffs_sync_refusals_dropped` | the accounts refused by [invite-only Sync](../limits.md#sync_allowed_accounts) and waiting for an approval, and those refused without a record because the list was full (only while it is on) |

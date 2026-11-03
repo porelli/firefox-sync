@@ -2,7 +2,7 @@
 <main id="main">
 {{template "flash" .}}
 {{/* the worst health state: a component down beats a warning */}}
-{{$down := false}}{{$warn := false}}{{range .Health}}{{if not .Up}}{{if .Warn}}{{$warn = true}}{{else}}{{$down = true}}{{end}}{{end}}{{end}}
+{{$down := false}}{{$warn := false}}{{range .Health}}{{if and (not .Up) (not .Starting)}}{{if .Warn}}{{$warn = true}}{{else}}{{$down = true}}{{end}}{{end}}{{end}}
 {{with .Status}}{{if .Down}}{{$down = true}}{{end}}{{if .Warn}}{{$warn = true}}{{end}}{{end}}
 
 <div class="page-head">
@@ -26,7 +26,7 @@
   {{with .Status}}<li><a class="stat{{if .Down}} is-bad{{else if .Warn}} is-warn{{end}}" href="#health-card">
     <span class="label">{{template "icon" "heart"}}Health</span>
     <span class="value">{{if .Down}}{{.Down}} down{{else if .Warn}}{{.Warn}} to check{{else}}{{.Up}}{{end}} <small>{{if or .Down .Warn}}{{.Up}} of {{.Total}} parts working{{else}}of {{.Total}} parts working{{end}}</small></span>
-    <span class="sub">{{if .Down}}{{.FirstDown}} is down{{if gt .Down 1}}, {{.Down}} parts in all{{end}}{{else if .Warn}}{{.FirstWarn}} needs a look{{else}}All up{{end}}</span></a></li>{{end}}
+    <span class="sub">{{if .Down}}{{.FirstDown}} is down{{if gt .Down 1}}, {{.Down}} parts in all{{end}}{{else if .Warn}}{{.FirstWarn}} needs a look{{else if .Starting}}{{.Starting}} starting{{else}}All up{{end}}</span></a></li>{{end}}
   {{/* the limits: amber at 90% and when full (limits.go), the same as the health rows */}}
   {{with .Sync}}{{$state := .Limit.State}}<li><a class="stat{{if ne $state "ok"}} is-warn{{end}}" href="#sync">
     <span class="label">{{template "icon" "users"}}Using Sync</span>
@@ -238,18 +238,22 @@
 <section class="card" id="health-card" aria-labelledby="health-title">
   <div class="card-head">
     <h2 id="health-title">Health</h2>
-    {{if $down}}<span class="disabled">down</span>{{else if $warn}}<span class="pill warn">to check</span>{{else}}<span class="ok">all up</span>{{end}}
+    {{if $down}}<span class="disabled">down</span>{{else if $warn}}<span class="pill warn">to check</span>{{else if and .Status .Status.Starting}}<span class="pill">starting</span>{{else}}<span class="ok">all up</span>{{end}}
+    <form method="post" action="/health/check" class="inline check-now">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="health">
+      <button type="submit" class="secondary">Check now</button>
+    </form>
   </div>
   {{/* what is wrong up front; the table of every part folded */}}
-  {{if or $down $warn}}<ul class="problems" id="health-problems">{{range .Health}}{{if not .Up}}
+  {{if or $down $warn}}<ul class="problems" id="health-problems">{{range .Health}}{{if and (not .Up) (not .Starting)}}
     <li><span class="problem-name">{{.Name}}</span> {{if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span>{{else}}<span class="disabled">down</span>{{end}}{{with .Error}} <span class="hint">{{.}}</span>{{end}}</li>{{end}}{{end}}
   </ul>{{end}}
   <details class="fold">
-    <summary>{{with .Status}}{{if or .Down .Warn}}{{.Up}} of {{.Total}} parts up{{else}}All {{.Total}} parts up{{end}}{{else}}All the parts{{end}}<span class="hint"> · versions{{if $.Sizes}}, database sizes{{end}}</span></summary>
+    <summary>{{with .Status}}{{if or .Down .Warn .Starting}}{{.Up}} of {{.Total}} parts up{{with .Starting}}, {{.}} starting{{end}}{{else}}All {{.Total}} parts up{{end}}{{else}}All the parts{{end}}<span class="hint"> · versions{{if $.Sizes}}, database sizes{{end}}</span></summary>
     {{with $.Sizes}}<p class="hint" id="db-sizes">Databases: {{range $name, $size := .}}{{$name}} {{bytes $size}}; {{end}}history on the Activity page.</p>{{end}}
     <div class="scroll"><table id="health" aria-label="Health of the components">
-      <thead><tr><th>Part</th><th>Status</th><th>Version</th></tr></thead>
-      <tbody>{{range .Health}}<tr><td>{{.Name}}</td><td>{{if .Up}}<span class="ok">up</span>{{with .Detail}} <span class="hint">{{.}}</span>{{end}}{{else if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span> <span class="hint">{{.Error}}</span>{{else}}<span class="disabled">down</span> <span class="hint">{{.Error}}</span>{{end}}</td><td>{{.Version}}{{if .Latest}} <span class="update">{{.Latest}} available</span>{{end}}</td></tr>{{end}}</tbody>
+      <thead><tr><th>Part</th><th>Status</th><th>Version</th><th>Checked</th></tr></thead>
+      <tbody>{{range .Health}}<tr><td>{{.Name}}</td><td>{{if .Up}}<span class="ok">up</span>{{with .Detail}} <span class="hint">{{.}}</span>{{end}}{{else if .Starting}}<span class="pill">starting</span> <span class="hint">{{.Error}}</span>{{else if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span> <span class="hint">{{.Error}}</span>{{else}}<span class="disabled">down</span> <span class="hint">{{.Error}}</span>{{end}}</td><td>{{.Version}}{{if .Latest}} <span class="update">{{.Latest}} available</span>{{end}}</td><td class="checked">{{template "checked" .}}</td></tr>{{end}}</tbody>
     </table></div>
   </details>
 </section>
@@ -310,9 +314,13 @@
   <details class="fold"{{if $.SetupWarnings}} open{{end}}>
     <summary>{{with $.SetupWarnings}}{{.}} of {{len $.Setup}} need{{if eq . 1}}s{{end}} a look{{else}}All {{len $.Setup}} checks pass{{end}}</summary>
     <div class="scroll"><table id="setup" aria-label="Setup checks">
-      <thead><tr><th>Check</th><th>Status</th><th>What it means</th></tr></thead>
-      <tbody>{{range .}}<tr><td>{{.Name}}</td><td>{{if .OK}}<span class="ok">ok</span>{{else}}<span class="pill warn">warning</span>{{end}}</td><td>{{.Text}}</td></tr>{{end}}</tbody>
+      <thead><tr><th>Check</th><th>Status</th><th>What it means</th><th>Checked</th></tr></thead>
+      <tbody>{{range .}}<tr><td>{{.Name}}</td><td>{{if .OK}}<span class="ok">ok</span>{{else}}<span class="pill warn">warning</span>{{end}}</td><td>{{.Text}}</td><td class="checked">{{if and .Next.IsZero (not .Checked.IsZero)}}{{clock .Checked}}, again at every load{{else}}{{template "checked" .}}{{end}}</td></tr>{{end}}</tbody>
     </table></div>
+    <form method="post" action="/health/check" class="inline check-now">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="back" value="setup">
+      <button type="submit" class="secondary">Check now</button>
+    </form>
   </details>
 </section>
 {{end}}
@@ -429,3 +437,7 @@
 {{if or .Q .Show}}<p id="search-result">{{.Pages.Total}} {{if eq .Pages.Total 1}}account{{else}}accounts{{end}}{{with .ShowLabel}} {{.}}{{end}}{{with .Q}} matching &#34;{{.}}&#34;{{end}}. <a href="/#accounts">All accounts</a></p>{{end}}{{end}}
 {{define "pages"}}{{with .}}<p class="pages hint" id="pages">{{if .Total}}<span><span id="accounts-shown">{{.From}}–{{.To}}</span> of <span id="accounts-total">{{.Total}}</span>, newest first{{if gt .Pages 1}}, page {{.Page}} of {{.Pages}}{{end}}.</span>{{end}}
   {{with .Prev}}<a href="{{.}}" rel="prev" id="newer">← Newer</a>{{end}}{{with .Next}}<a href="{{.}}" rel="next" id="older">Older →</a>{{end}}</p>{{end}}{{end}}
+
+{{/* when a health row was checked, when it is next ("18:25, next 18:30") */}}
+{{define "checked"}}{{if not .Checked.IsZero}}{{clock .Checked}}{{end}}{{if not .Next.IsZero}}{{if not .Checked.IsZero}}, {{end}}next {{clock .Next}}{{end}}{{end}}
+

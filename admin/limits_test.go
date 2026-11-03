@@ -360,7 +360,7 @@ func TestFormsOfThePages(t *testing.T) {
 	}
 	// every other form posts one of these: not destructive, one click (docs/admin/README.md#confirm-pages)
 	oneClick := map[string]bool{"/logout": true, "/login": true, "/accounts/signups": true, "/accounts/invite": true, "/alerts/test": true,
-		"/alerts/test-notification": true, "/sync/max-users": true, "/accounts/max-accounts": true, "/security/unblock": true, "/x": true}
+		"/alerts/test-notification": true, "/health/check": true, "/sync/max-users": true, "/accounts/max-accounts": true, "/security/unblock": true, "/x": true}
 	action := regexp.MustCompile(`<form method="post" action="([^"]+)"`)
 	for name, page := range p {
 		for _, m := range action.FindAllStringSubmatch(page, -1) {

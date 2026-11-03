@@ -34,6 +34,11 @@ type Component struct {
 	Limit bool
 	// the word of the pill instead of "problem" (near the limit, full)
 	Label string
+	// not up yet since the admin UI started, within its startup grace: the parts of the
+	// stack start in any order. Neither down nor alerted, Error says what it waits for
+	Starting bool
+	// when it is checked next (zero: once the parts it depends on are up, or not known)
+	Next time.Time
 }
 
 type check struct {
@@ -47,7 +52,26 @@ type check struct {
 	// run at most every every, while it fails every retry (0: every round)
 	every, retry time.Duration
 	hidden       bool
+	// the components it goes through (the public URLs through the Sync server, the
+	// accounts...): in the startup grace not run before they are up, and run again at
+	// once when one of them comes back up
+	after []string
+	// fastRetries while it fails after the start or after a part came back up
+	fast bool
 }
+
+// the startup grace: the admin UI starts with the stack, often before the parts it
+// checks (docker compose up -d of the whole stack, the pods of the chart in any order).
+// For this long a part not up yet since the start is "starting", not down, and not
+// alerted; what goes through it waits for it
+const startupGrace = 10 * time.Minute
+
+// the retries of a fast check while it fails after the start or after a part it
+// depends on came back up, then its retry
+var fastRetries = []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
+
+// in the startup grace, while a part is starting: a round of the checks this often
+const startingRound = 10 * time.Second
 
 // errSkip: a check with nothing to check (no https URL...), left out
 var errSkip = errors.New("nothing to check")
@@ -61,6 +85,8 @@ func (c Component) state() string {
 	switch {
 	case c.Up:
 		return "up"
+	case c.Starting:
+		return "starting"
 	case c.Warn:
 		return "warn"
 	}
@@ -84,6 +110,21 @@ type Health struct {
 	// accounts (uid and action) blocked by the rate limits, alerted: until when
 	blockAlerted map[string]time.Time
 	lastRun      map[string]time.Time // of the checks with every
+	// when each check with every is due, and the fast retries of the fast ones: those
+	// used, whether on
+	nextRun  map[string]time.Time
+	fastUsed map[string]int
+	fastOn   map[string]bool
+	// the startup grace (startupGrace; 0: none), the rounds (HEALTH_CHECK_SECONDS), the
+	// components up at least once since the start, the end of the last round
+	grace     time.Duration
+	round     time.Duration
+	everUp    map[string]bool
+	lastRound time.Time
+	// Check now: a round of every check asked of the loop (closed once done; one waits
+	// while the loop is busy), the last ask
+	wake       chan chan struct{}
+	checkedNow time.Time
 	// certificates of the public URLs: host -> NotAfter
 	certs map[string]time.Time
 	// the trust of the public checks, nil: the system's (the tests set their own)
@@ -185,6 +226,7 @@ func newHealth(app *App) *Health {
 	h := &Health{app: app, client: client, latest: map[string]string{}, notified: map[string]bool{}, alerted: map[string]time.Time{},
 		errorRate: errorRateSettings(), growth: growthSettings()}
 	h.lastSignup, h.started = time.Now(), time.Now()
+	h.grace, h.round, h.wake = startupGrace, time.Duration(envInt("HEALTH_CHECK_SECONDS", 60))*time.Second, make(chan chan struct{}, 1)
 	sync := strings.TrimSuffix(env("SYNCSTORAGE_URL", "http://syncstorage:8000"), "/")
 	h.checks = append(h.checks,
 		check{name: "Sync server", health: httpCheck(client, sync+"/__heartbeat__"), version: versionOf(client, sync+"/__version__"), upstream: "mozilla-services/syncstorage-rs"},
@@ -247,6 +289,10 @@ func newHealth(app *App) *Health {
 	// this program, at the top of the list
 	h.checks = append([]check{{name: "Admin UI", health: func(context.Context) error { return nil },
 		version: func(context.Context) (string, error) { return version, nil }}}, h.checks...)
+	h.fastOn = map[string]bool{}
+	for _, c := range h.checks {
+		h.fastOn[c.name] = c.fast
+	}
 	return h
 }
 
@@ -273,15 +319,151 @@ func (h *Health) run(ctx context.Context) {
 		if h.releasesDue(time.Now()) {
 			h.checkReleases(ctx)
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
+		// until the next round: the checks due before it (fast retries, a part starting),
+		// and Check now
+		for waiting := true; waiting; {
+			var due <-chan time.Time
+			var timer *time.Timer
+			if d, ok := h.untilDue(time.Now()); ok {
+				timer = time.NewTimer(d)
+				due = timer.C
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				waiting = false
+			case <-due:
+				h.checkAll(ctx)
+			case done := <-h.wake:
+				h.checkRound(ctx, true)
+				h.watchSchema(ctx)
+				h.watchSetup(ctx)
+				close(done)
+			}
+			if timer != nil {
+				timer.Stop()
+			}
 		}
 	}
 }
 
+// untilDue: how long until a check is due before the next round: a check with every
+// (a fast retry), or a round of startingRound while a part is starting in the grace
+func (h *Health) untilDue(now time.Time) (time.Duration, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var at time.Time
+	for _, next := range h.nextRun {
+		if at.IsZero() || next.Before(at) {
+			at = next
+		}
+	}
+	if h.inGrace(now) {
+		for _, c := range h.components {
+			if c.Starting {
+				if soon := h.lastRound.Add(startingRound); at.IsZero() || soon.Before(at) {
+					at = soon
+				}
+				break
+			}
+		}
+	}
+	if at.IsZero() || (h.round > 0 && at.Sub(now) >= h.round) {
+		return 0, false
+	}
+	return max(at.Sub(now), time.Second), true
+}
+
+// inGrace: in the startup grace (h.mu held)
+func (h *Health) inGrace(now time.Time) bool {
+	return h.grace > 0 && now.Before(h.started.Add(h.grace))
+}
+
+// waitAfter: how long until a check with every runs again after this result, a fast
+// retry used when it failed (h.mu held)
+func (h *Health) waitAfter(c check, up bool) time.Duration {
+	if up {
+		delete(h.fastUsed, c.name)
+		h.fastOn[c.name] = false
+		return c.every
+	}
+	if h.fastOn[c.name] {
+		if n := h.fastUsed[c.name]; n < len(fastRetries) {
+			h.fastUsed[c.name] = n + 1
+			return min(fastRetries[n], c.retry)
+		}
+		h.fastOn[c.name] = false
+	}
+	return c.retry
+}
+
+// checkedNowEvery: Check now at most this often (whoever asks)
+const checkedNowEvery = 30 * time.Second
+
+// checkNow asks the loop for a round of every check, the setup's too, and waits for it
+// until ctx ends: false then, the round still running. At most every checkedNowEvery
+func (h *Health) checkNow(ctx context.Context, now time.Time) (bool, error) {
+	h.mu.Lock()
+	if since := now.Sub(h.checkedNow); !h.checkedNow.IsZero() && since < checkedNowEvery {
+		h.mu.Unlock()
+		return false, fmt.Errorf("checked %d seconds ago: again in %d seconds", int(since/time.Second), int((checkedNowEvery-since+time.Second-1)/time.Second))
+	}
+	h.checkedNow = now
+	h.mu.Unlock()
+	done := make(chan struct{})
+	select {
+	case h.wake <- done:
+	case <-ctx.Done():
+		return false, nil
+	}
+	select {
+	case <-done:
+		return true, nil
+	case <-ctx.Done():
+		return false, nil
+	}
+}
+
+// checkNowWait: how long Check now waits for its round before showing the overview
+var checkNowWait = 45 * time.Second
+
+// checkNow: the Check now button of the overview (POST, the form token): every
+// health check and the setup's at once, at most every checkedNowEvery. Not a change:
+// not in the audit trail
+func (a *App) checkNow(w http.ResponseWriter, r *http.Request, s *session) {
+	if a.health == nil {
+		http.NotFound(w, r)
+		return
+	}
+	to := "/#health-card"
+	if r.PostFormValue("back") == "setup" {
+		to = "/#setup-card"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), checkNowWait)
+	defer cancel()
+	done, err := a.health.checkNow(ctx, time.Now())
+	message, failed := "Checked the health and the setup again.", ""
+	switch {
+	case err != nil:
+		message, failed = "", "Not checked again: "+err.Error()+"."
+	case !done:
+		message = "Checking the health and the setup again: the results show up in a moment, reload the page."
+	}
+	a.mu.Lock()
+	s.message, s.failed = message, failed
+	a.mu.Unlock()
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
 func (h *Health) checkAll(ctx context.Context) {
+	h.checkRound(ctx, false)
+}
+
+// checkRound runs the checks due (force: all of them), in their order: the parts before
+// what goes through them
+func (h *Health) checkRound(ctx context.Context, force bool) {
+	now := time.Now()
 	h.mu.Lock()
 	previous := map[string]Component{}
 	for _, c := range h.components {
@@ -290,30 +472,72 @@ func (h *Health) checkAll(ctx context.Context) {
 	if h.lastRun == nil {
 		h.lastRun = map[string]time.Time{}
 	}
+	if h.nextRun == nil {
+		h.nextRun, h.fastUsed, h.everUp = map[string]time.Time{}, map[string]int{}, map[string]bool{}
+	}
+	if h.fastOn == nil {
+		h.fastOn = map[string]bool{}
+	}
+	grace := h.inGrace(now)
 	h.mu.Unlock()
 	components := make([]Component, 0, len(h.checks))
+	current, cameUp := map[string]Component{}, map[string]bool{}
+	add := func(comp Component) {
+		components = append(components, comp)
+		current[comp.Name] = comp
+	}
 	for _, c := range h.checks {
 		prev, seen := previous[c.name]
 		h.mu.Lock()
-		last := h.lastRun[c.name]
+		last, next, ever := h.lastRun[c.name], h.nextRun[c.name], h.everUp[c.name]
 		h.mu.Unlock()
-		if c.every > 0 && !last.IsZero() {
-			wait := c.every
-			if !seen || !prev.Up {
-				wait = c.retry
-			}
-			if time.Since(last) < wait {
-				if seen {
-					components = append(components, prev)
-				}
-				continue
+		// in the grace, what it goes through is not up yet: checked once it is
+		var waiting []string
+		for _, d := range c.after {
+			if dep, ok := current[d]; ok && !dep.Up {
+				waiting = append(waiting, d)
 			}
 		}
+		if grace && !ever && len(waiting) > 0 {
+			verb := "is"
+			if len(waiting) > 1 {
+				verb = "are"
+			}
+			h.mu.Lock()
+			delete(h.nextRun, c.name)
+			h.mu.Unlock()
+			add(Component{Name: c.name, Hidden: c.hidden, Starting: true, Checked: last,
+				Error: "checked as soon as " + strings.Join(waiting, " and ") + " " + verb + " up"})
+			continue
+		}
+		// a part it goes through came up (or any part, while it fails): at once, with fast retries
+		again := false
+		for _, d := range c.after {
+			again = again || cameUp[d]
+		}
+		if c.fast && !again && seen && !prev.Up && len(cameUp) > 0 {
+			again = true
+		}
+		if again && c.fast {
+			h.mu.Lock()
+			h.fastOn[c.name], h.fastUsed[c.name] = true, 0
+			h.mu.Unlock()
+		}
+		// the end of the grace: what is still starting is checked, and announced
+		ended := seen && prev.Starting && !grace
+		if c.every > 0 && !last.IsZero() && !force && !again && !ended && now.Before(next) {
+			if seen {
+				prev.Next = next
+				add(prev)
+			}
+			continue
+		}
+		start := time.Now()
 		h.mu.Lock()
-		h.lastRun[c.name] = time.Now()
+		h.lastRun[c.name] = start
 		h.mu.Unlock()
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		comp := Component{Name: c.name, Checked: time.Now(), Hidden: c.hidden}
+		comp := Component{Name: c.name, Checked: start, Hidden: c.hidden}
 		var err error
 		if c.run != nil {
 			comp.Detail, err = c.run(cctx)
@@ -322,6 +546,11 @@ func (h *Health) checkAll(ctx context.Context) {
 		}
 		if errors.Is(err, errSkip) {
 			cancel()
+			if c.every > 0 {
+				h.mu.Lock()
+				h.nextRun[c.name] = start.Add(c.retry)
+				h.mu.Unlock()
+			}
 			continue
 		}
 		var warn warning
@@ -341,8 +570,23 @@ func (h *Health) checkAll(ctx context.Context) {
 		if latest := h.latest[c.upstream]; latest != "" && comp.Version != "" && newerVersion(latest, comp.Version) {
 			comp.Latest = latest
 		}
+		if comp.Up {
+			h.everUp[c.name] = true
+		}
+		// not up yet since the start, in the grace: starting, not announced
+		comp.Starting = grace && !comp.Up && !h.everUp[c.name]
+		if c.every > 0 {
+			comp.Next = start.Add(h.waitAfter(c, comp.Up))
+			h.nextRun[c.name] = comp.Next
+		} else if h.round > 0 {
+			comp.Next = start.Add(h.round)
+		}
 		h.mu.Unlock()
-		if (seen && prev.state() != comp.state()) || (!seen && !comp.Up) {
+		// what was starting was never announced: its first state is
+		known := seen && !prev.Starting
+		switch {
+		case comp.Starting:
+		case (known && prev.state() != comp.state()) || (!known && !comp.Up):
 			switch comp.state() {
 			case "up":
 				h.app.event("health", c.name+" is back up")
@@ -352,15 +596,18 @@ func (h *Health) checkAll(ctx context.Context) {
 				h.app.event("health", c.name+" is down: "+comp.Error)
 			}
 		}
-		if c.name == "Sync server" && comp.Up && (!seen || !prev.Up) {
-			h.mu.Lock()
-			h.syncUpSince = comp.Checked
-			h.mu.Unlock()
+		if comp.Up && (!seen || !prev.Up) {
+			cameUp[c.name] = true
+			if c.name == "Sync server" {
+				h.mu.Lock()
+				h.syncUpSince = comp.Checked
+				h.mu.Unlock()
+			}
 		}
-		components = append(components, comp)
+		add(comp)
 	}
 	h.mu.Lock()
-	h.components = components
+	h.components, h.lastRound = components, time.Now()
 	h.mu.Unlock()
 }
 

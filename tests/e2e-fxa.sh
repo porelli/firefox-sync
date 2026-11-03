@@ -863,6 +863,35 @@ check "$(state fxa-migrations ExitCode)" 0 "FxA database migrations"
 check "$(state fxa-auth Health.Status)" healthy "FxA auth server healthy"
 check "$(state fxa-content Health.Status)" healthy "FxA content server healthy"
 check "$(state syncstorage Health.Status)" healthy "syncstorage healthy"
+echo "== right after docker compose up -d of the whole stack: no public check or sign-in keys down (startup grace)"
+# the admin UI starts before the Sync server and the accounts: the checks that go through
+# them wait for them, run as soon as they are up, and nothing of the start is alerted
+# (docs/admin/monitoring.md#startup-grace). Within 60 s of the stack healthy: never "is
+# down" on the overview, then the public URLs reachable and the keys answering
+admin_port=$(grep '^ADMIN_EXPORT_PORT=' "${ENV_FILE}" | cut -d= -f2 | sed 's/.*://')
+admin_jar=${WORK}/startup-cookies
+startup_down="" startup_up=no signed_in=no
+for _ in $(seq 1 30); do
+  # (signed in once the admin UI answers: with the Secure cookie, which curl keeps for localhost)
+  [ "${signed_in}" = yes ] || curl -s -o /dev/null -c "${admin_jar}" --data-urlencode "password=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)" "http://localhost:${admin_port}/login"
+  overview=$(curl -s -b "${admin_jar}" "http://localhost:${admin_port}/")
+  if ! grep -q 'Sign out' <<< "${overview}"; then
+    sleep 2
+    continue
+  fi
+  signed_in=yes
+  startup_down+=$(grep -oE '(Public [a-z ]+|Sign-in keys \(FXA_OAUTH_SERVER_URL\)) is down|nobody gets a Sync token' <<< "${overview}" | sort -u | paste -sd, -)
+  metrics=$(dc exec -T syncstorage curl -s -H 'Authorization: Bearer ffs-test-metrics-token' http://ffs-admin:8080/metrics)
+  if [ "$(grep -cE '^ffs_up\{component="(Public (Sync URL|accounts pages|accounts API|profile server)|Sign-in keys \(FXA_OAUTH_SERVER_URL\))"\} 1$' <<< "${metrics}")" = 5 ]; then
+    startup_up=yes
+    break
+  fi
+  sleep 2
+done
+hooks=$(dc exec -T syncstorage curl -s http://notify-sink:8000/_received)
+startup_alerts=$(grep -oE '(Public [a-z ]+|Sign-in keys \(FXA_OAUTH_SERVER_URL\)) is down' <<< "${hooks}" | sort -u | paste -sd, -)
+check "${signed_in} ${startup_down:-none} ${startup_up} ${startup_alerts:-none}" "yes none yes none" \
+  "within 60 s of the stack healthy: no public check or sign-in keys down on the overview, all up, nothing alerted of the start"
 if [ "${FFS_ACCESS}" = authelia ] && [ "${FAILED}" = 0 ]; then
   echo "== SSO=authelia: the admin UI also signs in with Authelia's header, from Caddy's address"
   set_env ADMIN_AUTH_HEADER Remote-Email

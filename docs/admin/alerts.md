@@ -4,7 +4,7 @@ The [admin UI](README.md) can tell you when something happens on your server, by
 
 ## What it alerts on
 
-- **Health**: a component goes down or comes back, a new release is out, a database schema changes, a certificate of a public URL is about to expire. See [Monitoring](monitoring.md).
+- **Health**: a component goes down or comes back, a new release is out, a database schema changes, a certificate of a public URL is about to expire. See [Monitoring](monitoring.md). Not the parts still starting in the first 10 minutes after the admin UI starts: those alert only when they are still not up then, see [Startup grace](monitoring.md#startup-grace).
 - **The admin UI itself**: someone signs in, or fails to, or changes something there (kind `admin`).
 - **Backups**: one fails, or the last good one gets older than 36 hours, and when they work again. See [Backups](../backups.md).
 - **Thresholds**, once when they start and once when they end: max users or max accounts near or at the limit ([Near and full](../limits.md#near-and-full)); Sync data changing without metrics from the Sync server; a spike of Sync errors; a database growing fast; alerts failing; the [setup migrations](monitoring.md#setup-migrations) of a database server not in order. See [Needs attention](monitoring.md#needs-attention).

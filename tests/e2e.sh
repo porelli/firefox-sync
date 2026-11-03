@@ -1504,7 +1504,7 @@ check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1'
 
 echo "== admin UI sees the Sync server go down and back up"
 health_events() { admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'health' AND detail LIKE '$1';"; }
-# the start already has one of each (the admin UI starts first): more than before
+# more than before (the start has none: the admin UI starts first, the Sync server is in its startup grace)
 DOWN=$(health_events 'Sync server is down%')
 UP=$(health_events 'Sync server is back up')
 dc stop syncstorage > /dev/null 2>&1

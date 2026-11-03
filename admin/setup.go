@@ -18,6 +18,8 @@ type setupCheck struct {
 	Name string
 	OK   bool
 	Text string
+	// when it was checked and is checked next: zero Next, at every load of the overview
+	Checked, Next time.Time
 }
 
 // nodeCheck: the tokenserver hands out its nodes in use, Firefox syncs there; the init
@@ -140,6 +142,13 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 			checks = append(checks, domainCheck(a.emailDomain, counts, status))
 		}
 	}
+	// checked now, at every load of the overview, but those of the health checks
+	now := time.Now()
+	for i := range checks {
+		if checks[i].Checked.IsZero() && checks[i].Name != oauthKeysCheck {
+			checks[i].Checked = now
+		}
+	}
 	return checks
 }
 
@@ -148,8 +157,15 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 // at the stack's accounts API on another port than its own (fxa-auth:9010, a port of the host
 // copied over): said as such, it never answers there
 func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupCheck {
-	c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + "."}
-	if !comp.Up {
+	c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + ".", Checked: comp.Checked, Next: comp.Next}
+	switch {
+	case comp.Starting:
+		// the startup grace: not a problem yet
+		c.OK, c.Text = true, "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: no answer yet since the start ("+comp.Error+"), the accounts may still be starting: checked again shortly."
+		if comp.Checked.IsZero() {
+			c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: " + comp.Error + "."
+		}
+	case !comp.Up:
 		c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL, which do not answer (" + comp.Error + "): nobody gets a Sync token. " + d.checkOAuth()
 	}
 	if hint := oauthInternalPort(oauthURL); hint != "" && d.Kubernetes() == nil {

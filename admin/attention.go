@@ -126,6 +126,8 @@ func needsAttention(in attentionInput) []attention {
 	}
 	for _, c := range in.components {
 		switch {
+		case c.Starting:
+			// not up yet since the start: neither a problem nor alerted (startupGrace)
 		case c.Name == "Email (SMTP)" && !c.Up:
 			add("#health", "Health", "The SMTP server does not work (%s): no alerts, invitations or notices go out.", c.Error)
 		case c.Name == notifyCheckName && !c.Up:

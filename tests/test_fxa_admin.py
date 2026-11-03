@@ -617,9 +617,10 @@ def test_alert_emails():
         found = requests.get(f"{MAILPIT}/api/v1/search", params={"query": "to:admin@fxa.test"}, timeout=10).json()
         text = " ".join(requests.get(f"{MAILPIT}/api/v1/message/{m['ID']}", timeout=10).json().get("Text", "")
                         for m in found.get("messages", []))
-        # health: the components that came up after the admin UI (the Sync server);
-        # every change made in the admin UI, with who made it
-        if "sign-up refused" in text and "admin: signed in" in text and "sign-up: " in text and "health: " in text and \
+        # every change made in the admin UI, with who made it. Not health: the components
+        # that came up after the admin UI are in its startup grace, not alerted (e2e-fxa.sh
+        # checks that, e2e.sh the alerts of the Sync server going down)
+        if "sign-up refused" in text and "admin: signed in" in text and "sign-up: " in text and \
                 f"admin: Disabled {INVITED}" in text and "by admin (password)" in text:
             return
         time.sleep(3)
@@ -634,7 +635,7 @@ def test_alert_notifications():
         hooks = [r for r in requests.get("http://notify-sink:8000/_received", timeout=10).json() if r["path"] == "/fxa-hook/ffs-test-fxa-secret"]
         events = [e for r in hooks for e in json.loads(r["body"])["events"]]
         kinds = {e["kind"] for e in events}
-        if {"sign-up refused", "admin", "health"} <= kinds and any(e["text"].startswith(f"Disabled {INVITED}") for e in events):
+        if {"sign-up refused", "admin"} <= kinds and any(e["text"].startswith(f"Disabled {INVITED}") for e in events):
             break
         time.sleep(3)
     else:

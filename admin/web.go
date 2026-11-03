@@ -28,6 +28,7 @@ var assets embed.FS
 var templates = template.Must(template.New("").Funcs(template.FuncMap{
 	"date":  func(t time.Time) string { return formatTime(t, adminZone) },
 	"when":  func(t time.Time) string { return whenIn(t, adminZone) },
+	"clock": func(t time.Time) string { return clock(t, time.Now(), adminZone) },
 	"zone":  func() string { return adminZone.String() },
 	"bytes": humanBytes,
 	"email": breakEmail,
@@ -58,6 +59,15 @@ const timeLayout = "2006-01-02 15:04"
 
 func formatTime(t time.Time, zone *time.Location) string {
 	return t.In(zone).Format(timeLayout)
+}
+
+// clock: the time of the day of t ("18:25"), with its day when not today ("Jan 2 18:25")
+func clock(t, now time.Time, zone *time.Location) string {
+	t, now = t.In(zone), now.In(zone)
+	if y, m, d := t.Date(); y == now.Year() && m == now.Month() && d == now.Day() {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2 15:04")
 }
 
 func whenIn(t time.Time, zone *time.Location) string {
@@ -311,6 +321,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /accounts/{uid}/remove-recovery-key", a.authenticated(a.removeSignInMethod("remove-recovery-key")))
 	mux.HandleFunc("POST /accounts/{uid}/confirm-email", a.authenticated(a.confirmEmail))
 	mux.HandleFunc("POST /users/{uid}/note", a.authenticated(a.setNote))
+	mux.HandleFunc("POST /health/check", a.authenticated(a.checkNow))
 	mux.HandleFunc("POST /alerts/test", a.authenticated(a.testEmail))
 	mux.HandleFunc("POST /alerts/test-notification", a.authenticated(a.testNotify))
 	mux.HandleFunc("POST "+invitePath, a.authenticated(a.invite))
@@ -753,7 +764,8 @@ func (a *App) base(s *session) map[string]any {
 // healthSummary: the health light of every page and the Health tile of the overview,
 // from the last round of checks (nothing is checked here)
 type healthSummary struct {
-	Total, Up, Down, Warn int
+	// Starting: not up yet since the start, in the startup grace (neither up nor down)
+	Total, Up, Down, Warn, Starting int
 	// what is wrong, the first of each: "Sync server", "Sign-up gate"
 	FirstDown, FirstWarn string
 }
@@ -784,6 +796,11 @@ func summarize(rows []Component) *healthSummary {
 	for _, c := range rows {
 		switch {
 		case c.Up:
+		case c.Starting:
+			// the hidden ones (setup checks) not counted while starting
+			if !c.Hidden && !c.Limit {
+				h.Starting++
+			}
 		case c.Warn:
 			h.Warn++
 			if h.FirstWarn == "" {
@@ -798,7 +815,7 @@ func summarize(rows []Component) *healthSummary {
 		// the hidden ones are setup checks, the limits no parts: in the count only when
 		// they fail
 		quiet := c.Hidden || c.Limit
-		if !quiet || !c.Up {
+		if !quiet || (!c.Up && !c.Starting) {
 			h.Total++
 		}
 		if c.Up && !quiet {

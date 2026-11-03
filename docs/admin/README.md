@@ -103,4 +103,4 @@ The other forms are one click, because nothing is lost and the result message sa
 
 - Saving the sign-up policy, closing sign-ups too. Saving again undoes it, existing accounts keep working, and the policy's text and radio buttons are a deliberate edit. Entries taken out of the allowlist there are removed with it, as typed.
 - Max users and max accounts. Lowering them refuses new accounts only: nobody already in is touched.
-- Invitations, a test email, a test notification, enabling an account, lifting a rate-limit block, notes, and signing out of the admin UI.
+- Invitations, a test email, a test notification, Check now (the health and setup checks again, [Health](monitoring.md#health)), enabling an account, lifting a rate-limit block, notes, and signing out of the admin UI.

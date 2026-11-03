@@ -88,6 +88,10 @@ func (a *App) prometheus(w http.ResponseWriter, r *http.Request) {
 	if a.health != nil {
 		b.WriteString("# HELP ffs_up Whether a component answers its health check\n# TYPE ffs_up gauge\n")
 		for _, c := range a.health.Components() {
+			// starting (the startup grace): neither up nor down yet, no sample
+			if c.Starting {
+				continue
+			}
 			up := 0
 			if c.Up {
 				up = 1
