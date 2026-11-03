@@ -864,8 +864,23 @@ def test_unlimited_max_users(admin, db):
         assert login("carol-unlimited").status_code != 200
 
 
+def test_health_checks_apart(admin):
+    # syncstorage-rs 0.24 times every request (request.duration), the health checks too (the
+    # container healthcheck, the admin UI's rounds): counted apart, not as Sync requests of
+    # Firefox (docs/admin/monitoring.md#errors-and-growth)
+    deadline, found = time.time() + 60, None
+    while not found and time.time() < deadline:
+        page = admin.get("/activity")
+        found = re.search(r'id="error-rate">Last 15 minutes: [^<]*\((\d+) health checks of the Sync server besides, not counted\)', page)
+        if not found:
+            time.sleep(3)
+    assert found and int(found.group(1)) > 0, page.split('id="error-rate"')[1][:500]
+    assert "<code>ffs.health_checks</code>" not in page
+
+
 def test_sign_out(admin):
     csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', admin.get("/")).group(1)
     res = admin.http.post(f"{ADMIN}/logout", data={"csrf": csrf}, timeout=30)
     assert res.url.endswith("/login")
     assert admin.http.get(f"{ADMIN}/", timeout=30).url.endswith("/login")
+

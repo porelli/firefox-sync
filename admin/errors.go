@@ -19,6 +19,11 @@ import (
 //   - nothing for its 5xx (a database down: the health checks see that), for 404 and
 //     412 (answers, not errors), nor for the errors of the tokenserver: the Sentry
 //     middleware of the combined server only counts the storage API's errors
+//   - since 0.24 a timer per request, whatever it is (syncstorage.request.duration, tagged
+//     route, method, status): the health checks too (/__heartbeat__ of Docker's
+//     healthcheck every 30 s, of the admin UI every round, /__lbheartbeat__, /__version__).
+//     Not a request of its own (the handler's counter is): the recorder counts those of the
+//     health checks apart (healthChecksMetric), so the requests are Firefox's
 //   - a timer per token request with an OAuth token (syncstorage.token_verification) and
 //     one per token issued (syncstorage.token_creation): the difference is the tokens
 //     refused (a bad or old token, an old generation or keys, a client state that does
@@ -108,7 +113,7 @@ func classifyError(name string) (errorKind, bool) {
 // counted when it reaches its handler), not one of its errors
 func isRequest(name string) bool {
 	op, ok := strings.CutPrefix(name, "syncstorage.request.")
-	return ok && op != "" && !strings.Contains(op, ".")
+	return ok && op != "" && !strings.Contains(op, ".") && "request."+op != requestDuration
 }
 
 const (
@@ -117,7 +122,15 @@ const (
 	// the tokens refused per minute, counted by the recorder (no statsd metric, no
 	// sender's line of this name is taken)
 	tokensRefusedMetric = "ffs.tokens_refused"
+	// the health checks the Sync server answered per minute, counted by the recorder from
+	// syncstorage.request.duration (route /__heartbeat__...): not Firefox's requests
+	healthChecksMetric = "ffs.health_checks"
+	// the timer of every request (syncstorage-rs 0.24), not a request of its own
+	requestDuration = "request.duration"
 )
+
+// the routes of the health checks of syncstorage-rs (its DOCKER_FLOW_ENDPOINTS)
+var healthRoutes = map[string]bool{"/__heartbeat__": true, "/__lbheartbeat__": true, "/__version__": true, "/__error__": true}
 
 // ErrorRow: a kind of error over a time span, for the activity page
 type ErrorRow struct {
@@ -160,6 +173,8 @@ func (t *errorTally) add(minute int64, name string, count int64) {
 	case name == tokensRefusedMetric:
 		// their verifications are in the requests
 		t.counted[minute] += count
+	case name == healthChecksMetric:
+		tr.Health += count
 	case isRequest(name):
 		tr.Requests += count
 	default:
@@ -281,6 +296,7 @@ func (t *errorTally) TrafficBetween(from, to int64) traffic {
 		if m >= from && m < to {
 			sum.Requests += tr.Requests
 			sum.Errors += tr.Errors
+			sum.Health += tr.Health
 		}
 	}
 	_, _, refused := t.refused()
@@ -292,8 +308,17 @@ func (t *errorTally) TrafficBetween(from, to int64) traffic {
 	return sum
 }
 
-// traffic: requests (served, failed or refused) and errors among them
-type traffic struct{ Requests, Errors int64 }
+// traffic: requests of Firefox (served, failed or refused) and errors among them, and the
+// health checks the Sync server answered besides (not in the requests)
+type traffic struct{ Requests, Errors, Health int64 }
+
+// healthNote: the health checks besides the requests, "" without
+func (t traffic) healthNote() string {
+	if t.Health <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (and %s, not counted)", plural(int(t.Health), "health check"))
+}
 
 // Percent: the share of errors, 0 without requests
 func (t traffic) Percent() float64 {
@@ -350,7 +375,7 @@ func (e ErrorRate) line() string {
 	if e.Baseline.Requests > 0 {
 		usual = fmt.Sprintf("%.1f%% the day before", e.Baseline.Percent())
 	}
-	return fmt.Sprintf("%d of %d Sync requests failed in the last %d minutes (%.0f%%, %s)",
+	return fmt.Sprintf("%d of %d Sync requests from Firefox failed in the last %d minutes (%.0f%%, %s)",
 		e.Window.Errors, e.Window.Requests, int(errorWindow/time.Minute), e.Window.Percent(), usual)
 }
 
@@ -368,8 +393,8 @@ func errorRateRow(e *ErrorRate, c errorRateConfig) (Component, bool) {
 		return row, true
 	}
 	row.Up = true
-	row.Detail = fmt.Sprintf("%s of %s in the last %d minutes, alert from %d%% and %d errors (ADMIN_ERROR_RATE_PERCENT)",
-		plural(int(e.Window.Errors), "error"), plural(int(e.Window.Requests), "request"), int(errorWindow/time.Minute), c.percent, c.minErrors)
+	row.Detail = fmt.Sprintf("%s of %s from Firefox in the last %d minutes%s, alert from %d%% and %d errors (ADMIN_ERROR_RATE_PERCENT)",
+		plural(int(e.Window.Errors), "error"), plural(int(e.Window.Requests), "Sync request"), int(errorWindow/time.Minute), e.Window.healthNote(), c.percent, c.minErrors)
 	return row, true
 }
 
@@ -379,7 +404,7 @@ func errorRateRow(e *ErrorRate, c errorRateConfig) (Component, bool) {
 func (r *Recorder) errorTraffic(ctx context.Context, now time.Time) (window, baseline traffic, err error) {
 	split := now.Add(-errorWindow)
 	rows, err := r.db.mine().QueryContext(ctx, r.db.q(`SELECT minute, name, count FROM ffs_metrics WHERE minute >= ?
-		AND (name LIKE 'syncstorage.request.%' OR name IN ('`+tokenVerified+`', '`+tokenIssued+`', '`+tokensRefusedMetric+`') OR name LIKE 'syncstorage.%error%'
+		AND (name LIKE 'syncstorage.request.%' OR name IN ('`+tokenVerified+`', '`+tokenIssued+`', '`+tokensRefusedMetric+`', '`+healthChecksMetric+`') OR name LIKE 'syncstorage.%error%'
 		OR name LIKE 'syncstorage.%storage.quota.at_limit' OR name LIKE 'syncstorage.%storage.conflict' OR name LIKE 'syncstorage.%storage.pool.timeout')`),
 		split.Add(-errorBaseline).UnixMilli())
 	if err != nil {

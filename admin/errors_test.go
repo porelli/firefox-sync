@@ -176,23 +176,23 @@ func TestErrorRateSpike(t *testing.T) {
 		window, baseline traffic
 		was, spike       bool
 	}{
-		{"quiet", traffic{1000, 5}, traffic{100000, 500}, false, false},
-		{"spike", traffic{1000, 300}, traffic{100000, 500}, false, true},
-		{"spike, no baseline", traffic{200, 50}, traffic{}, false, true},
-		{"a small server: 1 error of 2 requests", traffic{2, 1}, traffic{}, false, false},
-		{"19 errors: under the minimum", traffic{40, 19}, traffic{}, false, false},
-		{"always that many: not 3 times the day before", traffic{1000, 300}, traffic{100000, 20000}, false, false},
-		{"just under the share", traffic{1000, 99}, traffic{}, false, false},
+		{"quiet", traffic{Requests: 1000, Errors: 5}, traffic{Requests: 100000, Errors: 500}, false, false},
+		{"spike", traffic{Requests: 1000, Errors: 300}, traffic{Requests: 100000, Errors: 500}, false, true},
+		{"spike, no baseline", traffic{Requests: 200, Errors: 50}, traffic{}, false, true},
+		{"a small server: 1 error of 2 requests", traffic{Requests: 2, Errors: 1}, traffic{}, false, false},
+		{"19 errors: under the minimum", traffic{Requests: 40, Errors: 19}, traffic{}, false, false},
+		{"always that many: not 3 times the day before", traffic{Requests: 1000, Errors: 300}, traffic{Requests: 100000, Errors: 20000}, false, false},
+		{"just under the share", traffic{Requests: 1000, Errors: 99}, traffic{}, false, false},
 		// a spike ends under half the share or half the errors
-		{"still a spike at 6%", traffic{1000, 60}, traffic{100000, 500}, true, true},
-		{"over at 4%", traffic{1000, 40}, traffic{100000, 500}, true, false},
-		{"over with 9 errors", traffic{50, 9}, traffic{}, true, false},
+		{"still a spike at 6%", traffic{Requests: 1000, Errors: 60}, traffic{Requests: 100000, Errors: 500}, true, true},
+		{"over at 4%", traffic{Requests: 1000, Errors: 40}, traffic{Requests: 100000, Errors: 500}, true, false},
+		{"over with 9 errors", traffic{Requests: 50, Errors: 9}, traffic{}, true, false},
 	} {
 		if got := c.spike(tc.window, tc.baseline, tc.was); got != tc.spike {
 			t.Errorf("%s: %v", tc.name, got)
 		}
 	}
-	if (errorRateConfig{percent: 0, minErrors: 1}).spike(traffic{10, 10}, traffic{}, false) {
+	if (errorRateConfig{percent: 0, minErrors: 1}).spike(traffic{Requests: 10, Errors: 10}, traffic{}, false) {
 		t.Error("ADMIN_ERROR_RATE_PERCENT=0 alerts")
 	}
 	t.Setenv("ADMIN_ERROR_RATE_PERCENT", "")
@@ -218,7 +218,7 @@ func TestWatchErrorRate(t *testing.T) {
 	now := time.Now()
 	var rows [][]driver.Value
 	fake := &fakeFxa{answer: func(query string, _ []driver.Value) *fakeRows {
-		if strings.Contains(query, "FROM ffs_metrics WHERE minute >= ?") && strings.Contains(query, "IN ('syncstorage.token_verification', 'syncstorage.token_creation', 'ffs.tokens_refused')") && !strings.Contains(query, "token_%") {
+		if strings.Contains(query, "FROM ffs_metrics WHERE minute >= ?") && strings.Contains(query, "IN ('syncstorage.token_verification', 'syncstorage.token_creation', 'ffs.tokens_refused', 'ffs.health_checks')") && !strings.Contains(query, "token_%") {
 			return metricRows(append([][]driver.Value(nil), rows...), false)
 		}
 		return nil
@@ -244,8 +244,16 @@ func TestWatchErrorRate(t *testing.T) {
 		t.Errorf("quiet: %q", got)
 	}
 	row, ok := errorRateRow(h.ErrorRate(), h.errorRate)
-	if !ok || !row.Up || !row.Limit || !strings.Contains(row.Detail, "0 errors of 0 requests in the last 15 minutes") {
+	if !ok || !row.Up || !row.Limit || !strings.Contains(row.Detail, "0 errors of 0 Sync requests from Firefox in the last 15 minutes, alert") {
 		t.Errorf("row %+v", row)
+	}
+	// the health checks: apart, not requests (syncstorage-rs 0.24's request.duration of
+	// /__heartbeat__ counted by the recorder)
+	got := round([]driver.Value{minute(3 * time.Minute), "ffs.health_checks", int64(61)},
+		[]driver.Value{minute(3 * time.Minute), "syncstorage.request.duration", int64(61)})
+	row, _ = errorRateRow(h.ErrorRate(), h.errorRate)
+	if len(got) != 0 || !strings.Contains(row.Detail, "0 errors of 0 Sync requests from Firefox in the last 15 minutes (and 61 health checks, not counted), alert") {
+		t.Errorf("health checks: %q %+v", got, row)
 	}
 	// 40 tokens refused and 30 storage errors in 200 requests
 	spike := [][]driver.Value{
@@ -255,8 +263,8 @@ func TestWatchErrorRate(t *testing.T) {
 		{minute(2 * time.Minute), "syncstorage.token_verification", int64(80)},
 		{minute(2 * time.Minute), "syncstorage.token_creation", int64(40)},
 	}
-	got := round(spike...)
-	if len(got) != 1 || !strings.Contains(got[0], "attention: 70 of 200 Sync requests failed in the last 15 minutes (35%, 1.0% the day before)") {
+	got = round(spike...)
+	if len(got) != 1 || !strings.Contains(got[0], "attention: 70 of 200 Sync requests from Firefox failed in the last 15 minutes (35%, 1.0% the day before)") {
 		t.Errorf("spike: %q", got)
 	}
 	if got := round(spike...); len(got) != 0 {
@@ -272,7 +280,7 @@ func TestWatchErrorRate(t *testing.T) {
 		t.Errorf("prometheus: %s", b.String())
 	}
 	list := needsAttention(attentionInput{now: now, components: []Component{row}})
-	if len(list) != 1 || list[0].Href != "/activity#errors" || !strings.Contains(list[0].Text, "70 of 200 Sync requests failed") {
+	if len(list) != 1 || list[0].Href != "/activity#errors" || !strings.Contains(list[0].Text, "70 of 200 Sync requests from Firefox failed") {
 		t.Errorf("needs attention %+v", list)
 	}
 	if got := round(); len(got) != 1 || !strings.Contains(got[0], "back to normal") {

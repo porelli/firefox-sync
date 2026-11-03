@@ -197,7 +197,7 @@ The Sync server (syncstorage-rs and its tokenserver) sends its statsd metrics to
 
 If the Activity page says no metrics arrive, restart the Sync server.
 
-An idle server sends nothing for hours: syncstorage-rs sends metrics only while it serves requests, and holds them until a datagram is full. So the metrics count as missing only when Sync data changed more than 10 minutes after the last metrics arrived (or after the start of the admin UI or the Sync server, when none came since).
+An idle server sends little: syncstorage-rs sends metrics only while it serves requests (since 0.24 the health checks count, see [Errors and growth](#errors-and-growth)), and holds them until a datagram is full. So the metrics count as missing only when Sync data changed more than 10 minutes after the last metrics arrived (or after the start of the admin UI or the Sync server, when none came since).
 
 The admin UI reads the latest write of the storage database every round of checks for this. When the metrics are missing, the health table shows a `Sync metrics` row to check. Without a storage database to read, it never does.
 
@@ -271,7 +271,9 @@ What syncstorage-rs sends is limited, so this is what you see:
 - **Tokens refused**: the tokenserver sends no errors, so the admin UI counts the token requests verified without a token issued. That covers a bad or old sign-in, older keys, a client state that does not fit, max users full, and a database error, in one row, since syncstorage-rs does not tell them apart.
 - **No 5xx of its own**: a database that is down shows in the Health table instead. No 404 or 412 either: those are answers (an empty collection, a change from another device).
 
-The Errors chart counts the same. The Sync requests chart counts only the requests served, not the errors.
+The Errors chart counts the same. The Sync requests chart counts only the requests of Firefox served, not the errors.
+
+**Requests of Firefox, health checks apart.** Since 0.24 syncstorage-rs also times every request it answers (`syncstorage.request.duration`, tagged with its route), the health checks too: `/__heartbeat__` of the container's healthcheck (every 30 seconds) and of the admin UI (every round), the public check through your reverse proxy, `/__lbheartbeat__`, `/__version__`. On an idle server that is all its traffic. The admin UI counts those of the health checks apart and never as requests: "0 errors of 12 Sync requests from Firefox in the last 15 minutes (and 61 health checks, not counted)". The requests are the storage API's (one counter per request it served) and the token requests. Before 0.24 there is no timer: the health checks are not counted at all, and are not in the requests either.
 
 <details><summary>Where the errors come from</summary>
 
@@ -279,6 +281,7 @@ The metrics, as captured from syncstorage-rs's packets in [admin/testdata/statsd
 
 - `syncstorage.request.error.hawk.*` (401), `syncstorage.request.validate.*`, `.process.*` and `.store.*` (400), `syncstorage.request.error.invalid_content_type` (415), `storage.conflict` (503) and `storage.quota.at_limit` (403). They carry no endpoint or status: the kind is in the name, and the status is the one syncstorage-rs answers for it.
 - Tokens refused: `syncstorage.token_verification` without a matching `syncstorage.token_creation`. The combined server counts only the storage API's errors.
+- The requests: `syncstorage.request.<handler>` (`get_collections`, `post_collection`...), one per request a handler of the storage API served, and `syncstorage.token_verification`. Not `syncstorage.request.duration`, the timer of every request: those with `route` `/__heartbeat__`, `/__lbheartbeat__`, `/__version__` or `/__error__` are the health checks, counted apart.
 - The Sync server sends its metrics when 512 bytes are buffered, so a token often comes a datagram (and a minute) after its verification. The admin UI pairs them in the order they come, per sender: a verification counts as refused when a datagram of the same Sync server comes 40 seconds after it and its token has not (the token comes after the tokenserver's database work, which waits at most 30 seconds for a connection by default), in the minute of the verification, so a quiet server shows it a little later. The metrics go over UDP: datagrams the network drops make all these counts approximate. Minutes recorded by an admin UI from before this pairing keep the older guess: verified minus issued per minute, the newest minute counted once something newer comes in. A request without any token is not counted.
 </details>
 
@@ -286,7 +289,7 @@ Two thresholds alert, through the event log (kind `attention`) and the alerts, o
 
 ### A spike of errors
 
-Every round of checks, the admin UI compares the errors of the last 15 minutes with the requests (served, refused and failed). A spike needs all three:
+Every round of checks, the admin UI compares the errors of the last 15 minutes with the requests of Firefox (served, refused and failed; not the health checks). A spike needs all three:
 
 - `ADMIN_ERROR_RATE_PERCENT` (10) percent or more of the requests;
 - at least `ADMIN_ERROR_RATE_MIN_ERRORS` (20) errors, so a small server does not alert on one error in two requests;

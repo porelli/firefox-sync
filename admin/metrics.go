@@ -161,6 +161,22 @@ func (r *Recorder) now() time.Time {
 	return time.Now()
 }
 
+// statsdTag: the value of a tag of a statsd line's fields after the type (#k:v,k2:v2), "" without
+func statsdTag(fields []string, key string) string {
+	for _, f := range fields {
+		tags, ok := strings.CutPrefix(f, "#")
+		if !ok {
+			continue
+		}
+		for _, tag := range strings.Split(tags, ",") {
+			if k, v, ok := strings.Cut(tag, ":"); ok && k == key {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
 // parseStatsd adds the lines of a statsd packet: name:value|type[|@rate][|#tags]
 func (r *Recorder) parseStatsd(packet string) { r.receive("", packet) }
 
@@ -174,8 +190,8 @@ func (r *Recorder) receive(sender, packet string) {
 	own := false
 	for _, line := range strings.Split(packet, "\n") {
 		name, rest, ok := strings.Cut(strings.TrimSpace(line), ":")
-		// tokensRefusedMetric is the admin UI's own, never a sender's
-		if !ok || !metricName.MatchString(name) || name == tokensRefusedMetric {
+		// tokensRefusedMetric and healthChecksMetric are the admin UI's own, never a sender's
+		if !ok || !metricName.MatchString(name) || name == tokensRefusedMetric || name == healthChecksMetric {
 			continue
 		}
 		if service, _, ok := statsdLabel(name); ok && service == storageService {
@@ -190,6 +206,10 @@ func (r *Recorder) receive(sender, packet string) {
 			continue
 		}
 		r.tokenLine(tokens, name, now)
+		// the timer of every request: those of the health checks counted apart
+		if _, op, ok := statsdLabel(name); ok && op == requestDuration && healthRoutes[statsdTag(fields[2:], "route")] {
+			r.currentMetric(healthChecksMetric).count++
+		}
 		rate := 1.0
 		for _, f := range fields[2:] {
 			if strings.HasPrefix(f, "@") {
@@ -452,8 +472,9 @@ func (r *Recorder) Activity(ctx context.Context, since time.Time, bucket time.Du
 			}
 		}
 		tally.add(minute, name, count)
-		// the admin UI's own: in the errors (the tokens refused), not a statsd metric
-		if name == tokensRefusedMetric {
+		// the admin UI's own: in the errors (the tokens refused), in the error rate (the
+		// health checks), not statsd metrics
+		if name == tokensRefusedMetric || name == healthChecksMetric {
 			continue
 		}
 		t := totals[name]

@@ -534,3 +534,33 @@ func TestNoRuntime(t *testing.T) {
 		t.Errorf("compose with ADMIN_K8S_POD_STATUS: %q", got)
 	}
 }
+
+// syncstorage-rs 0.24 times every request (request.duration, tagged by route): those of
+// the health checks are counted apart, none of them is a request of Firefox
+func TestHealthChecksApart(t *testing.T) {
+	r := &Recorder{current: map[string]*metric{}}
+	r.parseStatsd("syncstorage.request.duration:0|ms|#route:/__heartbeat__,method:GET,status:200\n" +
+		"syncstorage.request.duration:1|ms|#method:GET,route:/__version__,status:200\n" +
+		"syncstorage.request.duration:0|ms|#route:/__lbheartbeat__,method:GET,status:200\n" +
+		"syncstorage.request.duration:12|ms|#route:/1.5/{uid}/info/collections,method:GET,status:200\n" +
+		"syncstorage.request.get_collections:1|c|#tokenserver_origin:rust\n" +
+		"syncstorage.tokenserver.request.duration:0|ms|#route:/__heartbeat__,method:GET,status:200\n" +
+		// a sender's ffs.health_checks: not taken
+		"ffs.health_checks:100|c")
+	if n := r.current[healthChecksMetric].count; n != 4 {
+		t.Errorf("health checks %d", n)
+	}
+	if !isRequest("syncstorage.request.get_collections") || isRequest("syncstorage.request.duration") {
+		t.Error("request.duration counted as a request")
+	}
+	tally := newErrorTally()
+	for name, m := range r.current {
+		tally.add(0, name, m.count)
+	}
+	if tr := tally.Traffic(); tr.Requests != 1 || tr.Health != 4 || tr.Errors != 0 {
+		t.Errorf("traffic %+v", tr)
+	}
+	if got := statsdTag([]string{"@0.5", "#a:1,route:/x:y"}, "route"); got != "/x:y" {
+		t.Errorf("tag %q", got)
+	}
+}

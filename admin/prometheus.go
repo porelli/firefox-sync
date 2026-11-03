@@ -199,7 +199,7 @@ func thresholdMetrics(b *strings.Builder, h *Health) {
 		return 0
 	}
 	if e := h.ErrorRate(); e != nil {
-		fmt.Fprintf(b, "# HELP ffs_sync_error_ratio Share of the Sync requests that failed in the last 15 minutes\n# TYPE ffs_sync_error_ratio gauge\nffs_sync_error_ratio %g\n", e.Window.Percent()/100)
+		fmt.Fprintf(b, "# HELP ffs_sync_error_ratio Share of the Sync requests of Firefox that failed in the last 15 minutes (not the health checks)\n# TYPE ffs_sync_error_ratio gauge\nffs_sync_error_ratio %g\n", e.Window.Percent()/100)
 		fmt.Fprintf(b, "# HELP ffs_sync_error_spike 1 during a spike of errors (ADMIN_ERROR_RATE_PERCENT)\n# TYPE ffs_sync_error_spike gauge\nffs_sync_error_spike %d\n", flag(e.Spike))
 	}
 	if growth := h.Growth(); len(growth) > 0 {
