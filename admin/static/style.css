@@ -143,7 +143,8 @@ meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 9
 /* restricted on purpose (sign-ups closed, a limit, invite-only Sync): a yellow notice */
 .pill.notice { color: var(--notice); background: var(--notice-soft); }
 .restrictions { list-style: none; padding: 0; margin: -.25rem 0 1.25rem; }
-.restrictions a.pill { text-decoration: none; }
+.restrictions li { max-width: 100%; }
+.restrictions a.pill { text-decoration: none; white-space: normal; max-width: 100%; }
 .restrictions a.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 .restrictions .where { opacity: .8; font-weight: 400; }
 .note { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
