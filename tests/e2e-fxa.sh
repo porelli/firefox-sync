@@ -868,7 +868,7 @@ echo "== waiting for FxA (slow under emulation), the admin UI's overview meanwhi
 # right after docker compose up -d of the whole stack the admin UI starts before the Sync server
 # and the accounts: what has not answered yet is "waiting" (compose: it cannot see the
 # containers), never "down" (docs/admin/monitoring.md#startup-grace)
-start_pending=no start_down=""
+start_pending=no start_down="" start_down_rows=""
 for _ in $(seq 1 600); do
   [ "$(state fxa-content Health.Status)" = healthy ] && [ "$(state syncstorage Health.Status)" = healthy ] && break
   [ "$(state fxa-migrations ExitCode)" != "" ] && [ "$(state fxa-migrations ExitCode)" != 0 ] && break
@@ -878,13 +878,15 @@ for _ in $(seq 1 600); do
   overview=$(admin_overview)
   grep -qE '<span class="pill">(waiting|starting)</span>' <<< "${overview}" && start_pending=yes
   start_down+=$(grep -oE '[A-Z][A-Za-z ]+( \([A-Z_]+\))? is down' <<< "${overview}" | sort -u | paste -sd, -)
+  start_down_rows+=$(grep -oE '<tr><td>[^<]+</td><td><span class="disabled">down</span>' <<< "${overview}" | sed 's/<[^>]*>/ /g' | paste -sd, -)
   sleep 2
 done
 check "$(state fxa-migrations ExitCode)" 0 "FxA database migrations"
 check "$(state fxa-auth Health.Status)" healthy "FxA auth server healthy"
 check "$(state fxa-content Health.Status)" healthy "FxA content server healthy"
 check "$(state syncstorage Health.Status)" healthy "syncstorage healthy"
-check "${start_pending} ${start_down:-none}" "yes none" "while the stack started: parts waiting on the admin UI's overview, none down"
+# (waiting seen or not: the admin UI may answer only once the parts are up, the faster runs)
+check "${start_down:-none} ${start_down_rows:-none}" "none none" "while the stack started: no part down on the admin UI's overview (waiting seen: ${start_pending})"
 echo "== right after the start: all up within 60 s, nothing of the start alerted (startup grace)"
 # the checks that go through the Sync server and the accounts waited for them and run as
 # soon as they are up: within 60 s of the stack healthy never "is down" for the public
