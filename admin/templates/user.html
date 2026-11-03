@@ -94,9 +94,9 @@
   <div class="scroll"><table id="sessions" aria-label="Sessions">
     <thead><tr><th>Browser</th><th>System</th><th>Signed in</th><th>Confirmed</th><th>Last used</th><th><span class="sr">Actions</span></th></tr></thead>
     <tbody>{{range .Sessions}}<tr><td>{{.Browser}}</td><td>{{.OS}}</td><td><time datetime="{{stamp .CreatedAt}}">{{when .CreatedAt}}</time></td><td>{{if .Verified}}{{or .Method "yes"}}{{else}}<span class="t-warn"><span class="badge">unconfirmed sign-in</span></span>{{end}}</td><td><time datetime="{{stamp .LastUsed}}">{{when .LastUsed}}</time></td>
-      <td><a href="/users/{{$.UID}}/sessions/{{.Ref}}/sign-out" class="danger" aria-label="Sign out the session of {{.Browser}}">Sign out…</a></td></tr>{{else}}<tr><td colspan="6" class="empty">Not signed in anywhere right now.</td></tr>{{end}}</tbody>
+      <td>{{if and (not .Verified) $.Account.Verified (not (and $.Security $.Security.TOTP))}}<a href="/users/{{$.UID}}/sessions/{{.Ref}}/confirm" aria-label="Confirm the sign-in of {{.Browser}}">Confirm this sign-in…</a> {{end}}<a href="/users/{{$.UID}}/sessions/{{.Ref}}/sign-out" class="danger" aria-label="Sign out the session of {{.Browser}}">Sign out…</a></td></tr>{{else}}<tr><td colspan="6" class="empty">Not signed in anywhere right now.</td></tr>{{end}}</tbody>
   </table></div>
-  <p class="hint">An unconfirmed sign-in never entered the code sent by email (or the second step): it cannot sync.</p>
+  <p class="hint">An unconfirmed sign-in never entered the code sent by email (or the second step): it cannot sync. Someone whose code never arrives: Confirm this sign-in… does what the code would, only when you know it is them (with the email not confirmed yet, Confirm the email… confirms its sign-ins too; with two-step authentication on, the sign-in waits for the authenticator's code). If it is not them, sign it out and have them change the password.</p>
 </section>
 {{end}}{{end}}
 

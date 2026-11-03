@@ -24,6 +24,8 @@ type confirmAction struct {
 	Hidden map[string]string
 	// the devices and sessions signed out are listed
 	Lists bool
+	// the sign-ins waiting for their code (data Pending) are listed, as confirmed by it
+	Pending bool
 	// the reason also goes into the account's note
 	ReasonToNote bool
 	// a checkbox "also sign out everywhere" (field sign_out), on by default: after a
@@ -79,10 +81,13 @@ var accountActions = map[string]confirmAction{
 		Button: "Confirm the email",
 		Effects: []string{
 			"The email is marked as confirmed without the code sent to it: this skips the proof that whoever signed up owns the address. Do it only when you know who they are.",
-			"Their current sign-in stays unconfirmed: signing in again sends a new code to the address.",
 		},
+		Pending: true,
 	},
 }
+
+// the owner's notice, on both confirm pages
+const noticeEffect = "The owner gets an email saying that an administrator confirmed it."
 
 // confirmPage is the data of confirm.html
 func (a *App) confirmPage(w http.ResponseWriter, r *http.Request, s *session, act confirmAction, post string) (map[string]any, *FxaAccount) {
@@ -125,6 +130,61 @@ func (a *App) confirmAccount(w http.ResponseWriter, r *http.Request, s *session)
 	if data == nil {
 		return
 	}
+	if act.Pending {
+		// the sign-ins waiting now, and only those: one made after this page is not
+		// confirmed by its form
+		sessions, _ := data["Sessions"].([]Session)
+		pending := pendingSignIns(sessions)
+		if len(pending) > maxConfirmedSignIns {
+			pending = pending[:maxConfirmedSignIns]
+		}
+		refs := make([]string, len(pending))
+		for i, se := range pending {
+			refs[i] = se.Ref
+		}
+		act.Effects = append([]string(nil), act.Effects...)
+		if len(pending) > 0 {
+			these := "The sign-in below, waiting for its code, is confirmed too, as if the code had been entered: whoever made it gets in."
+			if len(pending) > 1 {
+				these = fmt.Sprintf("The %d sign-ins below, waiting for their code, are confirmed too, as if the code had been entered: whoever made them gets in.", len(pending))
+			}
+			act.Effects = append(act.Effects, these+" A sign-in made after this page is not.",
+				"A browser still showing the code prompt does not notice: the person signs in again there. Within 48 hours of the sign-up that sign-in asks for no code; later, a new sign-in asks for one (Confirm this sign-in… on the account page).")
+		} else {
+			act.Effects = append(act.Effects, "No sign-in is waiting for its code now: the next one asks for it, unless the account is less than 48 hours old (Confirm this sign-in… on the account page).")
+		}
+		act.Effects = append(act.Effects, noticeEffect)
+		act.Hidden = map[string]string{"sessions": strings.Join(refs, " ")}
+		data["Action"], data["Pending"] = act, pending
+	}
+	a.render(w, "confirm.html", data)
+}
+
+// confirmSignInPage: confirming one sign-in waiting for its code
+func (a *App) confirmSignInPage(w http.ResponseWriter, r *http.Request, s *session) {
+	act := confirmAction{Title: "Confirm a sign-in of", Button: "Confirm the sign-in", Pending: true,
+		Effects: []string{
+			"Only if you know this sign-in is theirs: whoever has the password gets in. It is confirmed without the code sent to the address, as if it had been entered.",
+			"A browser still showing the code prompt does not notice, and signing in again there asks for a new code once the account is 48 hours old: the confirmed session serves a browser that kept it, such as the account settings once reloaded.",
+			noticeEffect,
+		}}
+	uid, ref := strings.ToLower(r.PathValue("uid")), strings.ToLower(r.PathValue("ref"))
+	data, _ := a.confirmPage(w, r, s, act, "/users/"+uid+"/sessions/"+ref+"/confirm")
+	if data == nil {
+		return
+	}
+	sessions, _ := data["Sessions"].([]Session)
+	var only []Session
+	for _, se := range pendingSignIns(sessions) {
+		if se.Ref == ref {
+			only = append(only, se)
+		}
+	}
+	if len(only) == 0 && data["Errors"] == nil {
+		http.NotFound(w, r)
+		return
+	}
+	data["Devices"], data["Sessions"], data["Pending"] = nil, nil, only
 	a.render(w, "confirm.html", data)
 }
 

@@ -67,12 +67,17 @@ var fxaPolicySQL = []string{
 	// sessions and devices for the admin UI without their token ids: a session token id
 	// signs in as its account (Bearer fxs_<id>), ffs_admin never reads one
 	// verified: the sign-in code (or the second step) was entered; the methods are
-	// VERIFICATION_METHODS of the auth server (lib/tokens/session_token.js)
+	// VERIFICATION_METHODS of the auth server (lib/tokens/session_token.js). ip: of a sign-in
+	// still waiting for its code, from the security event of that sign-in (with
+	// ACCOUNT_EVENTS_ENABLED only), matched on its verification id, which stays in here
 	`CREATE OR REPLACE SQL SECURITY DEFINER VIEW ffs.sessions AS
 		SELECT s.uid, LOWER(SHA2(s.tokenId, 256)) AS ref, s.uaBrowser, s.uaOS, s.createdAt, s.lastAccessTime,
 			NOT EXISTS (SELECT 1 FROM fxa.unverifiedTokens u WHERE u.tokenId = s.tokenId) AS verified,
 			CASE s.verificationMethod WHEN 0 THEN 'email' WHEN 1 THEN 'email-2fa' WHEN 2 THEN 'totp-2fa'
-				WHEN 3 THEN 'recovery-code' WHEN 4 THEN 'sms-2fa' WHEN 5 THEN 'passkey' END AS verificationMethod
+				WHEN 3 THEN 'recovery-code' WHEN 4 THEN 'sms-2fa' WHEN 5 THEN 'passkey' END AS verificationMethod,
+			(SELECT e.ipAddr FROM fxa.unverifiedTokens u
+				JOIN fxa.securityEvents e ON e.uid = u.uid AND e.tokenVerificationId = u.tokenVerificationId
+				WHERE u.tokenId = s.tokenId ORDER BY e.createdAt LIMIT 1) AS ip
 		FROM fxa.sessionTokens s`,
 	// ref: the session the device signed in with (as in ffs.sessions), for its last use in Redis
 	`CREATE OR REPLACE SQL SECURITY DEFINER VIEW ffs.devices AS
@@ -227,8 +232,8 @@ var fxaPolicySQL = []string{
 		CALL fxa.deleteRecoveryKey_2(p_uid);
 	END`,
 	// confirming the email for someone whose code never arrived: Mozilla's procedure with
-	// the account's own code, which ffs_admin never reads. The sessions stay unconfirmed
-	// (their own codes), a new sign-in sends a sign-in code
+	// the account's own code, which ffs_admin never reads. Its sessions stay unconfirmed
+	// (their own codes): the admin UI confirms those it listed with confirm_session
 	"DROP PROCEDURE IF EXISTS ffs.confirm_email",
 	`CREATE PROCEDURE ffs.confirm_email(p_uid BINARY(16))
 	MODIFIES SQL DATA
@@ -244,6 +249,46 @@ var fxaPolicySQL = []string{
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'the email is already confirmed';
 		END IF;
 		CALL fxa.verifyEmail_9(p_uid, v_code);
+	END`,
+	// confirming a sign-in that never entered its code, for someone the admin vouches for:
+	// what the auth server does with the right code (SessionToken.verify of fxa-shared, one
+	// transaction): the method and time on the session (email-2fa, as the code would), then
+	// Mozilla's verifyToken, which marks the security events of the sign-in confirmed and
+	// deletes its unverified tokens (the session's, and its key fetch token's: one
+	// verification id). Not before the email is confirmed (confirm_email first: FxA reads a
+	// session as confirmed with its email only), nor with two-step authentication on (the
+	// auth server wants the authenticator's code there, never an email code)
+	"DROP PROCEDURE IF EXISTS ffs.confirm_session",
+	`CREATE PROCEDURE ffs.confirm_session(p_uid BINARY(16), p_ref BINARY(32))
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_verified BOOLEAN DEFAULT NULL;
+		DECLARE v_token BINARY(32) DEFAULT NULL;
+		DECLARE v_verification BINARY(16) DEFAULT NULL;
+		DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
+		SELECT emailVerified INTO v_verified FROM fxa.accounts WHERE uid = p_uid;
+		IF v_verified IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
+		END IF;
+		IF NOT v_verified THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errEmailNotConfirmed + `';
+		END IF;
+		IF EXISTS (SELECT 1 FROM fxa.totp WHERE uid = p_uid AND enabled AND verified) THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errTwoStepSignIn + `';
+		END IF;
+		SELECT tokenId INTO v_token FROM fxa.sessionTokens WHERE uid = p_uid AND UNHEX(SHA2(tokenId, 256)) = p_ref;
+		IF v_token IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such session';
+		END IF;
+		SELECT tokenVerificationId INTO v_verification FROM fxa.unverifiedTokens WHERE tokenId = v_token AND uid = p_uid;
+		IF v_verification IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errSignInConfirmed + `';
+		END IF;
+		START TRANSACTION;
+		CALL fxa.verifyTokensWithMethod_3(v_token, 1, FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000));
+		CALL fxa.verifyToken_3(v_verification, p_uid);
+		COMMIT;
 	END`,
 	// deleting an account for good, disabled first (two steps, never one slip): what the
 	// auth server's own deletion removes (deleteAccount_24), then what lives in the other
@@ -396,6 +441,7 @@ var fxaAdminGrants = []string{
 	"GRANT EXECUTE ON PROCEDURE ffs.remove_totp TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.remove_recovery_key TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.confirm_email TO 'ffs_admin'@'%'",
+	"GRANT EXECUTE ON PROCEDURE ffs.confirm_session TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.delete_account TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.delete_unconfirmed TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.prune TO 'ffs_admin'@'%'",
@@ -426,7 +472,7 @@ const (
 // a version (_1): a new FxA release may replace one. fxa-init then installs stand-ins
 // that refuse with a clear message (policySQL) rather than stopping: fxa-auth waits
 // for fxa-init, and the accounts must keep working
-var fxaPinnedProcedures = []string{"revokeAccountTokens_1", "deleteTotpToken_4", "deleteRecoveryKey_2", "verifyEmail_9", "deleteAccount_24", "prune_10"}
+var fxaPinnedProcedures = []string{"revokeAccountTokens_1", "deleteTotpToken_4", "deleteRecoveryKey_2", "verifyEmail_9", "verifyTokensWithMethod_3", "verifyToken_3", "deleteAccount_24", "prune_10"}
 
 var procedureCall = regexp.MustCompile(`CALL (ffs|fxa)\.(\w+)\(`)
 

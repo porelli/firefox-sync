@@ -197,7 +197,12 @@ func needsAttention(in attentionInput) []attention {
 			add(filterLink("unconfirmed"), "Accounts", "%s never confirmed their email.", plural(in.unconfirmed, "account"))
 		}
 		if len(unconfirmedSignIn) > 0 {
-			add(accountsLink(unconfirmedSignIn, "unconfirmed-sign-in", ""), "Accounts", "%s with a sign-in that never entered its email code: someone may have the password.",
+			// to its sessions, where each has Confirm this sign-in… and Sign out…
+			link := "Accounts"
+			if len(unconfirmedSignIn) == 1 {
+				link = "Sessions"
+			}
+			add(accountsLink(unconfirmedSignIn, "unconfirmed-sign-in", "#sessions-card"), link, "%s with a sign-in that never entered its email code: someone may have the password. Confirm it if you know it is them, sign it out otherwise.",
 				plural(len(unconfirmedSignIn), "account"))
 		}
 		if len(in.inactiveDevices) > 0 {

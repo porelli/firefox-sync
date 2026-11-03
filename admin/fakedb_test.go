@@ -210,8 +210,8 @@ func (c *fakeConn) QueryContext(_ context.Context, query string, args []driver.N
 		return &fakeRows{cols: []string{"id", "name", "type", "created", "used", "ref"},
 			rows: [][]driver.Value{{"d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", "Firefox on laptop", "desktop", int64(1700000000000), float64(1700000100000), fakeRef}}}, nil
 	case strings.Contains(query, "FROM ffs.sessions WHERE uid"):
-		return &fakeRows{cols: []string{"ref", "browser", "os", "created", "used", "verified", "method"},
-			rows: [][]driver.Value{{fakeRef, "Firefox", "Linux", int64(1700000000000), int64(1700000200000), int64(0), ""}}}, nil
+		return &fakeRows{cols: []string{"ref", "browser", "os", "created", "used", "verified", "method", "ip"},
+			rows: [][]driver.Value{{fakeRef, "Firefox", "Linux", int64(1700000000000), int64(1700000200000), int64(0), "", "203.0.113.7"}}}, nil
 	case strings.Contains(query, "FROM ffs.account_security"):
 		return &fakeRows{cols: []string{"uid", "totp", "key", "codes", "phone", "passkeys", "password", "keys", "locked", "unverified"},
 			rows: [][]driver.Value{{fakeUID, int64(1), int64(0), int64(7), int64(0), int64(0), int64(1700000000000), int64(1700000000000), int64(0), int64(1)}}}, nil

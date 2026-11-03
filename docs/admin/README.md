@@ -94,7 +94,7 @@ Nothing destructive happens in one click. Everything that deletes something or c
 The confirm pages take an optional reason, which goes into the [event log](monitoring.md#event-log). They cover:
 
 - disabling an account, signing out everywhere, signing out a device or a session;
-- turning off two-step authentication, removing a recovery key, confirming an email;
+- turning off two-step authentication, removing a recovery key, confirming an email and its pending sign-ins, or a sign-in alone;
 - resetting or deleting Sync data, deleting an account, deleting unconfirmed accounts;
 - purging the storage, pruning the accounts database;
 - removing an email or a domain from the allowlist.

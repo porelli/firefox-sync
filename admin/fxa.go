@@ -436,6 +436,9 @@ type Session struct {
 	// the sign-in code (or the second step) was entered, and how: email, totp-2fa...
 	Verified bool
 	Method   string
+	// the device it registered (Firefox names them), and the IP address of a sign-in
+	// waiting for its code (with FXA_ACCOUNT_EVENTS only), "" when unknown
+	Device, IP string
 }
 
 // Devices registered by the browsers of an account (Firefox names them, e.g.
@@ -456,6 +459,7 @@ func (f *FxaDB) Devices(ctx context.Context, uid string) ([]Device, []Session, e
 		return nil, nil, err
 	}
 	var devices []Device
+	names := map[string]string{} // by session ref
 	for rows.Next() {
 		var d Device
 		var name sql.NullString
@@ -468,10 +472,13 @@ func (f *FxaDB) Devices(ctx context.Context, uid string) ([]Device, []Session, e
 		}
 		d.Name, d.CreatedAt, d.LastUsed = name.String, ms(created), latest(ms(int64(last)), used[ref])
 		devices = append(devices, d)
+		if ref != "" {
+			names[ref] = d.Name
+		}
 	}
 	rows.Close()
 	rows, err = f.db.QueryContext(ctx, `SELECT ref, COALESCE(uaBrowser, ''), COALESCE(uaOS, ''), createdAt, COALESCE(lastAccessTime, 0),
-		verified, COALESCE(verificationMethod, '')
+		verified, COALESCE(verificationMethod, ''), COALESCE(ip, '')
 		FROM ffs.sessions WHERE uid = ? ORDER BY createdAt DESC`, id)
 	if err != nil {
 		return nil, nil, err
@@ -481,10 +488,10 @@ func (f *FxaDB) Devices(ctx context.Context, uid string) ([]Device, []Session, e
 	for rows.Next() {
 		var s Session
 		var created, last int64
-		if err := rows.Scan(&s.Ref, &s.Browser, &s.OS, &created, &last, &s.Verified, &s.Method); err != nil {
+		if err := rows.Scan(&s.Ref, &s.Browser, &s.OS, &created, &last, &s.Verified, &s.Method, &s.IP); err != nil {
 			return nil, nil, err
 		}
-		s.CreatedAt, s.LastUsed = ms(created), latest(ms(last), used[s.Ref])
+		s.CreatedAt, s.LastUsed, s.Device = ms(created), latest(ms(last), used[s.Ref]), names[s.Ref]
 		sessions = append(sessions, s)
 	}
 	return devices, sessions, rows.Err()
@@ -660,6 +667,21 @@ func (f *FxaDB) RemoveRecoveryKey(ctx context.Context, uid string) error {
 // ConfirmEmail marks the primary email of an account as confirmed, without its code
 func (f *FxaDB) ConfirmEmail(ctx context.Context, uid string) error {
 	return f.change(ctx, "ffs.confirm_email", uid, "email confirmed")
+}
+
+// ConfirmSession confirms a sign-in waiting for its code (ref: SHA-256 of its token id),
+// as the code would: for someone the admin vouches for
+func (f *FxaDB) ConfirmSession(ctx context.Context, uid, ref string) error {
+	account, err := accountID(uid)
+	if err != nil {
+		return err
+	}
+	hash, err := hex.DecodeString(ref)
+	if err != nil || len(hash) != 32 {
+		return fmt.Errorf("invalid session")
+	}
+	_, err = f.db.ExecContext(ctx, "CALL ffs.confirm_session(?, ?)", account, hash)
+	return procedureError(err)
 }
 
 // change runs a procedure of fxa-init on an account, then drops the account from the

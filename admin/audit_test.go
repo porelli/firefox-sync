@@ -131,6 +131,26 @@ func TestMissingFxaProcedureLeavesStandIns(t *testing.T) {
 	}
 }
 
+func TestConfirmSessionNeedsItsProcedures(t *testing.T) {
+	for _, missing := range []string{"fxa.verifyTokensWithMethod_3", "fxa.verifyToken_3"} {
+		stmts := policySQL([]string{missing})
+		for _, stmt := range fxaPolicySQL {
+			name, ok := strings.CutPrefix(strings.SplitN(stmt, "(", 2)[0], "CREATE PROCEDURE ")
+			if !ok {
+				continue
+			}
+			if stubbed := strings.Contains(policyStmt(t, stmts, name), missing+" is missing"); stubbed != (name == "ffs.confirm_session") {
+				t.Errorf("%s missing: %s stubbed %v", missing, name, stubbed)
+			}
+		}
+	}
+	for _, name := range []string{"verifyTokensWithMethod_3", "verifyToken_3"} {
+		if !strings.Contains(strings.Join(fxaPinnedProcedures, " "), name) {
+			t.Errorf("%s not checked", name)
+		}
+	}
+}
+
 func TestActivityPagesSplitNoMillisecond(t *testing.T) {
 	base := time.Now().Add(-time.Hour).UnixMilli()
 	page := func(rows [][]driver.Value) ([]Event, int64) {

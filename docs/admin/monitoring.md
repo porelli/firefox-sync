@@ -77,7 +77,8 @@ The top of the overview lists what to look at now, one line each, with a link to
 | Sync data changed without metrics from the Sync server: it needs a restart, see [Sync metrics](#sync-metrics) | Activity |
 | a spike of Sync errors, or a database growing fast, see [Errors and growth](#errors-and-growth) | Activity |
 | self-hosted accounts: accounts blocked by the rate limits | Security |
-| accounts that never confirmed their email; accounts with an unconfirmed sign-in | the list of those accounts (one account: its page) |
+| accounts that never confirmed their email | the list of those accounts (one account: its page) |
+| accounts with a sign-in that never entered its email code (someone may have the password), counted until it is confirmed or signed out | the list of those accounts (one account: its sessions, with [Confirm this sign-in… and Sign out…](accounts.md#devices-and-sessions)) |
 | devices not used for `ADMIN_STALE_DAYS` (90) | the list of those accounts (one account: its devices) |
 | the accounts database not pruned for 2 days, see [Maintenance and retention](storage.md#maintenance-and-retention) | Activity |
 | the setup migrations of a database server: one this release needs not recorded there, a user or grant they give missing (drift), the last start stopped at `db-bootstrap`, or a newer version than this release's, see [Setup migrations](#setup-migrations) | Technical details |

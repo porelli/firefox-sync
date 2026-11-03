@@ -26,7 +26,7 @@ The list marks accounts that need a look. They are only marked, never deleted by
 | unconfirmed | email never confirmed after 3 days. Old ones can be deleted, see [Maintenance and retention](storage.md#maintenance-and-retention) |
 | `2-step` | two-step authentication on |
 | `no recovery key` | no account recovery key |
-| `unconfirmed sign-in` | a sign-in that never entered its email code, see [Sign out and disable](#sign-out-and-disable) |
+| `unconfirmed sign-in` | a sign-in that never entered its email code, see [Devices and sessions](#devices-and-sessions) |
 | `blocked` | blocked by the rate limits, see [Helping account owners](#helping-account-owners) |
 | `inactive device` | a device not used for `ADMIN_STALE_DAYS`, marked `inactive` on the account page |
 
@@ -117,7 +117,21 @@ The devices and sessions on the account page say whether they are confirmed, and
 - The stack has it record every use (`LASTACCESSTIME_UPDATES_SAMPLE_RATE=1`). Mozilla samples 30% of the accounts.
 - That cache holds the session token ids: the admin UI turns each into its hash right away and keeps nothing else.
 
-A session that never entered the code sent by email, or the second step, is marked `unconfirmed sign-in`, in the list too. It cannot sync. A sign-in you do not expect there means someone has the password.
+A session that never entered the code sent by email, or the second step, is marked `unconfirmed sign-in`, in the list too. It cannot sync. A sign-in you do not expect there means someone has the password: **Sign out…** it, and have the owner change the password.
+
+**Confirm this sign-in…** next to it is for a sign-in you know is theirs, when the code sent to the address never arrives (a new device asks for one, after the first 48 hours of the account). Whoever has the password gets in with it: its confirm page says so. It does what entering the code does in the accounts database, with Mozilla's own procedures: `verifyTokensWithMethod_3` sets the session's method (`email-2fa`, as the code) and time, then `verifyToken_3` marks the security events of that sign-in confirmed and removes its unconfirmed tokens, the session's and its key fetch token's. Nothing else changes: the admin UI never reads the code, nor the token ids.
+
+It is not offered for:
+
+- an account whose email is not confirmed: **Confirm the email…** confirms its sign-ins too, see [Their confirmation email never arrived](#their-confirmation-email-never-arrived);
+- an account with two-step authentication on: its sign-in waits for the authenticator's code, never an email code. If they lost it, see [They lost their authenticator app](#they-lost-their-authenticator-app).
+
+The browser waiting at the code prompt does not notice. In Mozilla's code (fxa-mono v1.348.x) the code pages never check the session again, and Firefox gets the Sync keys from the page only after the code. The person signs in again there:
+
+- within 48 hours of the sign-up, that sign-in asks for no code (Mozilla's rule for new accounts);
+- later, it asks for a code of its own again. The session you confirmed is then of use to a browser that kept it, such as the account settings once reloaded, not to the Firefox that waited.
+
+The owner gets an email saying that an administrator confirmed a sign-in, with its device, time and IP address, and a link to the account settings to sign it out. The event log has `Confirmed a sign-in of <email> (<device>, <time>)`, with your reason.
 
 ## Helping account owners
 
@@ -148,13 +162,17 @@ It removes the authenticator, the backup codes and the recovery phone in one tra
 
 Click **Remove…** next to it (Mozilla's `deleteRecoveryKey_2`). The confirm page has the same choice to sign out everywhere.
 
-After either of these, the owner gets a plain email from the stack's SMTP server (`FXA_SMTP_SENDER`), such as "An administrator turned off two-step authentication on your account", with a link to the account settings to set it up again. The admins get the alert of the change. Without `FXA_SMTP_HOST` nothing is sent, and the page says so.
+After either of these, or after confirming an email or a sign-in, the owner gets a plain email from the stack's SMTP server (`FXA_SMTP_SENDER`), such as "An administrator turned off two-step authentication on your account", with a link to the account settings to set it up again. The admins get the alert of the change. Without `FXA_SMTP_HOST` nothing is sent, and the page says so.
 
 ### Their confirmation email never arrived
 
 Click **Confirm the email…** on the account page of an unconfirmed account. It skips the proof that whoever signed up owns the address: do it only when you know who they are.
 
-Their current sign-in stays unconfirmed: signing in again sends a new code to the address. Confirming pending sign-ins themselves is not offered.
+The confirm page lists the sign-ins waiting for their code at that moment, usually the one of the sign-up: their device, browser, system, IP address (with the [security history](#security-history) on) and time. They are confirmed too, as [Confirm this sign-in…](#devices-and-sessions) does, and only those: a sign-in made after the page opened is not. (The form posts their refs in its `sessions` field; a script posting to `/accounts/<uid>/confirm-email` without it confirms the email only.)
+
+Then the person signs in again in their Firefox: the page still waiting for the code does not move on by itself. Within 48 hours of the sign-up no code is asked; after that, a new sign-in asks for one.
+
+The owner gets an email saying that an administrator confirmed it, with the sign-ins confirmed. The event log has `Confirmed the email of <email> and its <n> pending sign-ins`, with your reason. A sign-in confirmed in between by its code is said on the page; the email is confirmed anyway.
 
 ### They are blocked
 

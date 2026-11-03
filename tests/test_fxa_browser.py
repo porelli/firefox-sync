@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import warnings
 
 import pytest
 import requests
@@ -231,14 +232,19 @@ def first_uid(first_device):
     return user["uid"]
 
 
-def sign_in(driver):
-    """Click 'Sign in' in the Sync preferences, then fill in the accounts pages."""
+def open_sign_in(driver):
+    """Click 'Sign in' in the Sync preferences: the accounts pages in a new tab"""
     chrome(driver, """
         const done = arguments[arguments.length - 1];
         Services.wm.getMostRecentWindow("navigator:browser").gSync.openFxAEmailFirstPage("preferences").then(() => done(), () => done());
     """)
     time.sleep(3)
     driver.switch_to.window(driver.window_handles[-1])
+
+
+def sign_in(driver):
+    """Click 'Sign in' in the Sync preferences, then fill in the accounts pages."""
+    open_sign_in(driver)
 
     def finished(heading):
         user = signed_in_user(driver)
@@ -299,13 +305,16 @@ def heading_of(driver):
     return driver.execute_script("return (document.querySelector('h1,h2')||{}).innerText||''")
 
 
-def fill_in_accounts_pages(driver, finished, used_codes=()):
+def fill_in_accounts_pages(driver, finished, used_codes=(), email=EMAIL, codes=True):
     """The accounts pages, page after page, until finished(heading) returns something.
-    used_codes: confirmation codes already in the mailbox, not for this sign-in."""
+    used_codes: confirmation codes already in the mailbox, not for this sign-in; codes
+    False: never one (someone whose codes never arrive)."""
     used_codes = set(used_codes)
 
     def next_code():
-        fresh = [c for c in mail_codes(EMAIL) if c not in used_codes]
+        if not codes:
+            return None
+        fresh = [c for c in mail_codes(email) if c not in used_codes]
         if fresh:
             used_codes.add(fresh[0])
             return fresh[0]
@@ -318,7 +327,7 @@ def fill_in_accounts_pages(driver, finished, used_codes=()):
         result = finished(heading)
         if result:
             return result
-        steps.append(f"{driver.current_url.split('?')[0]} {heading!r}: {fill_in_page(driver, EMAIL, next_code)}")
+        steps.append(f"{driver.current_url.split('?')[0]} {heading!r}: {fill_in_page(driver, email, next_code)}")
     raise AssertionError(f"sign-in did not finish ({firefox_version(driver)}), last page: "
                          f"{driver.current_url.split('?')[0]} {heading!r}; the pages and what the test did:\n  "
                          + "\n  ".join(steps[-8:]) + "\n(the last page's text and fields: '==== <this test> failed' in the log)")
@@ -548,3 +557,78 @@ def test_invite_link_fills_in_the_email():
     # filled in the email field, or shown on the sign-up page it moves on to
     assert address in seen, (driver.current_url.split("?")[0], seen[:600])
     print(f"invite link: {driver.current_url.split('?')[0]}, email in a field: {address in values}")
+
+
+def firefox_state(driver):
+    """Where a Firefox is: the page (address, heading), the account and whether it has the Sync keys"""
+    state = chrome(driver, """
+        const done = arguments[arguments.length - 1];
+        const { getFxAccountsSingleton } = ChromeUtils.importESModule("resource://gre/modules/FxAccounts.sys.mjs");
+        const fxa = getFxAccountsSingleton();
+        fxa.getSignedInUser().then(u => u ? fxa.keys.hasKeysForScope("https://identity.mozilla.com/apps/oldsync")
+            .then(keys => done({ user: true, verified: !!u.verified, keys }), () => done({ user: true, verified: !!u.verified, keys: false }))
+          : done({ user: false, verified: false, keys: false }), e => done({ error: String(e) }));
+    """)
+    try:
+        state["page"] = f"{driver.current_url.split('?')[0]} {heading_of(driver)!r}"
+        state["code_prompt"] = bool(visible(driver, CODE_INPUT))
+    except Exception as e:  # (the tab closed)
+        state["page"], state["code_prompt"] = f"none ({type(e).__name__})", False
+    return state
+
+
+def test_admin_confirms_a_sign_up_waiting_for_its_code():
+    # someone whose codes never arrive: Firefox signs up and waits at the code prompt, the
+    # admin confirms the email and that sign-in (docs/admin/accounts.md#their-confirmation-email-never-arrived).
+    # What Firefox does then is recorded (a warning in the summary), not required: the
+    # accounts pages do not poll the session, nor does Firefox in the OAuth flow
+    if not os.environ.get("ADMIN_PASSWORD"):
+        pytest.skip("no admin UI")
+    admin = os.environ.get("ADMIN_URL", "https://admin.fxa.test").rstrip("/")
+    address = f"ffs-browser-{uuid.uuid4().hex[:12]}@example.com"
+    driver = start_firefox()
+    open_sign_in(driver)
+    fill_in_accounts_pages(driver, lambda heading: visible(driver, CODE_INPUT) and not visible(driver, PASSWORD_INPUT) and "code prompt",
+                           email=address, codes=False)
+    http = requests.Session()
+    http.verify = "/caddy-ca/root.crt"
+    http.post(f"{admin}/login", data={"password": os.environ["ADMIN_PASSWORD"]}, timeout=30)
+    found = re.search(r'<tr data-email="' + re.escape(address) + r'">\s*<td><a href="/users/([0-9a-f]{32})">',
+                      http.get(f"{admin}/", params={"q": address}, timeout=30).text)
+    assert found, f"{address} not in the admin UI"
+    uid = found.group(1)
+    page = http.get(f"{admin}/accounts/{uid}/confirm-email", timeout=30).text
+    assert '<table id="confirm-pending"' in page and "Firefox" in page.split('<table id="confirm-pending"')[1].split("</table>")[0], page[:3000]
+    form = page.split('id="confirm">')[1]
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', form))
+    done = http.post(f"{admin}/accounts/{uid}/confirm-email", data={**fields, "reason": "browser test: no code"}, timeout=30).text
+    assert f"Confirmed the email of {address} (uid {uid[:8]}) and its 1 pending sign-in" in done, re.findall(r'class="(?:message|failed)"[^>]*>([^<]*)', done)
+    user = http.get(f"{admin}/users/{uid}", timeout=30).text
+    assert "unconfirmed sign-in" not in user.split('<table id="sessions"')[1].split("</table>")[0], user[-4000:]
+
+    # by itself, for a minute: does the page move on, does Firefox get the keys?
+    seen, by_itself = [], None
+    for _ in range(12):
+        time.sleep(5)
+        state = firefox_state(driver)
+        if not seen or state != seen[-1]:
+            seen.append(state)
+        if state.get("keys") or not state.get("code_prompt"):
+            by_itself = state
+            break
+    # then what the docs tell the person: sign in again in that Firefox (no code: the
+    # account is less than 48 hours old)
+    again = None
+    if not (by_itself and by_itself.get("keys")):
+        try:
+            open_sign_in(driver)
+            fill_in_accounts_pages(driver, lambda heading: firefox_state(driver).get("keys") and "keys", email=address, codes=False)
+            again = firefox_state(driver)
+        except Exception as e:  # (an observation: whatever Firefox shows instead)
+            again = {"failed": f"{type(e).__name__}: {str(e).splitlines()[0][:300] if str(e) else ''}"}
+            try:
+                again.update(firefox_state(driver))
+            except Exception:
+                pass
+    warnings.warn(f"admin confirm, Firefox at the code prompt ({firefox_version(driver)}): by itself within 60 s: "
+                  f"{by_itself or 'nothing'}; states {seen}; signing in again: {again or 'not needed'}")

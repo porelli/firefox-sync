@@ -1101,9 +1101,10 @@ fi
 check "$(as_ffs_admin 'SELECT COUNT(uid) > 0 FROM fxa.accounts')" 1 "ffs_admin reads the accounts"
 check "$(as_ffs_admin 'DELETE FROM fxa.sessionTokens WHERE uid IS NULL' | grep -c 'command denied')" 1 "ffs_admin cannot delete FxA's sessions itself"
 check "$(as_ffs_admin 'UPDATE fxa.accounts SET disabledAt = NULL WHERE uid IS NULL' | grep -c 'command denied')" 1 "ffs_admin cannot change fxa.accounts itself"
+check "$(as_ffs_admin 'DELETE FROM fxa.unverifiedTokens WHERE uid IS NULL' | grep -c 'command denied')" 1 "ffs_admin cannot confirm a sign-in itself (fxa.unverifiedTokens)"
 check "$(as_ffs_admin 'SHOW GRANTS' | grep -cE 'GRANT .*(UPDATE|DELETE|INSERT).* ON `?fxa(_oauth)?`?\.')" 0 "no grant to change FxA's tables for ffs_admin"
-check "$(as_ffs_admin 'SHOW GRANTS' | grep -cE 'GRANT EXECUTE ON PROCEDURE `?ffs`?\.`?(disable_account|enable_account|sign_out_all|delete_account|delete_unconfirmed|prune)`?')" 6 "ffs_admin runs the procedures to disable, enable, sign out, delete and prune"
-check "$(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'ffs' AND ROUTINE_NAME IN ('disable_account', 'enable_account', 'sign_out_all', 'remove_totp', 'remove_recovery_key', 'confirm_email', 'delete_account', 'delete_unconfirmed', 'prune')")" 9 "fxa-policy installed the account procedures"
+check "$(as_ffs_admin 'SHOW GRANTS' | grep -cE 'GRANT EXECUTE ON PROCEDURE `?ffs`?\.`?(disable_account|enable_account|sign_out_all|delete_account|delete_unconfirmed|prune|confirm_email|confirm_session)`?')" 8 "ffs_admin runs the procedures to disable, enable, sign out, delete, prune and confirm"
+check "$(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'ffs' AND ROUTINE_NAME IN ('disable_account', 'enable_account', 'sign_out_all', 'remove_totp', 'remove_recovery_key', 'confirm_email', 'confirm_session', 'delete_account', 'delete_unconfirmed', 'prune')")" 10 "fxa-policy installed the account procedures"
 # what they run on is Mozilla's: no stand-in refusing (a procedure of FxA missing, or no EXECUTE on fxa.*)
 check "$(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'ffs' AND ROUTINE_DEFINITION LIKE '%missing from the accounts database%'")" 0 "no account procedure replaced by a stand-in"
 # the procedures take the database's time, whatever ffs_admin passes: no fresh account
@@ -1111,6 +1112,7 @@ check "$(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE
 newest=$(fxa_sql "SELECT HEX(uid) FROM fxa.accounts ORDER BY createdAt DESC LIMIT 1")
 check "$(as_ffs_admin "CALL ffs.delete_unconfirmed(UNHEX('${newest}'), 9000000000000000)" | grep -c 'not an account unconfirmed since before the cutoff')" 1 "ffs.delete_unconfirmed refuses an account created today"
 recent_events() { fxa_sql "SELECT COUNT(*) FROM fxa.securityEvents WHERE createdAt > UNIX_TIMESTAMP() * 1000 - 43200000"; }
+check "$(as_ffs_admin "CALL ffs.confirm_session(UNHEX('${newest}'), UNHEX(SHA2('none', 256)))" | grep -cE 'no such session|the email is not confirmed|two-step authentication is on')" 1 "ffs.confirm_session refuses a session that is not the account's"
 events_before=$(recent_events)
 as_ffs_admin "CALL ffs.prune(9000000000000000, 9000000000000000)" > /dev/null
 check "$(recent_events) $(fxa_sql "SELECT CAST(value AS SIGNED) <= UNIX_TIMESTAMP() * 1000 FROM fxa.dbMetadata WHERE name = 'prune-last-ran'")" "${events_before} 1" "ffs.prune keeps the security events of the last day and records the database's time"

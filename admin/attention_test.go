@@ -136,7 +136,7 @@ func TestNeedsAttention(t *testing.T) {
 		{"update", func(in *attentionInput) { in.components[1].Latest = "0.22.0" }, "#health", "Sync server 0.22.0 is out, 0.21.1 runs here."},
 		{"blocked members", func(in *attentionInput) { in.accounts[0].Blocked = true }, "/security", "1 account blocked by the rate limits."},
 		{"unconfirmed", func(in *attentionInput) { in.unconfirmed = 3 }, "/?show=unconfirmed#accounts", "3 accounts never confirmed their email."},
-		{"one unconfirmed sign-in", func(in *attentionInput) { in.accounts[0].Security.UnverifiedSessions = 1 }, "/users/" + fakeUID, "1 account with a sign-in that never entered its email code"},
+		{"one unconfirmed sign-in", func(in *attentionInput) { in.accounts[0].Security.UnverifiedSessions = 1 }, "/users/" + fakeUID + "#sessions-card", "1 account with a sign-in that never entered its email code: someone may have the password. Confirm it if you know it is them, sign it out otherwise."},
 		{"unconfirmed sign-ins", func(in *attentionInput) {
 			in.accounts = two
 			in.accounts[0].Security.UnverifiedSessions, in.accounts[1].Security.UnverifiedSessions = 1, 2
@@ -529,7 +529,7 @@ func TestOverviewSearchAttentionAndDevices(t *testing.T) {
 	c, _ := passwordSession(t, app, h)
 	page := getPage(h, "/", c).Body.String()
 	// the fake account has an unconfirmed sign-in and an old device
-	for _, want := range []string{`<section id="attention">`, `with a sign-in that never entered its email code`, `href="/users/` + fakeUID + `">Accounts</a>`,
+	for _, want := range []string{`<section id="attention">`, `with a sign-in that never entered its email code`, `href="/users/` + fakeUID + `#sessions-card">Sessions</a>`,
 		`1 device of 1 account not used for 30 days`, `href="/users/` + fakeUID + `#devices"`, `<span class="badge">1 inactive device</span>`,
 		`<tr data-email="` + fakeEmail + `">`, `<span id="accounts-total">1</span>`} {
 		if !strings.Contains(page, want) {

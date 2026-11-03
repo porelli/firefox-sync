@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
+	"fmt"
 	"net"
 	"net/url"
 	"regexp"
@@ -112,13 +114,13 @@ func TestLastUsedFromRedis(t *testing.T) {
 
 func TestOwnerNotice(t *testing.T) {
 	at := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
-	subject, body := ownerNotice("remove-totp", fakeEmail, "https://accounts.example.com", at)
+	subject, body := ownerNotice("remove-totp", fakeEmail, "", "https://accounts.example.com", at)
 	if subject != "Two-step authentication turned off on your account" ||
 		!strings.HasPrefix(body, "An administrator turned off two-step authentication on your account alice@example.com on 2026-10-13 09:30 (UTC)") ||
 		!strings.Contains(body, "https://accounts.example.com/settings\r\n") || !strings.Contains(body, "If you did not ask for this") {
 		t.Errorf("%q\n%s", subject, body)
 	}
-	if subject, body := ownerNotice("remove-recovery-key", fakeEmail, "https://accounts.example.com", at); !strings.Contains(subject, "recovery key") ||
+	if subject, body := ownerNotice("remove-recovery-key", fakeEmail, "", "https://accounts.example.com", at); !strings.Contains(subject, "recovery key") ||
 		!strings.Contains(body, "removed the account recovery key of your account alice@example.com") {
 		t.Errorf("%q\n%s", subject, body)
 	}
@@ -139,7 +141,7 @@ func TestOwnerNotice(t *testing.T) {
 		strings.Contains(page, "Sessions signed out") {
 		t.Errorf("confirm page: %s", page)
 	}
-	if page := getPage(h, "/accounts/"+fakeUID+"/confirm-email", c).Body.String(); !strings.Contains(page, "skips the proof") || strings.Contains(page, "sign_out") {
+	if page := getPage(h, "/accounts/"+fakeUID+"/confirm-email", c).Body.String(); !strings.Contains(page, "skips the proof") || strings.Contains(page, `name="sign_out"`) {
 		t.Errorf("confirm page: %s", page)
 	}
 	w := post(h, "/accounts/"+fakeUID+"/remove-totp", url.Values{"csrf": {s.csrf}, "sign_out": {"1"}, "reason": {"lost phone"}}, c, nil)
@@ -176,11 +178,11 @@ func TestOwnerNotice(t *testing.T) {
 		t.Errorf("%q %q", s.message, s.failed)
 	}
 	// an address that would add headers is not written to
-	if _, err := app.notifyOwner(&FxaAccount{Email: "a@example.com\r\nBcc: x@example.com"}, "remove-totp", at); err == nil {
+	if _, err := app.notifyOwner(&FxaAccount{Email: "a@example.com\r\nBcc: x@example.com"}, "remove-totp", "", at); err == nil {
 		t.Error("notice to a forged address")
 	}
 	app.mailer = &mailer
-	if _, err := app.notifyOwner(&FxaAccount{Email: "Mallory <a@example.com>"}, "remove-totp", at); err == nil {
+	if _, err := app.notifyOwner(&FxaAccount{Email: "Mallory <a@example.com>"}, "remove-totp", "", at); err == nil {
 		t.Error("notice to a name")
 	}
 }
@@ -334,6 +336,9 @@ func TestSecretsStayInTheDatabase(t *testing.T) {
 		if body == "" {
 			t.Fatalf("no view %s", view)
 		}
+		// the IP address of a pending sign-in: its security event found by the verification
+		// id, compared in the view, never one of its columns
+		body = strings.ReplaceAll(body, "e.tokenVerificationId = u.tokenVerificationId", "")
 		for _, secret := range []string{"sharedSecret", "codeHash", "recoveryData", "phoneNumber", "publicKey", "emailCode", "tokenData", "authSalt", "verifyHash", "wrapWrapKb",
 			// the security history: its JSON may hold the recovery phone's number
 			"additionalInfo", "ipAddrHmac", "tokenVerificationId"} {
@@ -359,6 +364,251 @@ func TestSecretsStayInTheDatabase(t *testing.T) {
 	}
 	if !strings.Contains(policyStmt(t, fxaPolicySQL, "ffs.confirm_email"), "CALL fxa.verifyEmail_9(p_uid, v_code)") {
 		t.Error("confirm_email")
+	}
+	// confirming a sign-in: what fxa-shared's SessionToken.verify does, in one transaction,
+	// after the refusals (email not confirmed, two-step on, not pending)
+	session := policyStmt(t, fxaPolicySQL, "ffs.confirm_session")
+	start, commit := strings.Index(session, "START TRANSACTION"), strings.Index(session, "COMMIT")
+	if start < 0 || commit < start || !strings.Contains(session[start:commit], "CALL fxa.verifyTokensWithMethod_3(v_token, 1, ") ||
+		!strings.Contains(session[start:commit], "CALL fxa.verifyToken_3(v_verification, p_uid)") ||
+		strings.Index(session[start:commit], "verifyTokensWithMethod_3") > strings.Index(session[start:commit], "verifyToken_3(") {
+		t.Errorf("confirm_session: %s", session)
+	}
+	for _, refusal := range []string{errEmailNotConfirmed, errTwoStepSignIn, errSignInConfirmed} {
+		if i := strings.Index(session, refusal); i < 0 || i > start || len(refusal) > 128 || strings.ContainsAny(refusal, "'\\") {
+			t.Errorf("confirm_session: refusal %q", refusal)
+		}
+	}
+	if !strings.Contains(session, "UNHEX(SHA2(tokenId, 256)) = p_ref") || !strings.Contains(session, "fxa.totp WHERE uid = p_uid AND enabled AND verified") {
+		t.Errorf("confirm_session: %s", session)
+	}
+	if !strings.Contains(strings.Join(fxaAdminGrants, "\n"), "GRANT EXECUTE ON PROCEDURE ffs.confirm_session TO 'ffs_admin'@'%'") {
+		t.Error("no grant on confirm_session")
+	}
+}
+
+// confirmable: the fake account without two-step authentication, its sign-in pending
+func confirmable(query string, _ []driver.Value) *fakeRows {
+	if strings.Contains(query, "FROM ffs.account_security") {
+		return &fakeRows{cols: []string{"uid", "totp", "key", "codes", "phone", "passkeys", "password", "keys", "locked", "unverified"},
+			rows: [][]driver.Value{{fakeUID, int64(0), int64(1), int64(0), int64(0), int64(0), int64(1700000000000), int64(1700000000000), int64(0), int64(1)}}}
+	}
+	return nil
+}
+
+func TestConfirmEmailConfirmsPendingSignIns(t *testing.T) {
+	server, _ := newFakeSMTP(t, false, false)
+	mailer := server.alerter(nil).Mailer
+	mailer.user = ""
+	redis, _ := redisWith(t, "")
+	fake := &fakeFxa{}
+	app := testApp()
+	app.fxa, app.sync, app.alerter, app.mailer, app.contentURL = fake.db(redis), &SyncDB{db: sql.OpenDB(fake)}, &Alerter{}, &mailer, "https://accounts.example.com"
+	h := app.routes()
+	c, s := passwordSession(t, app, h)
+	app.alerter.take()
+	signedIn := formatTime(time.UnixMilli(1700000000000), adminZone)
+
+	// the confirm page lists the sign-in waiting for its code, and its form only that one
+	page := getPage(h, "/accounts/"+fakeUID+"/confirm-email", c).Body.String()
+	for _, want := range []string{"Confirm the email of alice@example.com?", "skips the proof", "The sign-in below, waiting for its code, is confirmed too",
+		`<table id="confirm-pending" aria-label="Sign-ins confirmed">`, "<td>Firefox on laptop</td><td>Firefox</td><td>Linux</td><td>203.0.113.7</td>",
+		`<input type="hidden" name="sessions" value="` + fakeRef + `">`, "does not notice: the person signs in again there"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("confirm page: no %q", want)
+		}
+	}
+	if strings.Contains(page, "Sessions signed out") {
+		t.Error("confirm page: lists sessions signed out")
+	}
+
+	w := post(h, "/accounts/"+fakeUID+"/confirm-email", url.Values{"csrf": {s.csrf}, "sessions": {fakeRef}, "reason": {"code never arrived"}}, c, nil)
+	want := "Confirmed the email of alice@example.com (uid 0123abcd) and its 1 pending sign-in (owner notified)"
+	if w.Header().Get("Location") != "/users/"+fakeUID || s.failed != "" || s.message != want {
+		t.Errorf("%s %q %q", w.Header().Get("Location"), s.message, s.failed)
+	}
+	var calls []string
+	var hash []byte
+	for i, st := range fake.statements() {
+		if strings.HasPrefix(st, "CALL ") {
+			calls = append(calls, st)
+		}
+		if st == "CALL ffs.confirm_session(?, ?)" {
+			hash, _ = fake.args[i][1].([]byte)
+		}
+	}
+	if len(calls) != 2 || calls[0] != "CALL ffs.confirm_email(?)" || calls[1] != "CALL ffs.confirm_session(?, ?)" || hex.EncodeToString(hash) != fakeRef {
+		t.Errorf("statements %q, ref %x", calls, hash)
+	}
+	server.mu.Lock()
+	rcpts, data := server.rcpts, server.data
+	server.mu.Unlock()
+	if len(rcpts) != 1 || !strings.Contains(data, "Subject: Your account's email confirmed by an administrator\r\n") ||
+		!strings.Contains(data, "were confirmed too: Firefox on laptop, "+signedIn+", from 203.0.113.7.") {
+		t.Errorf("notice to %q: %s", rcpts, data)
+	}
+	if lines := alerts(t, app.alerter, 1); len(lines) != 1 || !strings.HasSuffix(lines[0], "admin: "+want+" by admin (password): code never arrived") {
+		t.Errorf("alerts %q", lines)
+	}
+
+	// without the field (a script): the email only
+	fake.execs, fake.args = nil, nil
+	post(h, "/accounts/"+fakeUID+"/confirm-email", url.Values{"csrf": {s.csrf}}, c, nil)
+	if st := fake.statements(); len(st) != 1 || st[0] != "CALL ffs.confirm_email(?)" ||
+		s.message != "Confirmed the email of alice@example.com (uid 0123abcd) (owner notified)" {
+		t.Errorf("%q %q %q", st, s.message, s.failed)
+	}
+	// not a ref: nothing done
+	fake.execs, fake.args = nil, nil
+	post(h, "/accounts/"+fakeUID+"/confirm-email", url.Values{"csrf": {s.csrf}, "sessions": {fakeRef + " x"}}, c, nil)
+	if st := fake.statements(); len(st) != 0 || s.failed != "invalid session" {
+		t.Errorf("%q %q", st, s.failed)
+	}
+
+	// a sign-in confirmed in between (its code entered): the email is, the rest said
+	fake.execs, fake.args = nil, nil
+	fake.execErr = func(query string, _ []driver.Value) error {
+		if query == "CALL ffs.confirm_session(?, ?)" {
+			return &mysql.MySQLError{Number: 1644, SQLState: [5]byte{'4', '5', '0', '0', '0'}, Message: errSignInConfirmed}
+		}
+		return nil
+	}
+	post(h, "/accounts/"+fakeUID+"/confirm-email", url.Values{"csrf": {s.csrf}, "sessions": {fakeRef}}, c, nil)
+	if s.message != "Confirmed the email of alice@example.com (uid 0123abcd) (owner notified)" || s.failed != "a sign-in: "+errSignInConfirmed {
+		t.Errorf("%q %q", s.message, s.failed)
+	}
+
+	// the email confirmed already (a stale page): no sign-in confirmed, nobody emailed
+	server.mu.Lock()
+	server.rcpts = nil
+	server.mu.Unlock()
+	fake.execs, fake.args = nil, nil
+	fake.execErr = func(query string, _ []driver.Value) error {
+		if query == "CALL ffs.confirm_email(?)" {
+			return &mysql.MySQLError{Number: 1644, SQLState: [5]byte{'4', '5', '0', '0', '0'}, Message: "the email is already confirmed"}
+		}
+		return nil
+	}
+	app.alerter.take()
+	post(h, "/accounts/"+fakeUID+"/confirm-email", url.Values{"csrf": {s.csrf}, "sessions": {fakeRef}}, c, nil)
+	server.mu.Lock()
+	rcpts = server.rcpts
+	server.mu.Unlock()
+	if st := fake.statements(); len(st) != 1 || s.failed != "the email is already confirmed" || s.message != "" || len(rcpts) != 0 {
+		t.Errorf("%q %q %q %q", st, s.message, s.failed, rcpts)
+	}
+	if lines := app.alerter.take(); len(lines) != 0 {
+		t.Errorf("alerts %q", lines)
+	}
+}
+
+func TestConfirmASignIn(t *testing.T) {
+	server, _ := newFakeSMTP(t, false, false)
+	mailer := server.alerter(nil).Mailer
+	mailer.user = ""
+	redis, _ := redisWith(t, "")
+	fake := &fakeFxa{}
+	app := testApp()
+	app.fxa, app.sync, app.alerter, app.mailer, app.contentURL = fake.db(redis), &SyncDB{db: sql.OpenDB(fake)}, &Alerter{}, &mailer, "https://accounts.example.com"
+	h := app.routes()
+	c, s := passwordSession(t, app, h)
+	app.alerter.take()
+	signedIn := formatTime(time.UnixMilli(1700000000000), adminZone)
+	link := `<a href="/users/` + fakeUID + `/sessions/` + fakeRef + `/confirm"`
+
+	// two-step authentication on (the fake's): the sign-in waits for the authenticator
+	if page := getPage(h, "/users/"+fakeUID, c).Body.String(); strings.Contains(page, link) {
+		t.Error("Confirm this sign-in with two-step authentication on")
+	}
+	fake.answer = confirmable
+	if page := getPage(h, "/users/"+fakeUID, c).Body.String(); !strings.Contains(page, link+` aria-label="Confirm the sign-in of Firefox">Confirm this sign-in…</a>`) {
+		t.Errorf("no Confirm this sign-in: %s", page)
+	}
+	page := getPage(h, "/users/"+fakeUID+"/sessions/"+fakeRef+"/confirm", c).Body.String()
+	for _, want := range []string{"Confirm a sign-in of alice@example.com?", "Only if you know this sign-in is theirs: whoever has the password gets in",
+		"<td>Firefox on laptop</td><td>Firefox</td><td>Linux</td><td>203.0.113.7</td>", `action="/users/` + fakeUID + `/sessions/` + fakeRef + `/confirm" id="confirm"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("confirm page: no %q", want)
+		}
+	}
+	if w := getPage(h, "/users/"+fakeUID+"/sessions/"+strings.Repeat("ab", 32)+"/confirm", c); w.Code != 404 {
+		t.Errorf("another session: %d", w.Code)
+	}
+
+	w := post(h, "/users/"+fakeUID+"/sessions/"+fakeRef+"/confirm", url.Values{"csrf": {s.csrf}, "reason": {"new laptop, called me"}}, c, nil)
+	want := "Confirmed a sign-in of alice@example.com (uid 0123abcd) (Firefox on laptop, " + signedIn + ") (owner notified)"
+	if w.Header().Get("Location") != "/users/"+fakeUID || s.failed != "" || s.message != want {
+		t.Errorf("%s %q %q", w.Header().Get("Location"), s.message, s.failed)
+	}
+	if st := fake.statements(); len(st) != 1 || st[0] != "CALL ffs.confirm_session(?, ?)" {
+		t.Errorf("statements %q", st)
+	}
+	server.mu.Lock()
+	rcpts, data := server.rcpts, server.data
+	server.mu.Unlock()
+	if len(rcpts) != 1 || !strings.Contains(data, "Subject: A sign-in to your account confirmed by an administrator\r\n") ||
+		!strings.Contains(data, "without the code sent to this address: Firefox on laptop, "+signedIn+", from 203.0.113.7.") {
+		t.Errorf("notice to %q: %s", rcpts, data)
+	}
+	if lines := alerts(t, app.alerter, 1); len(lines) != 1 || !strings.HasSuffix(lines[0], "admin: "+want+" by admin (password): new laptop, called me") {
+		t.Errorf("alerts %q", lines)
+	}
+
+	// refused (two-step turned on in between): nobody emailed, nothing recorded
+	server.mu.Lock()
+	server.rcpts = nil
+	server.mu.Unlock()
+	fake.execs, fake.args = nil, nil
+	fake.execErr = func(query string, _ []driver.Value) error {
+		return &mysql.MySQLError{Number: 1644, SQLState: [5]byte{'4', '5', '0', '0', '0'}, Message: errTwoStepSignIn}
+	}
+	post(h, "/users/"+fakeUID+"/sessions/"+fakeRef+"/confirm", url.Values{"csrf": {s.csrf}}, c, nil)
+	server.mu.Lock()
+	rcpts = server.rcpts
+	server.mu.Unlock()
+	if s.failed != errTwoStepSignIn || s.message != "" || len(rcpts) != 0 {
+		t.Errorf("%q %q %q", s.message, s.failed, rcpts)
+	}
+	if lines := app.alerter.take(); len(lines) != 0 {
+		t.Errorf("alerts %q", lines)
+	}
+	// not a ref
+	if err := app.fxa.ConfirmSession(t.Context(), fakeUID, "x"); err == nil {
+		t.Error("ref x")
+	}
+}
+
+func TestSignInLabel(t *testing.T) {
+	at := time.UnixMilli(1700000000000)
+	when := formatTime(at, adminZone)
+	for _, c := range []struct {
+		s    Session
+		want string
+	}{
+		{Session{Device: "Firefox on laptop", Browser: "Firefox", OS: "Linux", CreatedAt: at, IP: "203.0.113.7"}, "Firefox on laptop, " + when + ", from 203.0.113.7"},
+		{Session{Browser: "Firefox", OS: "Linux", CreatedAt: at}, "Firefox on Linux, " + when},
+		{Session{OS: "Linux", CreatedAt: at}, "Linux, " + when},
+		{Session{CreatedAt: at}, "an unknown browser, " + when},
+	} {
+		if got := signInLabel(c.s, true); got != c.want {
+			t.Errorf("%q, want %q", got, c.want)
+		}
+	}
+	if got := signInLabel(Session{Browser: "Firefox", CreatedAt: at, IP: "203.0.113.7"}, false); got != "Firefox, "+when {
+		t.Errorf("without the IP: %q", got)
+	}
+	if refs, err := signInRefs(strings.ToUpper(fakeRef) + ", " + fakeRef); err != nil || len(refs) != 1 || refs[0] != fakeRef {
+		t.Errorf("%q %v", refs, err)
+	}
+	var many []string
+	for i := range maxConfirmedSignIns + 1 {
+		many = append(many, fmt.Sprintf("%064x", i))
+	}
+	if _, err := signInRefs(strings.Join(many[:maxConfirmedSignIns], " ")); err != nil {
+		t.Errorf("at the cap: %v", err)
+	}
+	if _, err := signInRefs(strings.Join(many, " ")); err == nil {
+		t.Error("over the cap")
 	}
 }
 

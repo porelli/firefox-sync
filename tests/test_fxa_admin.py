@@ -815,26 +815,92 @@ def test_secondary_emails_listed(admin):
     assert res.status_code == 303 and res.headers["Location"] == f"/users/{session.uid}", (res.status_code, res.headers.get("Location"))
 
 
+def session_ref(session):
+    """The ref of a session in the admin UI: SHA-256 of its token id"""
+    import hashlib
+    return hashlib.sha256(bytes.fromhex(HawkTokenAuth(session.token, "sessionToken").id)).hexdigest()
+
+
+def session_status(session):
+    """What the accounts service says of a session: verified (the email and the sign-in), sessionVerified, emailVerified"""
+    res = requests.get(f"{AUTH}/v1/recovery_email/status", auth=HawkTokenAuth(session.token, "sessionToken"), timeout=30)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def pending_sign_ins(admin):
+    """The accounts the Needs attention line counts, with a sign-in waiting for its code (0: no line)"""
+    for text, href in attention_of(admin.page()):
+        if "with a sign-in that never entered its email code" in text:
+            assert "Confirm it if you know it is them" in text, text
+            return int(text.split()[0]), href
+    return 0, None
+
+
 def test_confirm_an_email_from_the_admin_ui(admin):
     address, password = email("example.com"), uuid.uuid4().hex
     client = Client(server_url=f"{AUTH}/v1")
     created = int(time.time() * 1000)
+    # signed up, the code never entered: its sign-in waits too
     session = client.create_account(address, password, keys=True)
-    uid = session.uid
+    uid, ref = session.uid, session_ref(session)
+    assert session_status(session)["sessionVerified"] is False
+    waiting, _ = pending_sign_ins(admin)
+    assert waiting >= 1
     assert f'href="/accounts/{uid}/confirm-email"' in admin.get(f"/users/{uid}")
-    page, done = admin.confirm(f"/accounts/{uid}/confirm-email")
-    assert "skips the proof" in page and "signing in again sends a new code" in page, page[:3000]
-    assert f"Confirmed the email of {address} (uid {uid[:8]})" in done
+    page, done = admin.confirm(f"/accounts/{uid}/confirm-email", reason="ffs test: the code never arrived")
+    assert "skips the proof" in page and "The sign-in below, waiting for its code, is confirmed too" in page, page[:3000]
+    assert '<table id="confirm-pending"' in page and f'name="sessions" value="{ref}"' in page, page[:3000]
+    want = f"Confirmed the email of {address} (uid {uid[:8]}) and its 1 pending sign-in (owner notified)"
+    assert want in done, done[:3000]
     assert '<span class="visually-hidden">, email confirmed</span></td>' in account_row(admin, address) and "/confirm-email" not in admin.get(f"/users/{uid}")
-    # a new sign-in, and Sync
-    again = signed_in(client, address, password)
-    bearer_token, key_id = sync_token(again, created)
+    # the sign-in of the sign-up confirmed as its code would: its keys, and Sync
+    status = session_status(session)
+    assert status["verified"] is True and status["sessionVerified"] is True and status["emailVerified"] is True, status
+    bearer_token, key_id = sync_token(session, created)
     assert tokenserver(bearer_token, key_id).status_code == 200
-    assert ("admin", f"Confirmed the email of {address} (uid {uid[:8]}) by admin (password)") in admin.events(kind="admin", q=address)
+    assert "unconfirmed sign-in" not in account_row(admin, address)
+    assert pending_sign_ins(admin)[0] == waiting - 1
+    assert ("admin", f"{want} by admin (password): ffs test: the code never arrived") in admin.events(kind="admin", q=address)
+    assert mails(address, 'subject:"email confirmed by an administrator"'), "no notice to the owner"
+    # a new sign-in works as for any account
+    signed_in(client, address, password)
     # confirmed already (a second click, a stale page): refused, recorded once
     res = admin.http.post(f"{ADMIN}/accounts/{uid}/confirm-email", data={"csrf": admin.csrf()}, timeout=30)
     assert failed(res.text) == ["the email is already confirmed"], failed(res.text)
     assert len([d for _, d in admin.events(kind="admin", q=address) if d.startswith("Confirmed the email")]) == 1
+
+
+def test_confirm_a_new_sign_in_from_the_admin_ui(admin, fxa_db):
+    client, session, address, password = member(keys=True)
+    uid = session.uid
+    # older than the 48 hours in which Mozilla skips the sign-in code of a new account
+    sql(fxa_db, "UPDATE fxa.accounts SET createdAt = createdAt - 3 * 86400000 WHERE normalizedEmail = :e", e=address)
+    second = client.login(address, password, keys=True)
+    assert not second.verified, "no sign-in code asked"
+    ref = session_ref(second)
+    # only for the sign-in waiting: not for the first one, confirmed with its code
+    page = admin.get(f"/users/{uid}")
+    assert f'href="/users/{uid}/sessions/{ref}/confirm"' in page and f'/sessions/{session_ref(session)}/confirm"' not in page, page[-6000:]
+    waiting, href = pending_sign_ins(admin)
+    assert waiting >= 1 and (waiting > 1 or href == f"/users/{uid}#sessions-card"), (waiting, href)
+
+    page, done = admin.confirm(f"/users/{uid}/sessions/{ref}/confirm", reason="ffs test: a new laptop, they called")
+    assert f"Confirm a sign-in of {address}?" in page and "whoever has the password gets in" in page and '<table id="confirm-pending"' in page, page[:3000]
+    confirmed = re.search(r"Confirmed a sign-in of " + re.escape(f"{address} (uid {uid[:8]})") + r" \(([^()]+)\) \(owner notified\)", html.unescape(done))
+    assert confirmed, done[:3000]
+    assert session_status(second)["sessionVerified"] is True
+    second.fetch_keys()
+    authorize(second)
+    page = admin.get(f"/users/{uid}")
+    assert f'/sessions/{ref}/confirm"' not in page and "unconfirmed sign-in" not in account_row(admin, address)
+    assert pending_sign_ins(admin)[0] == waiting - 1
+    assert mails(address, 'subject:"A sign-in to your account confirmed by an administrator"'), "no notice to the owner"
+    assert ("admin", f"{confirmed.group(0)} by admin (password): ffs test: a new laptop, they called") in admin.events(kind="admin", q=address)
+    # again (a stale page): refused, nothing recorded
+    res = admin.http.post(f"{ADMIN}/users/{uid}/sessions/{ref}/confirm", data={"csrf": admin.csrf()}, timeout=30)
+    assert failed(res.text) == ["the sign-in is already confirmed"], failed(res.text)
+    assert len([d for _, d in admin.events(kind="admin", q=address) if d.startswith("Confirmed a sign-in")]) == 1
 
 
 def session_cells(admin, uid, session):

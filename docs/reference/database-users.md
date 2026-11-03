@@ -87,12 +87,12 @@ What the policy user installs at every start ([admin/fxainit.go](/admin/fxainit.
 | `ffs.signup_refusal()`, `ffs.signup_allowed()` | the functions that check an email against the policy and the max accounts | `EXECUTE` |
 | a trigger on `fxa.accounts` | refuses the new account through `ffs.signup_refusal` | none |
 | views `ffs.sessions`, `ffs.devices`, `ffs.emails`, `ffs.account_security`, `ffs.security_events`, `ffs.schema_levels`, `ffs.database_sizes` | what the admin UI lists, without any secret or token id | `SELECT` |
-| procedures `ffs.disable_account`, `ffs.enable_account`, `ffs.sign_out_all`, `ffs.sign_out_device`, `ffs.sign_out_session`, `ffs.remove_totp`, `ffs.remove_recovery_key`, `ffs.confirm_email`, `ffs.delete_account`, `ffs.delete_unconfirmed`, `ffs.prune` | what the admin UI changes, run with the policy user's privileges | `EXECUTE` |
+| procedures `ffs.disable_account`, `ffs.enable_account`, `ffs.sign_out_all`, `ffs.sign_out_device`, `ffs.sign_out_session`, `ffs.remove_totp`, `ffs.remove_recovery_key`, `ffs.confirm_email`, `ffs.confirm_session`, `ffs.delete_account`, `ffs.delete_unconfirmed`, `ffs.prune` | what the admin UI changes, run with the policy user's privileges | `EXECUTE` |
 | `fxa.accounts` | Mozilla's table | `SELECT` on `uid`, `email`, `emailVerified`, `createdAt` and `disabledAt` only |
 
 `ffs_admin` has nothing else: no `UPDATE` or `DELETE` on Mozilla's tables. `fxa-policy` revokes its grants first at every start, so grants from older releases go.
 
-The procedures call Mozilla's own, and `fxa-policy` checks at every start that these exist: `revokeAccountTokens_1`, `deleteTotpToken_4`, `deleteRecoveryKey_2`, `verifyEmail_9`, `deleteAccount_24` and `prune_10`. When one is missing (a newer accounts release renamed it, or the policy user has no `EXECUTE` on `fxa`), it logs a warning naming it, and the accounts keep working. What needs it in the admin UI then answers with an error: disabling and signing out, turning off two-step authentication, removing a recovery key, confirming an email, deleting accounts and pruning ([Sign out and disable](../admin/accounts.md#sign-out-and-disable)).
+The procedures call Mozilla's own, and `fxa-policy` checks at every start that these exist: `revokeAccountTokens_1`, `deleteTotpToken_4`, `deleteRecoveryKey_2`, `verifyEmail_9`, `verifyTokensWithMethod_3`, `verifyToken_3`, `deleteAccount_24` and `prune_10`. When one is missing (a newer accounts release renamed it, or the policy user has no `EXECUTE` on `fxa`), it logs a warning naming it, and the accounts keep working. What needs it in the admin UI then answers with an error: disabling and signing out, turning off two-step authentication, removing a recovery key, confirming an email or a sign-in, deleting accounts and pruning ([Sign out and disable](../admin/accounts.md#sign-out-and-disable)).
 
 Why each grant:
 

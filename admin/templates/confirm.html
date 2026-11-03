@@ -33,6 +33,17 @@
 {{if not (or .Devices .Sessions)}}<p class="hint">No devices or sessions to sign out.</p>{{end}}
 {{end}}
 
+{{if .Action.Pending}}
+{{if .Pending}}
+<h2 class="h3">Sign-ins confirmed</h2>
+<div class="scroll"><table id="confirm-pending" aria-label="Sign-ins confirmed">
+  <thead><tr><th>Device</th><th>Browser</th><th>System</th><th>IP address</th><th>Signed in</th></tr></thead>
+  <tbody>{{range .Pending}}<tr><td>{{.Device}}</td><td>{{.Browser}}</td><td>{{.OS}}</td><td>{{.IP}}</td><td><time datetime="{{stamp .CreatedAt}}">{{when .CreatedAt}}</time></td></tr>{{end}}</tbody>
+</table></div>
+<p class="hint">The IP address is known with the security history on (<code>FXA_ACCOUNT_EVENTS=true</code>).</p>
+{{end}}
+{{end}}
+
 {{/* open when deleting: the rows are what goes */}}
 {{with .Rows}}
 <details class="fold"{{if $.Action.TypeEmail}} open{{end}}>
