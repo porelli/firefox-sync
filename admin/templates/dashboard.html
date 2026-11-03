@@ -2,7 +2,7 @@
 <main id="main">
 {{template "flash" .}}
 {{/* the worst health state: a component down beats a warning */}}
-{{$down := false}}{{$warn := false}}{{range .Health}}{{if and (not .Up) (not .Starting)}}{{if .Warn}}{{$warn = true}}{{else}}{{$down = true}}{{end}}{{end}}{{end}}
+{{$down := false}}{{$warn := false}}{{range .Health}}{{if and (not .Up) (not .Starting) (not .Waiting)}}{{if .Warn}}{{$warn = true}}{{else}}{{$down = true}}{{end}}{{end}}{{end}}
 {{with .Status}}{{if .Down}}{{$down = true}}{{end}}{{if .Warn}}{{$warn = true}}{{end}}{{end}}
 
 <div class="page-head">
@@ -25,8 +25,8 @@
 <ul class="stats" aria-label="At a glance">
   {{with .Status}}<li><a class="stat{{if .Down}} is-bad{{else if .Warn}} is-warn{{end}}" href="#health-card">
     <span class="label">{{template "icon" "heart"}}Health</span>
-    <span class="value">{{if .Down}}{{.Down}} down{{else if .Warn}}{{.Warn}} to check{{else}}{{.Up}}{{end}} <small>{{if or .Down .Warn}}{{.Up}} of {{.Total}} parts working{{else}}of {{.Total}} parts working{{end}}</small></span>
-    <span class="sub">{{if .Down}}{{.FirstDown}} is down{{if gt .Down 1}}, {{.Down}} parts in all{{end}}{{else if .Warn}}{{.FirstWarn}} needs a look{{else if .Starting}}{{.Starting}} starting{{else}}All up{{end}}</span></a></li>{{end}}
+    <span class="value">{{if .Down}}{{.Down}} down{{else if .Warn}}{{.Warn}} to check{{else}}{{.Up}}{{end}} <small>{{if or .Down .Warn}}{{.Up}} of {{.Total}} parts working{{else}}of {{.Total}} parts working{{end}}{{with .Starting}}, {{.}} starting{{end}}{{with .Waiting}}, {{.}} waiting{{end}}</small></span>
+    <span class="sub">{{if .Down}}{{.FirstDown}} is down{{if gt .Down 1}}, {{.Down}} parts in all{{end}}{{else if .Warn}}{{.FirstWarn}} needs a look{{else if or .Starting .Waiting}}Starting up: not counted as down yet{{else}}All up{{end}}</span></a></li>{{end}}
   {{/* the limits: amber at 90% and when full (limits.go), the same as the health rows */}}
   {{with .Sync}}{{$state := .Limit.State}}<li><a class="stat{{if ne $state "ok"}} is-warn{{end}}" href="#sync">
     <span class="label">{{template "icon" "users"}}Using Sync</span>
@@ -238,22 +238,22 @@
 <section class="card" id="health-card" aria-labelledby="health-title">
   <div class="card-head">
     <h2 id="health-title">Health</h2>
-    {{if $down}}<span class="disabled">down</span>{{else if $warn}}<span class="pill warn">to check</span>{{else if and .Status .Status.Starting}}<span class="pill">starting</span>{{else}}<span class="ok">all up</span>{{end}}
+    {{if $down}}<span class="disabled">down</span>{{else if $warn}}<span class="pill warn">to check</span>{{else if and .Status (or .Status.Starting .Status.Waiting)}}<span class="pill">starting</span>{{else}}<span class="ok">all up</span>{{end}}
     <form method="post" action="/health/check" class="inline check-now">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="health">
       <button type="submit" class="secondary">Check now</button>
     </form>
   </div>
   {{/* what is wrong up front; the table of every part folded */}}
-  {{if or $down $warn}}<ul class="problems" id="health-problems">{{range .Health}}{{if and (not .Up) (not .Starting)}}
+  {{if or $down $warn}}<ul class="problems" id="health-problems">{{range .Health}}{{if and (not .Up) (not .Starting) (not .Waiting)}}
     <li><span class="problem-name">{{.Name}}</span> {{if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span>{{else}}<span class="disabled">down</span>{{end}}{{with .Error}} <span class="hint">{{.}}</span>{{end}}</li>{{end}}{{end}}
   </ul>{{end}}
   <details class="fold">
-    <summary>{{with .Status}}{{if or .Down .Warn .Starting}}{{.Up}} of {{.Total}} parts up{{with .Starting}}, {{.}} starting{{end}}{{else}}All {{.Total}} parts up{{end}}{{else}}All the parts{{end}}<span class="hint"> · versions{{if $.Sizes}}, database sizes{{end}}</span></summary>
+    <summary>{{with .Status}}{{if or .Down .Warn .Starting .Waiting}}{{.Up}} of {{.Total}} parts up{{with .Starting}}, {{.}} starting{{end}}{{with .Waiting}}, {{.}} waiting{{end}}{{else}}All {{.Total}} parts up{{end}}{{else}}All the parts{{end}}<span class="hint"> · versions{{if $.Sizes}}, database sizes{{end}}</span></summary>
     {{with $.Sizes}}<p class="hint" id="db-sizes">Databases: {{range $name, $size := .}}{{$name}} {{bytes $size}}; {{end}}history on the Activity page.</p>{{end}}
     <div class="scroll"><table id="health" aria-label="Health of the components">
       <thead><tr><th>Part</th><th>Status</th><th>Version</th><th>Checked</th></tr></thead>
-      <tbody>{{range .Health}}<tr><td>{{.Name}}</td><td>{{if .Up}}<span class="ok">up</span>{{with .Detail}} <span class="hint">{{.}}</span>{{end}}{{else if .Starting}}<span class="pill">starting</span> <span class="hint">{{.Error}}</span>{{else if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span> <span class="hint">{{.Error}}</span>{{else}}<span class="disabled">down</span> <span class="hint">{{.Error}}</span>{{end}}</td><td>{{.Version}}{{if .Latest}} <span class="update">{{.Latest}} available</span>{{end}}</td><td class="checked">{{template "checked" .}}</td></tr>{{end}}</tbody>
+      <tbody>{{range .Health}}<tr><td>{{.Name}}</td><td>{{if .Up}}<span class="ok">up</span>{{with .Detail}} <span class="hint">{{.}}</span>{{end}}{{else if .Starting}}<span class="pill">starting</span> <span class="hint">since {{clock .Since}}, {{for .Since}}: {{.Error}}</span>{{else if .Waiting}}<span class="pill">waiting</span> <span class="hint">{{.Error}}</span>{{else if .Warn}}<span class="pill warn">{{or .Label "problem"}}</span> <span class="hint">{{.Error}}</span>{{else}}<span class="disabled">down</span> <span class="hint">{{.Error}}</span>{{end}}</td><td>{{.Version}}{{if .Latest}} <span class="update">{{.Latest}} available</span>{{end}}</td><td class="checked">{{template "checked" .}}</td></tr>{{end}}</tbody>
     </table></div>
   </details>
 </section>

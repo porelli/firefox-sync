@@ -29,6 +29,8 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 	"date":  func(t time.Time) string { return formatTime(t, adminZone) },
 	"when":  func(t time.Time) string { return whenIn(t, adminZone) },
 	"clock": func(t time.Time) string { return clock(t, time.Now(), adminZone) },
+	// for: how long since t, short ("40 s", "3 min")
+	"for":   func(t time.Time) string { return shortSince(time.Since(t)) },
 	"zone":  func() string { return adminZone.String() },
 	"bytes": humanBytes,
 	"email": breakEmail,
@@ -59,6 +61,17 @@ const timeLayout = "2006-01-02 15:04"
 
 func formatTime(t time.Time, zone *time.Location) string {
 	return t.In(zone).Format(timeLayout)
+}
+
+// shortSince: a short duration, "40 s", "3 min", "2 h"
+func shortSince(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%d s", max(int(d/time.Second), 0))
+	case d < time.Hour:
+		return fmt.Sprintf("%d min", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%d h", int(d/time.Hour))
 }
 
 // clock: the time of the day of t ("18:25"), with its day when not today ("Jan 2 18:25")
@@ -764,8 +777,8 @@ func (a *App) base(s *session) map[string]any {
 // healthSummary: the health light of every page and the Health tile of the overview,
 // from the last round of checks (nothing is checked here)
 type healthSummary struct {
-	// Starting: not up yet since the start, in the startup grace (neither up nor down)
-	Total, Up, Down, Warn, Starting int
+	// Starting, Waiting: neither up nor down (startupGrace)
+	Total, Up, Down, Warn, Starting, Waiting int
 	// what is wrong, the first of each: "Sync server", "Sign-up gate"
 	FirstDown, FirstWarn string
 }
@@ -796,10 +809,15 @@ func summarize(rows []Component) *healthSummary {
 	for _, c := range rows {
 		switch {
 		case c.Up:
-		case c.Starting:
-			// the hidden ones (setup checks) not counted while starting
-			if !c.Hidden && !c.Limit {
+		case c.pending():
+			// the hidden ones (setup checks) not counted while pending
+			if c.Hidden || c.Limit {
+				break
+			}
+			if c.Starting {
 				h.Starting++
+			} else {
+				h.Waiting++
 			}
 		case c.Warn:
 			h.Warn++
@@ -815,7 +833,7 @@ func summarize(rows []Component) *healthSummary {
 		// the hidden ones are setup checks, the limits no parts: in the count only when
 		// they fail
 		quiet := c.Hidden || c.Limit
-		if !quiet || (!c.Up && !c.Starting) {
+		if !quiet || (!c.Up && !c.pending()) {
 			h.Total++
 		}
 		if c.Up && !quiet {

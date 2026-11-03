@@ -24,16 +24,26 @@ Each row of the Health table, and each [setup check](#setup-checks), says when i
 
 ### Startup grace
 
-The admin UI starts with the stack, often before the parts it checks: after `docker compose up -d` of the whole stack, or on Kubernetes, where the pods start in any order (the chart's admin UI waits only for the Sync server and the accounts API). For the first 10 minutes after it starts:
+The admin UI starts with the stack, often before the parts it checks: after `docker compose up -d` of the whole stack, or on Kubernetes, where the pods start in any order (the chart's admin UI waits only for the Sync server and the accounts API). A part that does not answer is then in one of these states:
 
-- A part that has not been up since the start shows `starting`, with what it saw, not `down`. The health light, the Health tile and [Needs attention](#needs-attention) do not count it, it raises no event or alert, and it has no `ffs_up` sample.
-- A check that goes through a part (the public Sync URL through the Sync server, the public accounts pages, accounts API and profile server through their services, the sign-up gate and the sign-in keys of `FXA_OAUTH_SERVER_URL` through the accounts API) waits for that part: `checked as soon as Sync server is up`. Once it is up, the check runs in the same round.
-- A round runs every 10 seconds while something is starting, not every minute.
-- A part that comes up from `starting` raises no `is back up`: its down was never announced.
+| State | When | Counted, alerted |
+|---|---|---|
+| `starting` | its container is starting: the runtime says so (its pod not Ready yet, nothing restarted). Shown with since when: `since 18:25, 40 s` | no, for at most 10 minutes since its pod started |
+| `waiting` | nothing says whether it is starting, and it has not answered since the admin UI started, in the first 10 minutes. Or a check that goes through a part `starting` or `waiting`: `waiting for Sync server` | no, until 10 minutes after the admin UI started |
+| `down` | everything else: it answered once and fails now, the runtime says it crashed, or it is still not up after those 10 minutes | yes, an event and an alert |
 
-A part that was up once and then fails, in the 10 minutes or after, is down at once, with its event and alert. One still not up after 10 minutes is checked again then and is down, with its event and alert: a real failure always shows.
+A crash is down at once, never `starting`: a container that restarted, exited with an error, or waits in `CrashLoopBackOff`, `Error`, `OOMKilled`, `ImagePullBackOff` and the like (also an init container), with what the runtime says: `Profile server is down: connection refused; fxa-profile-5d9 (profile): CrashLoopBackOff, 4 restarts, last exit code 1 (Error)`. A pod Ready whose check fails is down too.
 
-Whenever a part comes back up (after the start too), the checks that go through it run again at once, and so does any failing public check. While they fail after the start or after such a return, they run again after 30 seconds, then 1, 2 and 5 minutes, then at their usual retry (every 5 rounds). The public URL behind a reverse proxy that is still starting does not stay down for 5 minutes.
+What the admin UI can see of the containers (the Configuration page says it, `State of the containers`):
+
+- **Kubernetes with `admin.podStatus: true`**: the pods of the release, read through the Kubernetes API with a Role that may only get and list pods in the release's namespace. Its token is mounted in the admin UI's container alone. Off by default: the chart's pods do not use the Kubernetes API otherwise.
+- **Kubernetes without it, docker compose, the Quadlets**: nothing. The Docker or Podman socket would give the admin UI the host (or your account), so it never gets it. A part that has not answered yet is `waiting`, and its row says why the precise state is not known and when it turns down: `no answer yet since the admin UI started, and the admin UI does not see the Docker containers (...) (connection refused): down if still so at 18:35`. A part that crashes after it answered once is down at once, as always.
+
+Which checks go through which part: the public Sync URL through the Sync server; the public accounts pages, accounts API and profile server through their services; the sign-up gate and, with self-hosted accounts, the sign-in keys of `FXA_OAUTH_SERVER_URL` through the accounts API. They wait while that part is `starting` or `waiting`, and run in the same round once it is up. A part down takes them down with it.
+
+While something is `starting` or `waiting`, a round runs every 10 seconds, not every minute. A part that comes up from either raises no `is back up`: its down was never announced. The health light says "Starting", the Health tile "15 of 16 parts working, 1 starting"; [Needs attention](#needs-attention) lists neither.
+
+Whenever a part comes back up (after the start too), the checks that go through it run again at once, and so does any failing public check. While they fail after the start or after such a return, they run again after 30 seconds, then 1, 2 and 5 minutes, then at their usual retry (every 5 rounds): the public URL behind a reverse proxy that is still starting does not stay down for 5 minutes.
 
 ## Needs attention
 
@@ -315,7 +325,8 @@ scrape_configs:
 
 | Metric | |
 |---|---|
-| `ffs_up{component}` | 1 if the component answers its health check; no sample while it is starting (see [Startup grace](#startup-grace)) |
+| `ffs_up{component}` | 1 if the component answers its health check, else 0 (also while it is starting) |
+| `ffs_component_state{component,state}` | 1, with the state of the component: `up`, `starting`, `waiting`, `warn` or `down`, see [Startup grace](#startup-grace). Alert on `state="down"` rather than on `ffs_up == 0` to leave out a start |
 | `ffs_sync_accounts`, `ffs_sync_max_users` | accounts using Sync, and the limit (no `ffs_sync_max_users` with `SYNC_MAX_USERS=unlimited`) |
 | `ffs_sync_near_max_users`, `ffs_sync_full` | 1 when 90% of max users or more are taken, 1 when all are |
 | `ffs_sync_pending_accounts`, `ffs_sync_refusals_dropped` | the accounts refused by [invite-only Sync](../limits.md#sync_allowed_accounts) and waiting for an approval, and those refused without a record because the list was full (only while it is on) |

@@ -1142,6 +1142,17 @@ fxa_e2e() {
   helm install "${install[@]}" --wait --timeout 20m || fail "helm install with the accounts did not get Ready"
   check "helm install with the accounts (${backend}$([[ -z ${external} ]] || echo ", your own server extdb-fxa, existingSecret ffs-own"), Sync on ${SYNC_BACKEND}) Ready, in a namespace enforcing PodSecurity baseline"
   admin_test_env
+  # admin.podStatus (tests/helm/fxa-values.yaml): the admin UI reads the pods with its Role, a
+  # round of checks after its start (docs/admin/monitoring.md#startup-grace)
+  local pod_log=""
+  for _ in $(seq 1 30); do
+    pod_log=$(kubectl logs "deploy/${FULL}-admin" -c admin 2> /dev/null | grep 'the state of the pods')
+    [[ -n "${pod_log}" ]] && break
+    sleep 2
+  done
+  [[ "${pod_log}" == *"the state of the pods: read through the Kubernetes API (admin.podStatus)" ]] \
+    || fail "the admin UI does not read the pods (admin.podStatus): ${pod_log:-nothing in its log}"
+  check "admin.podStatus: the admin UI reads the pods of the release"
 
   # (what both parts use)
   local auth="deploy/${FULL}-fxa-auth" redis="deploy/${FULL}-fxa-redis" profile="deploy/${FULL}-fxa-profile"

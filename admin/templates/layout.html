@@ -30,7 +30,7 @@
 {{end}}
 {{/* light: the health of the components on every page, from the last checks; down looks worse than a warning */}}
 {{define "light"}}{{with .}}<a class="light {{if .Down}}is-bad{{else if .Warn}}is-warn{{else}}is-ok{{end}}" href="/#health-card" id="health-light">
-    <span class="dot" aria-hidden="true"></span>{{if .Down}}<span class="n">{{.Down}}</span><span class="word"><span class="part"> part{{if gt .Down 1}}s{{end}}</span> down</span>{{else if .Warn}}<span class="n">{{.Warn}}</span><span class="word"><span class="part"> part{{if gt .Warn 1}}s{{end}}</span> to check</span>{{else}}<span class="word">All up</span>{{end}}<span class="sr"> (health of the server)</span></a>{{end}}{{end}}
+    <span class="dot" aria-hidden="true"></span>{{if .Down}}<span class="n">{{.Down}}</span><span class="word"><span class="part"> part{{if gt .Down 1}}s{{end}}</span> down</span>{{else if .Warn}}<span class="n">{{.Warn}}</span><span class="word"><span class="part"> part{{if gt .Warn 1}}s{{end}}</span> to check</span>{{else if or .Starting .Waiting}}<span class="word">Starting</span>{{else}}<span class="word">All up</span>{{end}}<span class="sr"> (health of the server)</span></a>{{end}}{{end}}
 {{define "flash"}}{{if .Message}}<p class="message" role="status">{{.Message}}</p>{{end}}
 {{if .Failed}}<p class="failed" role="alert">{{.Failed}}</p>{{end}}
 {{range .Errors}}<p class="failed" role="alert">{{.}}</p>{{end}}{{end}}

@@ -741,7 +741,7 @@ Service 63 (a DNS label)
 
 {{/*
 What every pod of the chart has in its spec: no service account token (no pod uses the
-Kubernetes API), the pull secrets and the scheduling of the values (imagePullSecrets,
+Kubernetes API, but the admin UI with admin.podStatus, which mounts its own), the pull secrets and the scheduling of the values (imagePullSecrets,
 nodeSelector, tolerations, affinity), for nindent at the level of the pod's spec
 */}}
 {{- define "firefox-sync.podSpec" -}}
@@ -963,4 +963,27 @@ setup migrations of the scope ("root", "scope": sync or fxa) at /ffs-db, as comp
       - key: {{ replace "/" "_" . }}
         path: {{ . }}
       {{- end }}
+{{- end }}
+
+{{/*
+admin.podStatus: the admin UI's projected volume of its service account, what Kubernetes
+automounts (the token, the cluster's CA, the namespace), in its container alone
+*/}}
+{{- define "firefox-sync.kubeApiVolume" -}}
+- name: kube-api
+  projected:
+    sources:
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 3607
+      - configMap:
+          name: kube-root-ca.crt
+          items:
+            - key: ca.crt
+              path: ca.crt
+      - downwardAPI:
+          items:
+            - path: namespace
+              fieldRef:
+                fieldPath: metadata.namespace
 {{- end }}

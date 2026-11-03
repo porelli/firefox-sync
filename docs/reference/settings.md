@@ -114,6 +114,7 @@ What it does: [Admin UI](../admin/README.md).
 | `ADMIN_METRICS_TOKEN` | `admin.metricsToken` (Secret: `ADMIN_METRICS_TOKEN`) | empty: off | the bearer token of the Prometheus metrics at `/metrics`: [Prometheus](../admin/monitoring.md#prometheus) | |
 | `ADMIN_UPDATE_CHECK` | `admin.updateCheck` | `true` | compare the running versions with the newest releases on GitHub | |
 | `ADMIN_PUBLIC_CHECK` | `admin.publicCheck` | `true` | every hour, check the public `https://` URLs, their certificates and the sign-up gate: [Public checks](../admin/monitoring.md#public-checks) | |
+| – | `admin.podStatus` | `false` | the admin UI reads the pods of the release (a Role to get and list pods in its namespace) to tell a part starting from a crashed one right after a start; off: a time-bounded wait, see [Startup grace](../admin/monitoring.md#startup-grace). Docker and Podman: never (their socket would give the admin UI the host) | |
 | `ADMIN_STALE_DAYS` | `admin.staleDays` | `90` | accounts not synced for this many days are marked inactive | |
 | `ADMIN_RETENTION_DAYS` | `admin.retentionDays` | `30` | days of metrics and events kept: [Maintenance and retention](../admin/storage.md#maintenance-and-retention) | |
 | `ADMIN_AUDIT_RETENTION_DAYS` | `admin.auditRetentionDays` | `365` | days the events of the admins (who did what) and the backup runs are kept | |

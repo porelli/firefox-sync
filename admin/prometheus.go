@@ -87,16 +87,18 @@ func (a *App) prometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.health != nil {
 		b.WriteString("# HELP ffs_up Whether a component answers its health check\n# TYPE ffs_up gauge\n")
-		for _, c := range a.health.Components() {
-			// starting (the startup grace): neither up nor down yet, no sample
-			if c.Starting {
-				continue
-			}
+		components := a.health.Components()
+		for _, c := range components {
 			up := 0
 			if c.Up {
 				up = 1
 			}
 			fmt.Fprintf(&b, "ffs_up{component=\"%s\"} %d\n", promLabel(c.Name), up)
+		}
+		// up, starting, waiting (the startup grace: neither up nor down), warn or down
+		b.WriteString("# HELP ffs_component_state The state of a component: 1 for its state (up, starting, waiting, warn, down)\n# TYPE ffs_component_state gauge\n")
+		for _, c := range components {
+			fmt.Fprintf(&b, "ffs_component_state{component=\"%s\",state=\"%s\"} 1\n", promLabel(c.Name), c.state())
 		}
 		b.WriteString("# HELP ffs_database_bytes Size of a database\n# TYPE ffs_database_bytes gauge\n")
 		sizes := a.health.Sizes()

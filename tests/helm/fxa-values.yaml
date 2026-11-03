@@ -33,6 +33,8 @@ admin:
     users: "@example.com"
   alertEmail: admin@fxa.test
   metricsToken: ffs-test-metrics-token
+  # the state of the pods for the health checks after a start (docs/admin/monitoring.md#startup-grace)
+  podStatus: true
   ingress:
     enabled: true
     className: traefik

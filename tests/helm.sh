@@ -525,6 +525,21 @@ TPL
   [[ "$(env_of | jq -r '.ADMIN_K8S_FULLNAME + " " + .ADMIN_K8S_SECRET')" == "test-release-firefox-sync test-release-firefox-sync" ]] \
     || fail "default names: $(env_of)"
   check "ADMIN_K8S_FULLNAME, ADMIN_K8S_SECRET as the chart names them (fullnameOverride, existingSecret), ADMIN_K8S_CHART_VERSION the chart's version"
+  # admin.podStatus (docs/admin/monitoring.md#startup-grace): off, no service account, no token; on, a
+  # Role that only gets and lists pods, its token in the admin container alone
+  local pods_of
+  pods_of() { helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/admin-values.yaml" "$@" | manifests; }
+  [[ "$(pods_of | jq -c '[.[] | select(.kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding")] | length')" == 0 ]] \
+    && [[ "$(pods_of | jq -c '[.[] | select(.kind == "Deployment") | .spec.template.spec | select(.automountServiceAccountToken != false or .serviceAccountName != null)] | length')" == 0 ]] \
+    || fail "admin.podStatus off: a service account or a token"
+  [[ "$(pods_of --set admin.podStatus=true | jq -c '[.[] | select(.kind == "Role")][0].rules')" == '[{"apiGroups":[""],"resources":["pods"],"verbs":["get","list"]}]' ]] \
+    && [[ "$(pods_of --set admin.podStatus=true | jq -r '.[] | select(.kind == "RoleBinding") | "\(.roleRef.name) \(.subjects[0].name)"')" == "test-release-firefox-sync-admin-pods test-release-firefox-sync-admin" ]] \
+    && [[ "$(pods_of --set admin.podStatus=true | jq -r '.[] | select(.kind == "Deployment" and .metadata.name == "test-release-firefox-sync-admin") | .spec.template.spec
+      | "\(.automountServiceAccountToken) \(.serviceAccountName) \([.containers[] | select(.volumeMounts[]?.name == "kube-api") | .name] | join(",")) \([.initContainers[]? | select(.volumeMounts[]?.name == "kube-api")] | length)"')" \
+      == "false test-release-firefox-sync-admin admin 0" ]] \
+    && [[ "$(pods_of --set admin.podStatus=true | jq -r '.[] | select(.kind == "Deployment") | .spec.template.spec.containers[].env[]? | select(.name == "ADMIN_K8S_POD_STATUS") | .value')" == true ]] \
+    || fail "admin.podStatus on: the Role, its binding, the token in the admin container alone, ADMIN_K8S_POD_STATUS"
+  check "admin.podStatus: off nothing of the Kubernetes API, on a Role to get and list pods and the token in the admin container alone"
   # where the chart was published (the annotation the publish job sets), for helm upgrade
   [[ "$(sed -n 's|^  org.firefox-sync/chart: ||p' "${CHART_DIR}/Chart.yaml")" == oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync ]] \
     || fail "Chart.yaml: the annotation org.firefox-sync/chart is not the public repository's chart"

@@ -65,7 +65,8 @@ var configVars = map[string]bool{
 	// the admin UI itself
 	"ADMIN_LISTEN": false, "GATE_LISTEN": false, "METRICS_LISTEN": false, "ADMIN_EXPORT_PORT": false, "ADMIN_GATE_EXPORT_PORT": false,
 	"ADMIN_DEPLOYMENT": false, "ADMIN_K8S_RELEASE": false, "ADMIN_K8S_NAMESPACE": false,
-	"ADMIN_K8S_FULLNAME": false, "ADMIN_K8S_SECRET": false, "ADMIN_K8S_CHART": false, "ADMIN_K8S_CHART_VERSION": false, "ADMIN_TZ": false, "TZ": false, "SSL_CERT_FILE": false, "SSL_CERT_DIR": false,
+	"ADMIN_K8S_FULLNAME": false, "ADMIN_K8S_SECRET": false, "ADMIN_K8S_CHART": false, "ADMIN_K8S_CHART_VERSION": false, "ADMIN_K8S_POD_STATUS": false,
+	"KUBERNETES_SERVICE_HOST": false, "KUBERNETES_SERVICE_PORT": false, "ADMIN_TZ": false, "TZ": false, "SSL_CERT_FILE": false, "SSL_CERT_DIR": false,
 	// email, alerts, metrics and checks
 	"SMTP_HOST": false, "SMTP_PORT": false, "SMTP_USER": false, "SMTP_SECURE": false, "SMTP_SENDER": false, "SMTP_INSECURE_AUTH": false,
 	"ALERT_EMAIL": false, "ALERT_INTERVAL_SECONDS": false, "HEALTH_CHECK_SECONDS": false, "METRICS_FLUSH_SECONDS": false,
@@ -74,6 +75,14 @@ var configVars = map[string]bool{
 	// maintenance, retention, backups
 	"ADMIN_STALE_DAYS": false, "ADMIN_UNCONFIRMED_HOURS": false, "ADMIN_RETENTION_DAYS": false, "ADMIN_AUDIT_RETENTION_DAYS": false,
 	"ADMIN_PURGE": false, "ADMIN_DELETE_UNCONFIRMED_DAYS": false, "ADMIN_SIGNUP_BURST": false, "BACKUP_TIME": false, "BACKUP_KEEP": false,
+}
+
+// containersSeen: whether the admin UI reads the state of the containers, or why not
+func containersSeen(d deployment) string {
+	if why := d.noRuntime(); why != "" {
+		return "not seen: " + why
+	}
+	return "read from the pods of the release (admin.podStatus)"
 }
 
 // configLookup: a variable as the page may show it: a secret as "set" (or "" when not
@@ -543,6 +552,7 @@ func (a *App) configPage(w http.ResponseWriter, r *http.Request, s *session) {
 	admin.Rows = append(admin.Rows,
 		fact("Time zone", zone, "of the pages and the alerts", "ADMIN_TZ", "TZ").unset(),
 		fact("Runs with", a.deployment.name(), "the commands the pages show", deployVars...),
+		fact("State of the containers", containersSeen(a.deployment), "starting or crashed: the health checks right after a start (docs/admin/monitoring.md#startup-grace)", "ADMIN_K8S_POD_STATUS"),
 		fact("Version", version, "of the admin UI"))
 
 	// email

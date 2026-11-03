@@ -849,33 +849,50 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 0 ]; then
     check "$?" 0 "external database server with the users of db/mysql/"
   fi
 fi
+# admin_overview: the overview of the admin UI on ADMIN_EXPORT_PORT, signed in with the
+# password (the Secure cookie, which curl keeps for localhost); empty while it does not answer
+admin_port=$(grep '^ADMIN_EXPORT_PORT=' "${ENV_FILE}" | cut -d= -f2 | sed 's/.*://')
+admin_jar=${WORK}/admin-cookies
+admin_overview() {
+  local page
+  page=$(curl -s -m 10 -b "${admin_jar}" "http://localhost:${admin_port}/")
+  if ! grep -q 'Sign out' <<< "${page}"; then
+    curl -s -m 10 -o /dev/null -c "${admin_jar}" --data-urlencode "password=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)" "http://localhost:${admin_port}/login"
+    page=$(curl -s -m 10 -b "${admin_jar}" "http://localhost:${admin_port}/")
+    grep -q 'Sign out' <<< "${page}" || return 0
+  fi
+  echo "${page}"
+}
 dc up -d > "${WORK}/up.log" 2>&1 || { echo "FAIL: compose up"; grep -iE "error|fail" "${WORK}/up.log" | tail -10; }
-echo "== waiting for FxA (slow under emulation)"
+echo "== waiting for FxA (slow under emulation), the admin UI's overview meanwhile"
+# right after docker compose up -d of the whole stack the admin UI starts before the Sync server
+# and the accounts: what has not answered yet is "waiting" (compose: it cannot see the
+# containers), never "down" (docs/admin/monitoring.md#startup-grace)
+start_pending=no start_down=""
 for _ in $(seq 1 600); do
   [ "$(state fxa-content Health.Status)" = healthy ] && [ "$(state syncstorage Health.Status)" = healthy ] && break
   [ "$(state fxa-migrations ExitCode)" != "" ] && [ "$(state fxa-migrations ExitCode)" != 0 ] && break
   crashing=""
   for s in fxa-auth fxa-content fxa-profile; do [ "$(state "${s}" RestartCount || echo 0)" -ge 3 ] 2> /dev/null && crashing="${s}"; done
   [ -n "${crashing}" ] && { echo "${crashing} keeps restarting"; break; }
+  overview=$(admin_overview)
+  grep -qE '<span class="pill">(waiting|starting)</span>' <<< "${overview}" && start_pending=yes
+  start_down+=$(grep -oE '[A-Z][A-Za-z ]+( \([A-Z_]+\))? is down' <<< "${overview}" | sort -u | paste -sd, -)
   sleep 2
 done
 check "$(state fxa-migrations ExitCode)" 0 "FxA database migrations"
 check "$(state fxa-auth Health.Status)" healthy "FxA auth server healthy"
 check "$(state fxa-content Health.Status)" healthy "FxA content server healthy"
 check "$(state syncstorage Health.Status)" healthy "syncstorage healthy"
-echo "== right after docker compose up -d of the whole stack: no public check or sign-in keys down (startup grace)"
-# the admin UI starts before the Sync server and the accounts: the checks that go through
-# them wait for them, run as soon as they are up, and nothing of the start is alerted
-# (docs/admin/monitoring.md#startup-grace). Within 60 s of the stack healthy: never "is
-# down" on the overview, then the public URLs reachable and the keys answering
-admin_port=$(grep '^ADMIN_EXPORT_PORT=' "${ENV_FILE}" | cut -d= -f2 | sed 's/.*://')
-admin_jar=${WORK}/startup-cookies
+check "${start_pending} ${start_down:-none}" "yes none" "while the stack started: parts waiting on the admin UI's overview, none down"
+echo "== right after the start: all up within 60 s, nothing of the start alerted (startup grace)"
+# the checks that go through the Sync server and the accounts waited for them and run as
+# soon as they are up: within 60 s of the stack healthy never "is down" for the public
+# checks or the sign-in keys, then the public URLs reachable and the keys answering
 startup_down="" startup_up=no signed_in=no
 for _ in $(seq 1 30); do
-  # (signed in once the admin UI answers: with the Secure cookie, which curl keeps for localhost)
-  [ "${signed_in}" = yes ] || curl -s -o /dev/null -c "${admin_jar}" --data-urlencode "password=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)" "http://localhost:${admin_port}/login"
-  overview=$(curl -s -b "${admin_jar}" "http://localhost:${admin_port}/")
-  if ! grep -q 'Sign out' <<< "${overview}"; then
+  overview=$(admin_overview)
+  if [ -z "${overview}" ]; then
     sleep 2
     continue
   fi
@@ -889,9 +906,34 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 hooks=$(dc exec -T syncstorage curl -s http://notify-sink:8000/_received)
-startup_alerts=$(grep -oE '(Public [a-z ]+|Sign-in keys \(FXA_OAUTH_SERVER_URL\)) is down' <<< "${hooks}" | sort -u | paste -sd, -)
+startup_alerts=$(grep -oE '[A-Z][A-Za-z ]+( \([A-Z_]+\))? is down' <<< "${hooks}" | sort -u | paste -sd, -)
 check "${signed_in} ${startup_down:-none} ${startup_up} ${startup_alerts:-none}" "yes none yes none" \
-  "within 60 s of the stack healthy: no public check or sign-in keys down on the overview, all up, nothing alerted of the start"
+  "within 60 s of the stack healthy: no public check or sign-in keys down on the overview, all up, nothing of the start alerted"
+echo "== a part that crash-loops: down within a minute, never starting or waiting"
+# fxa-profile with an entrypoint that exits at once, restarted by Docker: it answered before,
+# so it is down at the next round; then as it was, healthy, up again on the overview
+printf 'services:\n  fxa-profile:\n    entrypoint: ["sh", "-c", "echo broken on purpose; exit 3"]\n' > "${WORK}/broken-profile.yml"
+dc -f "${WORK}/broken-profile.yml" up -d --no-deps fxa-profile > "${WORK}/broken-profile.log" 2>&1
+crash_down=no crash_pending=no
+for _ in $(seq 1 30); do
+  overview=$(admin_overview)
+  grep -qE '<td>Profile server</td><td><span class="pill">(starting|waiting)</span>' <<< "${overview}" && crash_pending=yes
+  if grep -q 'Profile server is down' <<< "${overview}"; then
+    crash_down=yes
+    break
+  fi
+  sleep 2
+done
+dc up -d --no-deps fxa-profile > "${WORK}/fixed-profile.log" 2>&1
+for _ in $(seq 1 90); do [ "$(state fxa-profile Health.Status)" = healthy ] && break; sleep 2; done
+crash_back=no
+for _ in $(seq 1 30); do
+  overview=$(admin_overview)
+  grep -q '<td>Profile server</td><td><span class="ok">up</span>' <<< "${overview}" && { crash_back=yes; break; }
+  sleep 2
+done
+check "${crash_down} ${crash_pending} $(state fxa-profile Health.Status) ${crash_back}" "yes no healthy yes" \
+  "fxa-profile crash-looping: Profile server down on the overview within 60 s, never starting or waiting; fixed, healthy and up again"
 if [ "${FFS_ACCESS}" = authelia ] && [ "${FAILED}" = 0 ]; then
   echo "== SSO=authelia: the admin UI also signs in with Authelia's header, from Caddy's address"
   set_env ADMIN_AUTH_HEADER Remote-Email

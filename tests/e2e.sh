@@ -598,6 +598,9 @@ fi
 
 echo "== the event log of before, then the upgrade: ADMIN_DB_PASSWORD set"
 check "$(admin_healthy)" healthy "admin UI up, without ADMIN_DB_PASSWORD"
+# an event: a sign-in (the start has none of its own, the parts that came up after the admin
+# UI are in its startup grace, docs/admin/monitoring.md#startup-grace)
+curl -s -o /dev/null --data-urlencode "password=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)" "http://127.0.0.1:$((PORT + 20))/login"
 for _ in $(seq 1 30); do [ "$(sql "SELECT COUNT(*) FROM ffs_events;" 2> /dev/null)" -gt 0 ] 2> /dev/null && break; sleep 1; done
 check "$([ "$(sql "SELECT COUNT(*) FROM ffs_events;")" -gt 0 ] && echo yes)" yes "the admin UI records its events in the tokenserver database"
 [ -n "${UPGRADE_FROM:-}" ] ||

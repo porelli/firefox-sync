@@ -159,12 +159,9 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupCheck {
 	c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + ".", Checked: comp.Checked, Next: comp.Next}
 	switch {
-	case comp.Starting:
+	case comp.pending():
 		// the startup grace: not a problem yet
-		c.OK, c.Text = true, "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: no answer yet since the start ("+comp.Error+"), the accounts may still be starting: checked again shortly."
-		if comp.Checked.IsZero() {
-			c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: " + comp.Error + "."
-		}
+		c.OK, c.Text = true, "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: "+comp.Error+"."
 	case !comp.Up:
 		c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL, which do not answer (" + comp.Error + "): nobody gets a Sync token. " + d.checkOAuth()
 	}

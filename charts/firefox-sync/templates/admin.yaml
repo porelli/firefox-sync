@@ -13,6 +13,45 @@ Its Service is also the statsd host of the Sync server (SYNC_STATSD_HOST, syncst
 {{- $smtp := include "firefox-sync.smtp" . | fromJson }}
 {{- $f := .Values.fxa }}
 {{- $signIn := include "firefox-sync.fxaSignIn" . }}
+{{- if $a.podStatus }}
+# admin.podStatus: the admin UI reads the pods of the release (get and list, nothing else, in
+# this namespace) for the state of the parts right after a start: starting, or crashed
+# (docs/admin/monitoring.md#startup-grace). Its token only in the admin UI's container
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullname }}-admin
+  labels:
+    {{- include "firefox-sync.labels" (dict "root" . "component" "admin") | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-admin-pods
+  labels:
+    {{- include "firefox-sync.labels" (dict "root" . "component" "admin") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-admin-pods
+  labels:
+    {{- include "firefox-sync.labels" (dict "root" . "component" "admin") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-admin-pods
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-admin
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -68,6 +107,10 @@ spec:
       {{- with include "firefox-sync.podAnnotations" (dict "root" . "annotations" $annotations) }}{{ . | trim | nindent 6 }}{{ end }}
     spec:
       {{- include "firefox-sync.podSpec" . | nindent 6 }}
+      {{- if $a.podStatus }}
+      # (its token mounted in the admin container alone, the projected volume below)
+      serviceAccountName: {{ $fullname }}-admin
+      {{- end }}
       # the image's user nonroot, by number: Kubernetes checks runAsNonRoot on a uid. The
       # pod meets the PodSecurity level restricted (docs/install/helm.md#requirements)
       securityContext:
@@ -266,6 +309,11 @@ spec:
             # must never move to another version, docs/upgrading.md#helm)
             - name: ADMIN_K8S_CHART_VERSION
               value: {{ .Chart.Version | quote }}
+            {{- if $a.podStatus }}
+            # admin.podStatus: the state of the pods, for the health checks after a start
+            - name: ADMIN_K8S_POD_STATUS
+              value: "true"
+            {{- end }}
             {{- if ne $backend "postgres" }}
             # the configuration page: the Sync databases (compose: SYNC_DB of .env)
             - name: SYNC_DB
@@ -420,16 +468,23 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if $f.enabled }}
-          {{- with include "firefox-sync.fxaCaVolumeMount" . }}
+          {{- $mounts := "" }}
+          {{- if $f.enabled }}{{ $mounts = include "firefox-sync.fxaCaVolumeMount" . }}{{ end }}
+          {{- if $a.podStatus }}
+          {{- $mounts = printf "%s\n- name: kube-api\n  mountPath: /var/run/secrets/kubernetes.io/serviceaccount\n  readOnly: true" $mounts | trim }}
+          {{- end }}
+          {{- with $mounts }}
           volumeMounts:
             {{- . | nindent 12 }}
           {{- end }}
-          {{- end }}
-      {{- if $f.enabled }}
-      {{- with include "firefox-sync.fxaCaVolume" . }}
+      {{- $volumes := "" }}
+      {{- if $f.enabled }}{{ $volumes = include "firefox-sync.fxaCaVolume" . }}{{ end }}
+      {{- if $a.podStatus }}
+      {{- /* the service account's token, the cluster's CA and the namespace, as automounted */}}
+      {{- $volumes = printf "%s\n%s" $volumes (include "firefox-sync.kubeApiVolume" .) | trim }}
+      {{- end }}
+      {{- with $volumes }}
       volumes:
         {{- . | nindent 8 }}
-      {{- end }}
       {{- end }}
 {{- end }}

@@ -475,6 +475,10 @@ admin:
   tz: ""
   # ADMIN_PUBLIC_CHECK: every hour the public https URLs and their certificates (false: never)
   publicCheck: true
+  # ADMIN_K8S_POD_STATUS: the admin UI reads the pods of the release (a Role: get and list pods
+  # in this namespace) to tell a part starting from a crashed one right after a start
+  # (docs/admin/monitoring.md#startup-grace). false: no Kubernetes API, a time-bounded wait
+  podStatus: false
   # ADMIN_UPDATE_CHECK: compare the running versions with the newest releases on GitHub
   updateCheck: true
   # ADMIN_STALE_DAYS: accounts not synced for this many days are marked inactive

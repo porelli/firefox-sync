@@ -43,6 +43,7 @@ func newStartupStack(retry time.Duration) *startupStack {
 			}},
 	}
 	h.fastOn = map[string]bool{"Public Sync URL": true}
+	h.noRuntime = deployment{}.noRuntime()
 	st.h = h
 	return st
 }
@@ -72,12 +73,17 @@ func TestStartupGraceWaitsForTheParts(t *testing.T) {
 	ctx := context.Background()
 	// the admin UI first: the Sync server not up yet, the public URL not run
 	st.h.checkAll(ctx)
+	// no runtime to ask: waiting, saying why, not starting
 	sync, public := st.component(t, "Sync server"), st.component(t, "Public Sync URL")
-	if !sync.Starting || sync.Up || !public.Starting || st.publicRuns != 0 || !strings.Contains(public.Error, "as soon as Sync server is up") {
-		t.Fatalf("before the Sync server: %+v %+v, %d runs", sync, public, st.publicRuns)
+	if !sync.Waiting || sync.Starting || sync.Up || !strings.Contains(sync.Error, "no answer yet since the admin UI started, and the admin UI does not see the Docker containers") ||
+		!strings.Contains(sync.Error, "(connection refused): down if still so at ") {
+		t.Fatalf("before the Sync server: %+v", sync)
 	}
-	// starting is neither up nor down: not in Needs attention, not counted down, no sample
-	if s := summarize(st.h.Components()); s.Down != 0 || s.Warn != 0 || s.Starting != 2 || s.Up != 0 {
+	if !public.Waiting || st.publicRuns != 0 || public.Error != "waiting for Sync server: checked as soon as it is up" {
+		t.Fatalf("before the Sync server: %+v, %d runs", public, st.publicRuns)
+	}
+	// waiting is neither up nor down: not in Needs attention, not counted down
+	if s := summarize(st.h.Components()); s.Down != 0 || s.Warn != 0 || s.Waiting != 2 || s.Starting != 0 || s.Up != 0 {
 		t.Errorf("summary %+v", s)
 	}
 	if list := needsAttention(attentionInput{components: st.h.Components(), now: time.Now()}); len(list) != 0 {
@@ -91,7 +97,7 @@ func TestStartupGraceWaitsForTheParts(t *testing.T) {
 	st.syncUp = true
 	st.h.checkAll(ctx)
 	public = st.component(t, "Public Sync URL")
-	if st.publicRuns != 1 || !public.Starting || public.Up || public.Checked.IsZero() {
+	if st.publicRuns != 1 || !public.Waiting || public.Up || public.Checked.IsZero() || strings.Contains(public.Error, "Docker") {
 		t.Fatalf("with the Sync server up: %+v, %d runs", public, st.publicRuns)
 	}
 	// fast retries: 30 s, not 25 minutes
@@ -102,7 +108,7 @@ func TestStartupGraceWaitsForTheParts(t *testing.T) {
 	st.publicErr = nil
 	st.due("Public Sync URL")
 	st.h.checkAll(ctx)
-	if public = st.component(t, "Public Sync URL"); !public.Up || public.Starting || public.Next.Sub(public.Checked) != time.Hour {
+	if public = st.component(t, "Public Sync URL"); !public.Up || public.pending() || public.Next.Sub(public.Checked) != time.Hour {
 		t.Errorf("up: %+v", public)
 	}
 	if lines := st.alerter.take(); len(lines) != 0 {
@@ -111,7 +117,7 @@ func TestStartupGraceWaitsForTheParts(t *testing.T) {
 	// once up, a failure in the grace is a real one
 	st.syncUp = false
 	st.h.checkAll(ctx)
-	if sync = st.component(t, "Sync server"); sync.Starting || sync.Up {
+	if sync = st.component(t, "Sync server"); sync.pending() || sync.Up {
 		t.Errorf("down after up: %+v", sync)
 	}
 	if lines := st.alerter.take(); len(lines) != 1 || !strings.Contains(lines[0], "health: Sync server is down: connection refused") {
@@ -133,7 +139,7 @@ func TestStartupGraceEnds(t *testing.T) {
 	st.h.started = time.Now().Add(-startupGrace - time.Second)
 	st.h.checkAll(ctx)
 	public := st.component(t, "Public Sync URL")
-	if st.publicRuns != runs+1 || public.Starting || public.Up {
+	if st.publicRuns != runs+1 || public.pending() || public.Up {
 		t.Errorf("after the grace: %+v, %d runs", public, st.publicRuns-runs)
 	}
 	if lines := st.alerter.take(); len(lines) != 1 || !strings.Contains(lines[0], "health: Public Sync URL is down: example.com/__heartbeat__: status 502") {
@@ -145,7 +151,7 @@ func TestStartupGraceEnds(t *testing.T) {
 	st.h.checkAll(ctx)
 	st.h.started = time.Now().Add(-startupGrace - time.Second)
 	st.h.checkAll(ctx)
-	if sync := st.component(t, "Sync server"); sync.Starting || sync.Up || st.publicRuns != 1 {
+	if sync := st.component(t, "Sync server"); sync.pending() || sync.Up || st.publicRuns != 1 {
 		t.Errorf("never up: %+v, %d runs", sync, st.publicRuns)
 	}
 	lines := st.alerter.take()
@@ -258,13 +264,9 @@ func TestPublicChecksGoThroughTheParts(t *testing.T) {
 }
 
 func TestStartingSetupCheck(t *testing.T) {
-	c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Starting: true, Error: "checked as soon as Accounts API is up"}, deployment{}, "http://fxa-auth:9000/v1")
-	if !c.OK || strings.Contains(c.Text, "nobody gets a Sync token") || !strings.Contains(c.Text, "as soon as Accounts API is up") {
+	c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Waiting: true, Error: "waiting for Accounts API: checked as soon as it is up"}, deployment{}, "http://fxa-auth:9000/v1")
+	if !c.OK || strings.Contains(c.Text, "nobody gets a Sync token") || !strings.Contains(c.Text, "waiting for Accounts API") {
 		t.Errorf("waiting: %+v", c)
-	}
-	c = oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Starting: true, Checked: time.Now(), Error: "connection refused"}, deployment{}, "http://fxa-auth:9000/v1")
-	if !c.OK || !strings.Contains(c.Text, "may still be starting") {
-		t.Errorf("starting: %+v", c)
 	}
 	if c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "connection refused"}, deployment{}, "http://fxa-auth:9000/v1"); c.OK || !strings.Contains(c.Text, "nobody gets a Sync token") {
 		t.Errorf("down: %+v", c)
@@ -386,15 +388,18 @@ func TestOverviewFreshnessAndStarting(t *testing.T) {
 	checked := time.Now().Add(-time.Minute)
 	app.health.components = []Component{
 		{Name: "Sync server", Up: true, Checked: checked, Next: checked.Add(time.Minute)},
-		{Name: "Public Sync URL", Starting: true, Error: "checked as soon as Sync server is up"},
-		{Name: oauthKeysCheck, Hidden: true, Starting: true, Error: "checked as soon as Accounts API is up"},
+		{Name: "Public Sync URL", Waiting: true, Error: "waiting for Sync server: checked as soon as it is up"},
+		{Name: "Accounts API", Starting: true, Since: checked, Error: "connection refused"},
+		{Name: oauthKeysCheck, Hidden: true, Waiting: true, Error: "waiting for Accounts API: checked as soon as it is up"},
 	}
 	h := app.routes()
 	c, _ := passwordSession(t, app, h)
 	page := getPage(h, "/", c).Body.String()
-	for _, want := range []string{`<span class="pill">starting</span> <span class="hint">checked as soon as Sync server is up</span>`,
+	for _, want := range []string{`<span class="pill">waiting</span> <span class="hint">waiting for Sync server: checked as soon as it is up</span>`,
+		`<span class="pill">starting</span> <span class="hint">since ` + clock(checked, time.Now(), adminZone) + `, 1 min: connection refused</span>`,
 		clock(checked, time.Now(), adminZone) + ", next " + clock(checked.Add(time.Minute), time.Now(), adminZone),
-		`action="/health/check"`, `name="back" value="setup"`, "1 of 2 parts up, 1 starting"} {
+		`action="/health/check"`, `name="back" value="setup"`, "1 of 3 parts up, 1 starting, 1 waiting", "of 3 parts working, 1 starting, 1 waiting",
+		`<span class="word">Starting</span>`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("overview: no %q", want)
 		}
@@ -404,8 +409,128 @@ func TestOverviewFreshnessAndStarting(t *testing.T) {
 			t.Errorf("overview: %q while starting", not)
 		}
 	}
-	// no ffs_up sample while starting
-	if text := prometheusText(t, app); strings.Contains(text, `ffs_up{component="Public Sync URL"}`) || !strings.Contains(text, `ffs_up{component="Sync server"} 1`) {
-		t.Errorf("metrics: %s", text)
+	// ffs_up 0 or 1, the state besides
+	text := prometheusText(t, app)
+	for _, want := range []string{`ffs_up{component="Public Sync URL"} 0`, `ffs_up{component="Sync server"} 1`, `ffs_component_state{component="Sync server",state="up"} 1`,
+		`ffs_component_state{component="Public Sync URL",state="waiting"} 1`, `ffs_component_state{component="Accounts API",state="starting"} 1`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("metrics: no %q", want)
+		}
+	}
+}
+
+// the runtime of the tests: the states it says, or an error
+type fakeRuntime struct {
+	states map[string]partState
+	err    error
+}
+
+func (f *fakeRuntime) parts(context.Context) (map[string]partState, error) { return f.states, f.err }
+
+func TestRuntimeStates(t *testing.T) {
+	ctx := context.Background()
+	newStack := func(state partState) (*startupStack, *fakeRuntime) {
+		st := newStartupStack(25 * time.Minute)
+		rt := &fakeRuntime{states: map[string]partState{"Sync server": state}}
+		st.h.runtime = rt
+		return st, rt
+	}
+	// starting (its pod not Ready, nothing restarted): starting since its pod, what goes
+	// through it waits; then up, nothing announced
+	since := time.Now().Add(-40 * time.Second)
+	st, rt := newStack(partState{state: "starting", since: since})
+	st.h.checkAll(ctx)
+	sync, public := st.component(t, "Sync server"), st.component(t, "Public Sync URL")
+	if !sync.Starting || sync.Waiting || !sync.Since.Equal(since) || !public.Waiting || st.publicRuns != 0 {
+		t.Fatalf("starting: %+v %+v", sync, public)
+	}
+	if s := summarize(st.h.Components()); s.Starting != 1 || s.Waiting != 1 || s.Down != 0 {
+		t.Errorf("summary %+v", s)
+	}
+	st.syncUp, rt.states["Sync server"] = true, partState{state: "running"}
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); !sync.Up || st.publicRuns != 1 {
+		t.Errorf("up: %+v, %d runs", sync, st.publicRuns)
+	}
+	if lines := st.alerter.take(); len(lines) != 0 {
+		t.Errorf("alerts: %q", lines)
+	}
+
+	// a crash (restarts, an exit code): down at once, in the grace, with what the runtime says
+	for _, crash := range []string{"syncstorage-7f (syncstorage): CrashLoopBackOff, 3 restarts, last exit code 1 (Error)", "syncstorage-7f (syncstorage): exited with code 2"} {
+		st, _ = newStack(partState{state: "crashed", reason: crash})
+		st.h.checkAll(ctx)
+		if sync = st.component(t, "Sync server"); sync.pending() || sync.Up || !strings.HasSuffix(sync.Error, "; "+crash) {
+			t.Errorf("crashed: %+v", sync)
+		}
+		// what goes through it is run, not waiting
+		if public := st.component(t, "Public Sync URL"); public.Waiting || st.publicRuns != 1 {
+			t.Errorf("through a crashed part: %+v", public)
+		}
+		// (and what goes through it, down with it)
+		if lines := st.alerter.take(); len(lines) != 2 || !strings.Contains(lines[0], "health: Sync server is down: connection refused; "+crash) ||
+			!strings.Contains(lines[1], "health: Public Sync URL is down") {
+			t.Errorf("crash alerts: %q", lines)
+		}
+	}
+	// a crash loop between two restarts says starting: never reported as such once it restarted
+	st, rt = newStack(partState{state: "starting", since: time.Now()})
+	st.h.checkAll(ctx)
+	rt.states["Sync server"] = partState{state: "crashed", reason: "syncstorage-7f (syncstorage): 1 restart, last exit code 1"}
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); sync.pending() {
+		t.Errorf("restarted: %+v", sync)
+	}
+	if lines := st.alerter.take(); len(lines) != 2 || !strings.Contains(lines[0], "Sync server is down") {
+		t.Errorf("restarted alerts: %q", lines)
+	}
+
+	// starting for longer than startupGrace since its pod started: down
+	st, _ = newStack(partState{state: "starting", since: time.Now().Add(-startupGrace - time.Minute)})
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); sync.pending() || !strings.Contains(sync.Error, "still not up 11 minutes after its pod started") {
+		t.Errorf("ceiling: %+v", sync)
+	}
+	// its pod Ready, its check failing: down
+	st, _ = newStack(partState{state: "running"})
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); sync.pending() || sync.Up {
+		t.Errorf("Ready and failing: %+v", sync)
+	}
+	// up once, then its pod starting again (deleted, rescheduled): starting, not alerted,
+	// at most startupGrace, even after the grace of the admin UI
+	st, rt = newStack(partState{state: "running"})
+	st.syncUp = true
+	st.h.checkAll(ctx)
+	st.h.started = time.Now().Add(-time.Hour)
+	st.syncUp, rt.states["Sync server"] = false, partState{state: "starting", since: time.Now()}
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); !sync.Starting {
+		t.Errorf("restarted pod: %+v", sync)
+	}
+	if lines := st.alerter.take(); len(lines) != 0 {
+		t.Errorf("restarted pod alerts: %q", lines)
+	}
+	// the pods not readable: waiting, saying so
+	st, rt = newStack(partState{})
+	rt.states, rt.err = nil, errors.New("listing the pods: status 403")
+	st.h.checkAll(ctx)
+	if sync = st.component(t, "Sync server"); !sync.Waiting || !strings.Contains(sync.Error, "the state of the pods is not readable: listing the pods: status 403") {
+		t.Errorf("no pods: %+v", sync)
+	}
+}
+
+func TestNoRuntime(t *testing.T) {
+	for d, want := range map[deployment]string{{}: "Docker", {kind: "quadlets"}: "Podman", {kind: "kubernetes"}: "admin.podStatus is off"} {
+		if got := d.noRuntime(); !strings.Contains(got, want) {
+			t.Errorf("%+v: %q", d, got)
+		}
+	}
+	t.Setenv("ADMIN_K8S_POD_STATUS", "true")
+	if got := (deployment{kind: "kubernetes"}).noRuntime(); got != "" {
+		t.Errorf("kubernetes with admin.podStatus: %q", got)
+	}
+	if got := (deployment{}).noRuntime(); !strings.Contains(got, "Docker") {
+		t.Errorf("compose with ADMIN_K8S_POD_STATUS: %q", got)
 	}
 }

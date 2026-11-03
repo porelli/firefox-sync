@@ -34,12 +34,20 @@ type Component struct {
 	Limit bool
 	// the word of the pill instead of "problem" (near the limit, full)
 	Label string
-	// not up yet since the admin UI started, within its startup grace: the parts of the
-	// stack start in any order. Neither down nor alerted, Error says what it waits for
+	// not up, and its container is starting (the runtime says so: its pod is not Ready
+	// yet, nothing restarted), since Since: neither down nor alerted, until startupGrace
 	Starting bool
+	Since    time.Time
+	// not up yet since the admin UI started, in its startup grace, with nothing to say
+	// whether it is starting (no runtime to ask, not a container), or waiting for a part
+	// it goes through: neither down nor alerted. Error says what it waits for, and why
+	Waiting bool
 	// when it is checked next (zero: once the parts it depends on are up, or not known)
 	Next time.Time
 }
+
+// pending: starting or waiting, neither up nor down
+func (c Component) pending() bool { return c.Starting || c.Waiting }
 
 type check struct {
 	name   string
@@ -62,8 +70,9 @@ type check struct {
 
 // the startup grace: the admin UI starts with the stack, often before the parts it
 // checks (docker compose up -d of the whole stack, the pods of the chart in any order).
-// For this long a part not up yet since the start is "starting", not down, and not
-// alerted; what goes through it waits for it
+// For this long a part not up yet since the start is "waiting" (or "starting", when its
+// runtime says so: then for this long since its pod started), not down, and not alerted;
+// what goes through it waits for it. A crash the runtime sees is down at once
 const startupGrace = 10 * time.Minute
 
 // the retries of a fast check while it fails after the start or after a part it
@@ -87,6 +96,8 @@ func (c Component) state() string {
 		return "up"
 	case c.Starting:
 		return "starting"
+	case c.Waiting:
+		return "waiting"
 	case c.Warn:
 		return "warn"
 	}
@@ -125,6 +136,10 @@ type Health struct {
 	// while the loop is busy), the last ask
 	wake       chan chan struct{}
 	checkedNow time.Time
+	// the container runtime (runtime.go), nil: none, and why not
+	runtime     runtimeView
+	noRuntime   string
+	runtimeRead bool
 	// certificates of the public URLs: host -> NotAfter
 	certs map[string]time.Time
 	// the trust of the public checks, nil: the system's (the tests set their own)
@@ -227,6 +242,13 @@ func newHealth(app *App) *Health {
 		errorRate: errorRateSettings(), growth: growthSettings()}
 	h.lastSignup, h.started = time.Now(), time.Now()
 	h.grace, h.round, h.wake = startupGrace, time.Duration(envInt("HEALTH_CHECK_SECONDS", 60))*time.Second, make(chan chan struct{}, 1)
+	h.noRuntime = app.deployment.noRuntime()
+	if view, err := newPodView(app.deployment); err != nil {
+		log.Printf("the state of the pods: %v", err)
+		h.noRuntime = err.Error()
+	} else if view != nil {
+		h.runtime = view
+	}
 	sync := strings.TrimSuffix(env("SYNCSTORAGE_URL", "http://syncstorage:8000"), "/")
 	h.checks = append(h.checks,
 		check{name: "Sync server", health: httpCheck(client, sync+"/__heartbeat__"), version: versionOf(client, sync+"/__version__"), upstream: "mozilla-services/syncstorage-rs"},
@@ -349,7 +371,7 @@ func (h *Health) run(ctx context.Context) {
 }
 
 // untilDue: how long until a check is due before the next round: a check with every
-// (a fast retry), or a round of startingRound while a part is starting in the grace
+// (a fast retry), or a round of startingRound while a part is starting or waiting
 func (h *Health) untilDue(now time.Time) (time.Duration, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -359,14 +381,12 @@ func (h *Health) untilDue(now time.Time) (time.Duration, bool) {
 			at = next
 		}
 	}
-	if h.inGrace(now) {
-		for _, c := range h.components {
-			if c.Starting {
-				if soon := h.lastRound.Add(startingRound); at.IsZero() || soon.Before(at) {
-					at = soon
-				}
-				break
+	for _, c := range h.components {
+		if c.pending() {
+			if soon := h.lastRound.Add(startingRound); at.IsZero() || soon.Before(at) {
+				at = soon
 			}
+			break
 		}
 	}
 	if at.IsZero() || (h.round > 0 && at.Sub(now) >= h.round) {
@@ -428,6 +448,32 @@ func (h *Health) checkNow(ctx context.Context, now time.Time) (bool, error) {
 // checkNowWait: how long Check now waits for its round before showing the overview
 var checkNowWait = 45 * time.Second
 
+// notUp: a check that failed, its state from what the runtime says of its container
+// (parts), else in the grace (h.mu held): a crash is down at once, with what the runtime
+// says; starting is starting, for at most startupGrace since its pod started; nothing to
+// say (no runtime, why, or not a container), never up since the start, in the grace:
+// waiting. Else down
+func (h *Health) notUp(comp *Component, parts map[string]partState, why string, grace bool, now time.Time) {
+	part, seen := parts[comp.Name]
+	switch {
+	case seen && part.state == "crashed":
+		comp.Error += "; " + part.reason
+	case seen && part.state == "starting" && now.Sub(part.since) < startupGrace:
+		comp.Starting, comp.Since = true, part.since
+	case seen && part.state == "starting":
+		comp.Error += fmt.Sprintf("; still not up %d minutes after its pod started", int(now.Sub(part.since)/time.Minute))
+	case seen:
+		// running (Ready) and failing: down
+	case grace && !h.everUp[comp.Name]:
+		comp.Waiting = true
+		wait := "no answer yet since the admin UI started"
+		if containerPart(comp.Name) && why != "" {
+			wait += ", and " + why
+		}
+		comp.Error = wait + " (" + comp.Error + "): down if still so at " + clock(h.started.Add(h.grace), now, adminZone)
+	}
+}
+
 // checkNow: the Check now button of the overview (POST, the form token): every
 // health check and the setup's at once, at most every checkedNowEvery. Not a change:
 // not in the audit trail
@@ -480,6 +526,20 @@ func (h *Health) checkRound(ctx context.Context, force bool) {
 	}
 	grace := h.inGrace(now)
 	h.mu.Unlock()
+	// what the runtime says of the containers, read once a round
+	var parts map[string]partState
+	why := h.noRuntime
+	if h.runtime != nil {
+		var err error
+		parts, err = h.runtime.parts(ctx)
+		if err != nil {
+			why = "the state of the pods is not readable: " + err.Error()
+		} else if !h.runtimeRead {
+			h.runtimeRead = true
+			log.Print("the state of the pods: read through the Kubernetes API (admin.podStatus)")
+		}
+		h.logOnce("the state of the pods", err)
+	}
 	components := make([]Component, 0, len(h.checks))
 	current, cameUp := map[string]Component{}, map[string]bool{}
 	add := func(comp Component) {
@@ -489,25 +549,28 @@ func (h *Health) checkRound(ctx context.Context, force bool) {
 	for _, c := range h.checks {
 		prev, seen := previous[c.name]
 		h.mu.Lock()
-		last, next, ever := h.lastRun[c.name], h.nextRun[c.name], h.everUp[c.name]
+		last, next := h.lastRun[c.name], h.nextRun[c.name]
 		h.mu.Unlock()
-		// in the grace, what it goes through is not up yet: checked once it is
+		// what it goes through is starting, or waiting in the grace: checked once it is up
 		var waiting []string
+		depDown := false
 		for _, d := range c.after {
-			if dep, ok := current[d]; ok && !dep.Up {
+			if dep, ok := current[d]; ok && dep.pending() {
 				waiting = append(waiting, d)
+			} else if ok && !dep.Up {
+				depDown = true
 			}
 		}
-		if grace && !ever && len(waiting) > 0 {
-			verb := "is"
+		if len(waiting) > 0 {
+			verb := "it is"
 			if len(waiting) > 1 {
-				verb = "are"
+				verb = "they are"
 			}
 			h.mu.Lock()
 			delete(h.nextRun, c.name)
 			h.mu.Unlock()
-			add(Component{Name: c.name, Hidden: c.hidden, Starting: true, Checked: last,
-				Error: "checked as soon as " + strings.Join(waiting, " and ") + " " + verb + " up"})
+			add(Component{Name: c.name, Hidden: c.hidden, Waiting: true, Checked: last,
+				Error: "waiting for " + strings.Join(waiting, " and ") + ": checked as soon as " + verb + " up"})
 			continue
 		}
 		// a part it goes through came up (or any part, while it fails): at once, with fast retries
@@ -523,8 +586,8 @@ func (h *Health) checkRound(ctx context.Context, force bool) {
 			h.fastOn[c.name], h.fastUsed[c.name] = true, 0
 			h.mu.Unlock()
 		}
-		// the end of the grace: what is still starting is checked, and announced
-		ended := seen && prev.Starting && !grace
+		// the end of the grace: what is still waiting is checked, and announced
+		ended := seen && prev.Waiting && !grace
 		if c.every > 0 && !last.IsZero() && !force && !again && !ended && now.Before(next) {
 			if seen {
 				prev.Next = next
@@ -573,8 +636,10 @@ func (h *Health) checkRound(ctx context.Context, force bool) {
 		if comp.Up {
 			h.everUp[c.name] = true
 		}
-		// not up yet since the start, in the grace: starting, not announced
-		comp.Starting = grace && !comp.Up && !h.everUp[c.name]
+		if !comp.Up {
+			// (what it goes through down: so is it)
+			h.notUp(&comp, parts, why, grace && !depDown, start)
+		}
 		if c.every > 0 {
 			comp.Next = start.Add(h.waitAfter(c, comp.Up))
 			h.nextRun[c.name] = comp.Next
@@ -582,10 +647,10 @@ func (h *Health) checkRound(ctx context.Context, force bool) {
 			comp.Next = start.Add(h.round)
 		}
 		h.mu.Unlock()
-		// what was starting was never announced: its first state is
-		known := seen && !prev.Starting
+		// what was starting or waiting was never announced: its first state is
+		known := seen && !prev.pending()
 		switch {
-		case comp.Starting:
+		case comp.pending():
 		case (known && prev.state() != comp.state()) || (!known && !comp.Up):
 			switch comp.state() {
 			case "up":
