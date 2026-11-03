@@ -6,7 +6,7 @@
   --bg: #f6f6f8; --surface: #fff; --surface-2: #f1f1f4; --border: #e4e4e9; --border-strong: #cdcdd5; --input-border: #85858f;
   --text: #17171c; --muted: #5c5c69;
   --accent: #4f46e5; --accent-hover: #4338ca; --accent-text: #4338ca; --accent-soft: #eef0ff; --on-accent: #fff;
-  --ok: #12704f; --ok-soft: #e5f5ee; --warn: #8a4b00; --warn-soft: #fcf1dc; --bad: #b4232a; --bad-soft: #fdecec; --bad-solid: #b4232a;
+  --ok: #12704f; --ok-soft: #e5f5ee; --warn: #8a4b00; --warn-soft: #fcf1dc; --notice: #5e5200; --notice-soft: #fbf5c4; --bad: #b4232a; --bad-soft: #fdecec; --bad-solid: #b4232a;
   --chart: #6366f1; --chart-soft: #6366f126;
   --shadow: 0 1px 2px #1018280a, 0 2px 10px #1018280d;
   --radius: 12px; --radius-sm: 8px;
@@ -17,7 +17,7 @@
     --bg: #0e0e11; --surface: #17171b; --surface-2: #202027; --border: #2a2a31; --border-strong: #3c3c46; --input-border: #70707c;
     --text: #ececf1; --muted: #a1a1ad;
     --accent: #5850e0; --accent-hover: #6a63f0; --accent-text: #a5a6ff; --accent-soft: #24234a; --on-accent: #fff;
-    --ok: #5fd3a0; --ok-soft: #14271f; --warn: #f2b757; --warn-soft: #2a2112; --bad: #ff8a8f; --bad-soft: #2d1618; --bad-solid: #c42b33;
+    --ok: #5fd3a0; --ok-soft: #14271f; --warn: #f2b757; --warn-soft: #2a2112; --notice: #e6d35c; --notice-soft: #25220c; --bad: #ff8a8f; --bad-soft: #2d1618; --bad-solid: #c42b33;
     --chart: #8183f4; --chart-soft: #8183f42e;
     --shadow: 0 1px 2px #0006, 0 0 0 1px #ffffff08;
   }
@@ -140,6 +140,12 @@ meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 9
 .pill { color: var(--muted); background: var(--surface-2); }
 .pill::before, .ok::before, .disabled::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .pills { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 0; }
+/* restricted on purpose (sign-ups closed, a limit, invite-only Sync): a yellow notice */
+.pill.notice { color: var(--notice); background: var(--notice-soft); }
+.restrictions { list-style: none; padding: 0; margin: -.25rem 0 1.25rem; }
+.restrictions a.pill { text-decoration: none; }
+.restrictions a.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
+.restrictions .where { opacity: .8; font-weight: 400; }
 .note { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
 
 /* ---- forms and buttons ---- */

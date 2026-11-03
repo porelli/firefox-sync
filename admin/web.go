@@ -580,10 +580,11 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	data["NearMaxUsers"] = nearMaxUsers(status)
 	// SYNC_ALLOWED_ACCOUNTS: the pending accounts, the allowed ones
 	pending := 0
+	var syncAllowlist *SyncAllowlist
 	if l, err := a.syncAllowlist(ctx); err != nil {
 		errs = append(errs, "Invite-only Sync: "+err.Error())
 	} else if l != nil {
-		data["SyncAllowlist"], pending = l, len(l.Pending)
+		data["SyncAllowlist"], pending, syncAllowlist = l, len(l.Pending), l
 	}
 	// FXA_MAX_ACCOUNTS, the accounts against it
 	var accountLimit *Limit
@@ -660,10 +661,12 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	}
 	data["Backup"] = a.backupHelp(now)
 	var pages pager
+	var policy *SignupPolicy
 	if a.fxa != nil {
-		if policy, err := a.fxa.Policy(ctx); err != nil {
+		if p, err := a.fxa.Policy(ctx); err != nil {
 			errs = append(errs, "Sign-up policy: "+err.Error())
 		} else {
+			policy = p
 			data["Policy"] = policy
 			data["Allowlist"] = strings.Join(policy.Allowlist, "\n")
 		}
@@ -754,6 +757,9 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 		data["PruneLastRan"], data["UnconfirmedDays"] = in.pruneLastRan, a.unconfirmedDays
 	}
 	data["Attention"] = needsAttention(in)
+	// who may come in, when restricted on purpose: the badges of the summary
+	data["Restrictions"] = restrictions(restrictionInput{fxa: a.fxa != nil, policy: policy, accountLimit: accountLimit,
+		maxAccountsEditable: a.maxAccountsEditable, sync: status, maxUsersEditable: a.maxUsersEditable, allowlist: syncAllowlist, d: a.deployment})
 	data["Errors"] = errs
 	data["Kubernetes"] = a.deployment.Kubernetes()
 	a.render(w, "dashboard.html", data)

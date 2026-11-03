@@ -317,7 +317,7 @@ func (t traffic) healthNote() string {
 	if t.Health <= 0 {
 		return ""
 	}
-	return fmt.Sprintf(" (and %s, not counted)", plural(int(t.Health), "health check"))
+	return fmt.Sprintf("; %s of the Sync server besides, not counted", plural(int(t.Health), "health check"))
 }
 
 // Percent: the share of errors, 0 without requests
@@ -393,8 +393,8 @@ func errorRateRow(e *ErrorRate, c errorRateConfig) (Component, bool) {
 		return row, true
 	}
 	row.Up = true
-	row.Detail = fmt.Sprintf("%s of %s from Firefox in the last %d minutes%s, alert from %d%% and %d errors (ADMIN_ERROR_RATE_PERCENT)",
-		plural(int(e.Window.Errors), "error"), plural(int(e.Window.Requests), "Sync request"), int(errorWindow/time.Minute), e.Window.healthNote(), c.percent, c.minErrors)
+	row.Detail = fmt.Sprintf("%s of %s from Firefox in the last %d minutes, alert from %d%% and %d errors (ADMIN_ERROR_RATE_PERCENT)%s",
+		plural(int(e.Window.Errors), "error"), plural(int(e.Window.Requests), "Sync request"), int(errorWindow/time.Minute), c.percent, c.minErrors, e.Window.healthNote())
 	return row, true
 }
 

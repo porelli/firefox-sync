@@ -48,6 +48,11 @@
     <span class="value">{{$.BackupText}}</span>
     <span class="sub">{{range $i, $b := $.Backups}}{{if not $i}}{{if $b.LastOK.Finished.IsZero}}no good one yet{{else}}last: {{date $b.LastOK.Finished}}{{end}}{{end}}{{else}}every night with the backup profile{{end}}</span></a></li>{{end}}
 </ul>
+{{/* who may come in, restricted on purpose (restrictions.go): yellow notices, the limits
+near or full in their amber; nothing when open and unlimited */}}
+{{with .Restrictions}}<ul class="pills restrictions" id="restrictions" aria-label="Restricted on purpose">{{range .}}
+  <li><a class="pill {{if eq .State "notice"}}notice{{else}}warn{{end}}" href="{{.Href}}" title="{{.Title}}">{{.Text}} <span class="where">· {{.Where}}</span></a></li>{{end}}
+</ul>{{end}}
 
 <h2 class="group-title">{{if .FxA}}Accounts and sign-ups{{else}}Accounts{{end}}</h2>
 

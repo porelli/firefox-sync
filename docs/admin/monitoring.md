@@ -16,6 +16,19 @@ A health light on every page ("All up", "1 part to check", "2 parts down") links
 
 ![Health](../images/admin/health.png)
 
+### The summary at the top
+
+Under Needs attention, the tiles (Health, Using Sync, Accounts, Sync data, Backups) and a row of badges for who may come in when that is restricted on purpose. The badges are yellow: a notice, not a problem. A limit near or at its maximum keeps the amber of the tiles, and a part down its red. Each badge links to the card where it is changed and says where it is set: `set here` (in the admin UI), or the setting of `.env` (the value of the chart) that fixes it, the whole sentence on hover.
+
+| Badge | When | Where it is changed |
+|---|---|---|
+| `Sign-ups closed`, `Sign-ups: allowlist only (N emails or domains)` | self-hosted accounts, the sign-up policy not open | the Sign-ups card, see [Sign-ups](accounts.md#sign-ups); `FXA_SIGNUPS` replaces it when it changes in `.env` |
+| `Max accounts N/M`, `No new accounts (max accounts 0)` | self-hosted accounts with a limit | the Max accounts form with `FXA_MAX_ACCOUNTS=initial:N`, else `.env`, see [Limits](accounts.md#limits) |
+| `Invite-only Sync (N pending)` | `SYNC_ALLOWED_ACCOUNTS` on | the Invite-only Sync card with `SYNC_ALLOWED_ACCOUNTS=admin`, else `.env`, see [Invite-only Sync](accounts.md#invite-only-sync) |
+| `Max users N/M`, `No new Sync accounts (max users 0)` | a limit on Sync | the Sync card with `SYNC_MAX_USERS=initial:N`, else `.env`, see [Limits](accounts.md#limits) |
+
+Open sign-ups and no limits: no badges.
+
 ### When it was checked
 
 Each row of the Health table, and each [setup check](#setup-checks), says when it was checked and when it is checked next, in the admin UI's [time zone](README.md#time-zone): `18:25, next 18:30`. The checks of a round are due a minute later, the [public checks](#public-checks) an hour later, or sooner while they fail. Most setup checks are read at every load of the overview: `18:25, again at every load`.
@@ -273,7 +286,7 @@ What syncstorage-rs sends is limited, so this is what you see:
 
 The Errors chart counts the same. The Sync requests chart counts only the requests of Firefox served, not the errors.
 
-**Requests of Firefox, health checks apart.** Since 0.24 syncstorage-rs also times every request it answers (`syncstorage.request.duration`, tagged with its route), the health checks too: `/__heartbeat__` of the container's healthcheck (every 30 seconds) and of the admin UI (every round), the public check through your reverse proxy, `/__lbheartbeat__`, `/__version__`. On an idle server that is all its traffic. The admin UI counts those of the health checks apart and never as requests: "0 errors of 12 Sync requests from Firefox in the last 15 minutes (and 61 health checks, not counted)". The requests are the storage API's (one counter per request it served) and the token requests. Before 0.24 there is no timer: the health checks are not counted at all, and are not in the requests either.
+**Requests of Firefox, health checks apart.** Since 0.24 syncstorage-rs also times every request it answers (`syncstorage.request.duration`, tagged with its route), the health checks too: `/__heartbeat__` of the container's healthcheck (every 30 seconds) and of the admin UI (every round), the public check through your reverse proxy, `/__lbheartbeat__`, `/__version__`. On an idle server that is all its traffic. The admin UI counts those of the health checks apart and never as requests: "0 errors of 12 Sync requests from Firefox in the last 15 minutes, alert from 10% and 20 errors; 61 health checks of the Sync server besides, not counted". The requests are the storage API's (one counter per request it served) and the token requests. Before 0.24 there is no timer: the health checks are not counted at all, and are not in the requests either.
 
 <details><summary>Where the errors come from</summary>
 

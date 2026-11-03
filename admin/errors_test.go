@@ -252,7 +252,7 @@ func TestWatchErrorRate(t *testing.T) {
 	got := round([]driver.Value{minute(3 * time.Minute), "ffs.health_checks", int64(61)},
 		[]driver.Value{minute(3 * time.Minute), "syncstorage.request.duration", int64(61)})
 	row, _ = errorRateRow(h.ErrorRate(), h.errorRate)
-	if len(got) != 0 || !strings.Contains(row.Detail, "0 errors of 0 Sync requests from Firefox in the last 15 minutes (and 61 health checks, not counted), alert") {
+	if len(got) != 0 || !strings.Contains(row.Detail, "0 errors of 0 Sync requests from Firefox in the last 15 minutes, alert from 10% and 20 errors (ADMIN_ERROR_RATE_PERCENT); 61 health checks of the Sync server besides, not counted") {
 		t.Errorf("health checks: %q %+v", got, row)
 	}
 	// 40 tokens refused and 30 storage errors in 200 requests
