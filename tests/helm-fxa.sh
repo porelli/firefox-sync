@@ -1801,15 +1801,15 @@ PY
   fi
 
   # a real Firefox, as tests/e2e-fxa.sh's (Firefox's image, as its own user): sign-up on one
-  # profile, Sync to a second one, the admin UI's sign-in with these accounts; the pairing
-  # server's websockets
+  # profile, Sync to a second one, the admin UI's sign-in with these accounts, a sign-up the
+  # admin confirms; the pairing server's websockets
   if [[ -z "${SKIP_BROWSER:-}" ]]; then
     fxa_job browser "${BROWSER_IMAGE}" "/tests/test_fxa_browser.py /tests/test_fxa_pairing.py" ADMIN_FXA_CLIENT_ID=ad41a7e5f0c0ffee \
       || { # what the failed tests' Firefox windows showed (wait_job printed the last lines only)
         kubectl logs job/fxa-test-browser | sed -n '/^==== /,/^=* FAILURES/p' | head -300
         fail "test_fxa_browser.py, test_fxa_pairing.py failed"; }
     got=$(kubectl logs job/fxa-test-browser | tail -1)
-    [[ "${got}" =~ ^9\ passed(,\ [0-9]+\ warnings?)?\ in ]] || fail "test_fxa_browser.py, test_fxa_pairing.py: not their 9 tests passed: ${got}"
+    [[ "${got}" =~ ^10\ passed(,\ [0-9]+\ warnings?)?\ in ]] || fail "test_fxa_browser.py, test_fxa_pairing.py: not their 10 tests passed: ${got}"
     check "a real Firefox (test_fxa_browser.py) and the pairing server (test_fxa_pairing.py) through the Ingresses: ${got}"
   fi
 
