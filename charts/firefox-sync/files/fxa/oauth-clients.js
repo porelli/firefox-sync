@@ -9,7 +9,13 @@
 // With $ADMIN_FXA_CLIENT_ID (and $ADMIN_OIDC_REDIRECT_URL) it also registers the
 // admin UI as an OpenID Connect client: trusted (no consent screen), public with
 // PKCE, or confidential with $ADMIN_FXA_CLIENT_SECRET (FxA then refuses PKCE).
-// Run from the fxa-auth-server directory, before bin/key_server.js.
+// It also sets mfa.jwt.secretKey, the key of the tokens that let a session change the
+// password, email, 2-step, recovery key or passkeys after a fresh confirmation code: derived
+// from $OAUTH_SERVER_SECRET_KEY (an HMAC-SHA256, the same on every start and replica), unless
+// $MFA__JWT__KEY is set. Without it the auth server used the published default ("foxes");
+// since v1.349.0 it refuses to start in production with that or a key under 32 bytes.
+// Run from the fxa-auth-server directory, before the key scripts (gen_keys.js...: they load
+// the config, which needs that key) and bin/key_server.js.
 const crypto = require('crypto');
 const fs = require('fs');
 
@@ -89,5 +95,18 @@ function adminClient() {
   };
 }
 
-fs.writeFileSync(process.argv[2], JSON.stringify({ oauthServer: { clients, scopes } }, null, 2));
+// (the environment wins over this file: an MFA__JWT__KEY of your own is used as it is)
+const config = { oauthServer: { clients, scopes } };
+if (!process.env.MFA__JWT__KEY) {
+  const secret = process.env.OAUTH_SERVER_SECRET_KEY || '';
+  if (!secret) {
+    console.error('OAUTH_SERVER_SECRET_KEY is not set (FXA_OAUTH_SECRET of .env): no key for the MFA JWTs');
+    process.exit(1);
+  }
+  const key = crypto.createHmac('sha256', secret).update('firefox-sync mfa.jwt.secretKey').digest('hex');
+  config.mfa = { jwt: { secretKey: key } };
+}
+// (it holds a secret now: this user only, as the other keys of /fxa-keys)
+fs.writeFileSync(process.argv[2], JSON.stringify(config, null, 2), { mode: 0o600 });
+fs.chmodSync(process.argv[2], 0o600);
 console.log(`Wrote ${clients.length} OAuth clients${admin ? ` (with the admin UI, ${admin.publicClient ? 'public' : 'confidential'})` : ''} and ${scopes.length} scopes for ${contentUrl}`);

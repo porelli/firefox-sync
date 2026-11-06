@@ -252,6 +252,8 @@ What `prepare_environment.sh` writes into `proxy/` from `.env`, the configuratio
 | `SYNC_TOKENSERVER_DB_PASSWORD`, `SYNC_STORAGE_DB_PASSWORD`, `SYNC_POSTGRES_PASSWORD`, `FXA_MYSQL_PASSWORD`, `FXA_MYSQL_POLICY_PASSWORD`, `SYNC_DB_BOOTSTRAP_PASSWORD`, `FXA_DB_BOOTSTRAP_PASSWORD` | database users whose password the database has too | in the database first, then `.env`: [Change a database password](../databases.md#change-a-database-password) |
 | `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | the self-hosted accounts services' own keys | `.env`, then restart; only if one leaked: the accounts' sessions and tokens signed with it stop working, and people sign in again |
 
+`FXA_OAUTH_SECRET` also gives the key of the accounts' tokens for the password, email and 2-step changes (`mfa.jwt.secretKey`, an HMAC-SHA256 of it, [config/fxa/oauth-clients.js](/config/fxa/oauth-clients.js)): a new one ends those that are open, the person confirms with a code again. `MFA__JWT__KEY` in the environment of `fxa-auth` overrides it.
+
 `ADMIN_FXA_CLIENT_ID`, also generated, is no secret: the id of the admin UI's sign-in client of the self-hosted accounts.
 
 ## Helm only

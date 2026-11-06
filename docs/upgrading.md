@@ -61,6 +61,8 @@ With the Helm chart:
 
 To move from Mozilla's image to the builds of this repository, or back, change `FXA_IMAGE`, `FXA_VERSION` and `FXA_ARCH` together (Helm: `fxa.image.repository` and `.tag`), then follow the same steps. The pairing server follows `FXA_IMAGE`: with Mozilla's image set `FXA_PAIRING_IMAGE` too (Helm: `fxa.pairing.image`), see [Pairing](reverse-proxy.md#pairing). For example from `FXA_IMAGE=docker.io/mozilla/fxa-mono`, `FXA_VERSION=v1.345.2`, `FXA_ARCH=amd64` to `FXA_IMAGE=ghcr.io/porelli/firefox-sync`, `FXA_VERSION=fxa-mono-latest`, `FXA_ARCH=arm64`. It is the same software: the databases and the keys stay.
 
+Accounts releases from v1.349.0 on need this repository from the same time or later, Mozilla's images too: the auth server then refuses to start without its key `mfa.jwt.secretKey` (`Config 'mfa.jwt.secretKey' must be set in production`), which `config/fxa/oauth-clients.js` now derives from `FXA_OAUTH_SECRET` at every start. Update the checkout (or the chart) before the image. Older releases get the key too: until then they signed those tokens, which guard the password, email, 2-step, recovery key and passkey changes, with Mozilla's published default.
+
 Don't stay too far behind: Firefox refuses to sign in to accounts servers that are too old for it. For example Firefox 154 needs a recent release, because it switched to Bearer tokens.
 
 ## Quadlets

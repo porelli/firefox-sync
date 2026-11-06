@@ -148,15 +148,17 @@ services:
   fxa-auth:
     <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-auth-server/dist/packages/fxa-auth-server
-    # keys are only generated when missing, the volume keeps them across restarts
+    # keys are only generated when missing, the volume keeps them across restarts. The
+    # config file of oauth-clients.js first: the key scripts load the auth server's config,
+    # which needs its mfa.jwt.secretKey since v1.349.0 (an error without it)
     command:
       - sh
       - -c
       - >-
+        node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json &&
         node scripts/gen_keys.js &&
         node scripts/oauth_gen_keys.js &&
         node scripts/gen_vapid_keys.js &&
-        node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json &&
         exec node bin/key_server.js
     environment:
       NODE_ENV: prod

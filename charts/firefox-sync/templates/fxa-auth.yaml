@@ -307,15 +307,16 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          # keys are only generated when missing, the volume keeps them across restarts
+          # keys are only generated when missing, the volume keeps them across restarts; the
+          # config file of oauth-clients.js first (the mfa.jwt.secretKey the key scripts need, as compose)
           args:
             - sh
             - -c
             - >-
+              node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json &&
               node scripts/gen_keys.js &&
               node scripts/oauth_gen_keys.js &&
               node scripts/gen_vapid_keys.js &&
-              node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json &&
               exec node bin/key_server.js
           env:
             # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)

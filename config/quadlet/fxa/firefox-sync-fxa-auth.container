@@ -100,7 +100,8 @@ HealthInterval=15s
 HealthTimeout=10s
 HealthRetries=5
 HealthStartPeriod=300s
-Exec=sh -c 'cd /fxa/packages/fxa-auth-server/dist/packages/fxa-auth-server && node scripts/gen_keys.js && node scripts/oauth_gen_keys.js && node scripts/gen_vapid_keys.js && node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json && exec node bin/key_server.js'
+# the config file of oauth-clients.js first: the key scripts need its mfa.jwt.secretKey (as compose)
+Exec=sh -c 'cd /fxa/packages/fxa-auth-server/dist/packages/fxa-auth-server && node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json && node scripts/gen_keys.js && node scripts/oauth_gen_keys.js && node scripts/gen_vapid_keys.js && exec node bin/key_server.js'
 
 AutoUpdate=registry
 
