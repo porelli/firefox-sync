@@ -16,6 +16,11 @@ Environment:
   BROWSER_ARTIFACTS  a directory: on a failure, the page source and a screenshot of every
                    open Firefox go there (the job log gets the Firefox version, the address,
                    the text and the form fields of the page either way)
+
+Nothing leaves the stack (docs/accounts.md#telemetry): every Firefox records every request its
+pages make (WebDriver BiDi, network.beforeRequestSent of its own session), and each test fails
+when its pages asked a host outside the stack (the hosts under the domain of FXA_CONTENT_URL)
+that is not in ALLOWED_HOSTS, a telemetry or error-report host first of all.
 """
 
 import json
@@ -23,12 +28,15 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import warnings
+from urllib.parse import urlsplit
 
 import pytest
 import requests
+import websocket
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
@@ -45,6 +53,69 @@ EMAIL_INPUT = "input[type=email], input[autocomplete=email], input[autocomplete=
 PASSWORD_INPUT = "input[type=password]"
 CODE_INPUT = "input[autocomplete=one-time-code], input[name=code], input[inputmode=numeric]"
 SUBMIT = "button[type=submit]"
+
+
+# nothing leaves the stack: the stack's hosts are those under the domain of FXA_CONTENT_URL
+# (accounts.fxa.test: .fxa.test, the test reverse proxy's names, Authelia's too)
+STACK_DOMAIN = "." + urlsplit(CONTENT).hostname.split(".", 1)[1]
+# hosts outside the stack the pages may load, each with why: none (the accounts pages load
+# everything from their own hosts: content-server.js points the CDN's URLs to FXA_CONTENT_URL,
+# their fonts and images are files of the content server)
+ALLOWED_HOSTS = {}
+# the telemetry and error-report hosts, named as such when the pages ask one
+TELEMETRY_HOSTS = re.compile(r"(^|\.)(mozilla\.org|mozilla\.com|mozilla\.net|mozaws\.net|firefox\.com|"
+                             r"google-analytics\.com|googletagmanager\.com)$|sentry|amplitude|telemetry")
+# every request of every Firefox's pages (url, its browsing context), as they come
+REQUESTS = []
+
+
+def outside_stack(url):
+    """The host of a request outside the stack and not allowed, else None (about:, data:,
+    blob: and the browser's own schemes are no request to a host)"""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https", "ws", "wss") or not host:
+        return None
+    if host.endswith(STACK_DOMAIN) or host in ALLOWED_HOSTS:
+        return None
+    return host
+
+
+def record_requests(driver):
+    """Record every request of this Firefox's pages into REQUESTS: a WebDriver BiDi connection
+    of its own to the session (webSocketUrl), subscribed to network.beforeRequestSent before
+    the first page loads. Requests of the browser itself (updates, its own services) belong to
+    no page and are not events there."""
+    ws = websocket.create_connection(driver.capabilities["webSocketUrl"], timeout=30, suppress_origin=True)
+    ws.send(json.dumps({"id": 1, "method": "session.subscribe", "params": {"events": ["network.beforeRequestSent"]}}))
+    while True:
+        reply = json.loads(ws.recv())
+        if reply.get("id") == 1:
+            assert reply.get("type") == "success", f"WebDriver BiDi: no network events: {reply}"
+            break
+    ws.settimeout(None)
+
+    def listen():
+        try:
+            while True:
+                event = json.loads(ws.recv())
+                if event.get("method") == "network.beforeRequestSent":
+                    REQUESTS.append((event["params"]["request"]["url"], event["params"].get("context")))
+        except Exception:  # (the browser quit: its connection closed)
+            pass
+
+    threading.Thread(target=listen, daemon=True).start()
+
+
+def requests_outside_stack(start):
+    """The requests outside the stack since REQUESTS[start], one line each"""
+    out = []
+    for url, _ in REQUESTS[start:]:
+        host = outside_stack(url)
+        if host:
+            kind = "a telemetry or error-report host" if TELEMETRY_HOSTS.search(host) else "outside the stack"
+            out.append(f"{host} ({kind}): {url[:200]}")
+    return sorted(set(out))
 
 
 # the Firefox profiles of the running test (and first_device's): dumped when it fails
@@ -103,6 +174,8 @@ def start_firefox(client_certificate=None, sso=None, **extra_prefs):
     opts.add_argument("-headless")
     opts.add_argument("-profile")
     opts.add_argument(profile)
+    # WebDriver BiDi too: record_requests
+    opts.set_capability("webSocketUrl", True)
     log = open(os.path.join(tempfile.gettempdir(), f"{os.path.basename(profile)}.log"), "w")
     service = Service(
         executable_path=os.environ.get("GECKODRIVER", "/usr/local/bin/geckodriver"),
@@ -111,6 +184,7 @@ def start_firefox(client_certificate=None, sso=None, **extra_prefs):
     )
     driver = webdriver.Firefox(options=opts, service=service)
     LIVE.append(driver)
+    record_requests(driver)
     if sso is None:
         sso = ACCESS == "authelia"
     if sso:
@@ -175,9 +249,11 @@ def describe(driver, name):
 
 @pytest.fixture(autouse=True)
 def browsers(request):
-    """Each test's Firefox profiles quit after it; when it failed, what they showed first."""
+    """Each test's Firefox profiles quit after it; when it failed, what they showed first.
+    Then the requests of its pages (first_device's too) outside the stack: none."""
     failed = request.session.testsfailed
     started = len(LIVE)
+    asked = len(REQUESTS)
     yield
     if request.session.testsfailed > failed:
         # its own and first_device, when it uses it
@@ -188,6 +264,10 @@ def browsers(request):
             print(f"\n==== {request.node.name} failed, its Firefox windows:\n" + "\n".join(dumps), flush=True)
     for driver in LIVE[started:]:
         quit_firefox(driver)
+    outside = requests_outside_stack(asked)
+    if outside:
+        pytest.fail(f"the pages of {request.node.name} made {len(outside)} request(s) outside the stack (nothing may leave it, "
+                    "docs/accounts.md#telemetry; ALLOWED_HOSTS for one that must be):\n  " + "\n  ".join(outside), pytrace=False)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -197,6 +277,15 @@ def version_banner(request):
     out = os.popen(f"{os.environ.get('FIREFOX_BINARY', '/usr/bin/firefox')} --version 2>/dev/null").read().strip()
     with request.config.pluginmanager.getplugin("capturemanager").global_and_fixture_disabled():
         print(f"\n{out or 'Firefox: version unknown'}, accounts pages {CONTENT}", flush=True)
+    yield
+    # the hosts the pages asked, with how many requests each (the record of what they load)
+    hosts = {}
+    for url, _ in REQUESTS:
+        parts = urlsplit(url)
+        key = f"{parts.scheme}://{parts.hostname}" if parts.hostname else parts.scheme + ":"
+        hosts[key] = hosts.get(key, 0) + 1
+    with request.config.pluginmanager.getplugin("capturemanager").global_and_fixture_disabled():
+        print(f"\nthe pages' {len(REQUESTS)} requests, by host: " + ", ".join(f"{h} {n}" for h, n in sorted(hosts.items())), flush=True)
 
 
 def chrome(driver, script, *args):
