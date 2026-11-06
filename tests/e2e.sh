@@ -1131,6 +1131,10 @@ admin_sql "INSERT INTO ffs_events (at, kind, detail) VALUES (1, 'test', 'old');"
 admin_sql "INSERT INTO ffs_metrics VALUES (60000, 'old.metric', 1, 0);" > /dev/null
 days_ago() { echo $(( ($(date +%s) - $1 * 86400) * 1000 )); }
 admin_sql "INSERT INTO ffs_events (at, kind, detail) VALUES ($(days_ago 60), 'admin', 'audit kept'), ($(days_ago 400), 'admin', 'audit old'), ($(days_ago 60), 'health', 'health old');" > /dev/null
+# a session of before the restart (sessions are in memory: it ends)
+ADMIN_HTTP="http://127.0.0.1:$((PORT + 20))"
+ADMIN_PW=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)
+curl -s -o /dev/null -c "${WORK}/admin-jar" --data-urlencode "password=${ADMIN_PW}" "${ADMIN_HTTP}/login"
 # pruned on the first flush after the start (METRICS_FLUSH_SECONDS=5)
 dc restart ffs-admin > /dev/null 2>&1
 for _ in $(seq 1 30); do
@@ -1141,6 +1145,14 @@ check "$(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'test';")" 0 "o
 check "$(admin_sql "SELECT COUNT(*) FROM ffs_metrics WHERE name = 'old.metric';")" 0 "old metrics pruned"
 check "$(admin_sql "SELECT detail FROM ffs_events WHERE detail IN ('audit kept', 'audit old', 'health old');")" "audit kept" "admin events of 60 days kept (365), others pruned (30)"
 admin_sql "DELETE FROM ffs_events WHERE detail = 'audit kept';" > /dev/null
+echo "== admin UI after a restart: sign in again, back to the page (docs/admin/signing-in.md#when-the-session-ends)"
+check "$(curl -s -o /dev/null -b "${WORK}/admin-jar" -w '%{http_code} %{redirect_url}' "${ADMIN_HTTP}/activity?range=7d")" \
+  "303 ${ADMIN_HTTP}/login?next=%2Factivity%3Frange%3D7d" "a page refreshed after the restart: to the login page, with the page"
+check "$(curl -s -o /dev/null -b "${WORK}/admin-jar" -H 'Accept: text/html' -H "Referer: ${ADMIN_HTTP}/config" -d csrf=x -w '%{http_code} %{redirect_url}' "${ADMIN_HTTP}/health/check")" \
+  "303 ${ADMIN_HTTP}/login?ended=form&next=%2Fconfig" "a form sent after the restart: not sent, to the login page with the page of the form"
+check "$(curl -s -o /dev/null -c "${WORK}/admin-jar" -w '%{http_code} %{redirect_url}' --data-urlencode "password=${ADMIN_PW}" \
+  --data-urlencode "next=/activity?range=7d" "${ADMIN_HTTP}/login")" "303 ${ADMIN_HTTP}/activity?range=7d" "signed in again: back to the page"
+check "$(curl -s -o /dev/null -b "${WORK}/admin-jar" -w '%{http_code}' "${ADMIN_HTTP}/activity?range=7d")" 200 "the page, signed in"
 # the Sync server restarts with the admin UI (restart: true), for the metrics
 check "$(hb)" 200 "/__heartbeat__ after the admin UI restart"
 

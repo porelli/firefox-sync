@@ -6,14 +6,17 @@
     <h1>Firefox Sync admin</h1>
     <p class="hint">Sign in to manage this server</p>
   </div>
+  {{if .FormLost}}<p class="failed" role="status">Your session ended (the admin UI restarted or you were away): sign in again; the form was not sent.</p>{{end}}
+  {{with .NextTitle}}<p class="hint" role="status">Sign in to continue to {{.}}.</p>{{end}}
   {{if eq .Error "password" "1"}}<p class="failed">Wrong password.</p>{{end}}
   {{if eq .Error "sso"}}<p class="failed">Single sign-on failed: this account is not an admin, its email is not verified, or the sign-in expired. Try again.</p>{{end}}
   {{with .HeaderRefused}}<p class="failed">{{.}} is not an admin (ADMIN_ALLOWED_USERS, ADMIN_ALLOWED_GROUPS).</p>{{end}}
-  {{with .HeaderUser}}<p>Signed in by your proxy as {{.}}. <a href="/">Continue</a></p>{{end}}
-  {{with .OIDC}}<p><a class="button" href="/auth/login">Sign in with {{.}}</a></p>{{end}}
+  {{with .HeaderUser}}<p>Signed in by your proxy as {{.}}. <a href="{{$.Home}}">Continue</a></p>{{end}}
+  {{with .OIDC}}<p><a class="button" href="/auth/login{{with $.Next}}?next={{.}}{{end}}">Sign in with {{.}}</a></p>{{end}}
   {{if .Password}}
   {{if .OIDC}}<p class="or">or</p>{{end}}
   <form method="post" action="/login">
+    {{with .Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
     <label for="password">Admin password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" aria-describedby="password-hint" required{{if not .OIDC}} autofocus{{end}}>
     <p class="hint" id="password-hint">{{with .Kubernetes}}<code>ADMIN_PASSWORD</code> in the chart's Secret (or your existingSecret): <code>{{.Kubectl}} get secret {{.Secret}} -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d</code>{{else}}<code>ADMIN_PASSWORD</code> in the .env file of the server{{end}}</p>

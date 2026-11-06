@@ -162,6 +162,8 @@ type App struct {
 	sessions map[string]*session
 	failures []time.Time
 	invites  []time.Time // sent in the last hour
+
+	pages *http.ServeMux // the routes, for the page of a form (formPage)
 }
 
 func serve(ctx context.Context) error {
@@ -360,6 +362,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /maintenance/prune", a.authenticated(a.confirmPrune))
 	mux.HandleFunc("GET /accounts/allowlist/remove", a.authenticated(a.confirmAllowlistRemove))
 	mux.HandleFunc("GET /sync/allowlist/{action}", a.authenticated(a.confirmAllowlist))
+	a.pages = mux
 	return securityHeaders(a.errorPages(mux))
 }
 
@@ -430,7 +433,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		// same-origin: the Referer to ourselves only, for the page of a form sent
+		// without a session (formPage); none to other sites
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})

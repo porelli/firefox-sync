@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -199,6 +200,30 @@ func (o *oidcAuth) take(state string) *pendingLogin {
 	return o.pending(state)
 }
 
+// stateCookieValue: the state, and when there is one the page to go on to after
+// the sign-in, base64url, with a MAC of both: state~next~mac
+func (o *oidcAuth) stateCookieValue(state, next string) string {
+	if next == "" {
+		return state
+	}
+	return state + "~" + base64.RawURLEncoding.EncodeToString([]byte(next)) + "~" + o.mac("next", state+"\x00"+next)
+}
+
+// readStateCookie: the state and the page to go on to of the cookie; next is ""
+// when there is none, or it was not ours or not a safe page
+func (o *oidcAuth) readStateCookie(value string) (state, next string) {
+	state, rest, found := strings.Cut(value, "~")
+	if !found {
+		return state, ""
+	}
+	enc, sum, ok := strings.Cut(rest, "~")
+	raw, err := base64.RawURLEncoding.DecodeString(enc)
+	if !ok || err != nil || !hmac.Equal([]byte(sum), []byte(o.mac("next", state+"\x00"+string(raw)))) {
+		return state, ""
+	}
+	return state, safeNext(string(raw))
+}
+
 func (a *App) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	o := a.auth.oidc
 	if o == nil {
@@ -212,7 +237,9 @@ func (a *App) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	state := o.newState(time.Now().Add(stateLifetime))
 	p := o.pending(state)
-	a.auth.cookie(w, stateCookie, state, "/auth/", int(stateLifetime.Seconds()), http.SameSiteLaxMode)
+	// the page to go on to stays here, in the cookie, bound to the state: the
+	// provider sees the state only
+	a.auth.cookie(w, stateCookie, o.stateCookieValue(state, safeNext(r.URL.Query().Get("next"))), "/auth/", int(stateLifetime.Seconds()), http.SameSiteLaxMode)
 	http.Redirect(w, r, o.config.AuthCodeURL(state, oidc.Nonce(p.nonce), oauth2.S256ChallengeOption(p.verifier)), http.StatusSeeOther)
 }
 
@@ -231,10 +258,6 @@ func (a *App) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.auth.cookie(w, stateCookie, "", "/auth/", -1, http.SameSiteLaxMode)
-	fail := func(who, reason string) {
-		a.failedSignIn(who, "oidc", reason)
-		http.Redirect(w, r, "/login?error=sso", http.StatusSeeOther)
-	}
 	q := r.URL.Query()
 	state := q.Get("state")
 	c, err := r.Cookie(stateCookie)
@@ -244,8 +267,9 @@ func (a *App) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=sso", http.StatusSeeOther)
 		return
 	}
+	cookieState, next := o.readStateCookie(c.Value)
 	var p *pendingLogin
-	if equal(c.Value, state) {
+	if equal(cookieState, state) {
 		p = o.take(state)
 	}
 	if p == nil {
@@ -255,6 +279,11 @@ func (a *App) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Redirect(w, r, "/login?error=sso", http.StatusSeeOther)
 		return
+	}
+	// a valid state: the page to go on to is ours, also for another try
+	fail := func(who, reason string) {
+		a.failedSignIn(who, "oidc", reason)
+		http.Redirect(w, r, loginURL(next, "error", "sso"), http.StatusSeeOther)
 	}
 	if e := q.Get("error"); e != "" {
 		fail("", "provider error "+strings.Map(func(r rune) rune {
@@ -298,7 +327,7 @@ func (a *App) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	a.newSession(w, r, who, "oidc")
 	// the session cookie is SameSite=Strict: a redirect from here still counts as
 	// coming from the provider, a refresh of our own page does not
-	a.render(w, "continue.html", nil)
+	a.render(w, "continue.html", map[string]any{"Next": orHome(next)})
 }
 
 // identify redeems the code and checks the ID token; the error is a short reason

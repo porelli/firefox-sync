@@ -425,7 +425,13 @@ func oidcApp(t *testing.T, f *fakeProvider, vars ...string) (*App, http.Handler)
 // callback URL and the state cookie
 func (f *fakeProvider) start(t *testing.T, h http.Handler) (string, *http.Cookie) {
 	t.Helper()
-	w := get(h, "/auth/login", "192.0.2.1:1", nil, nil)
+	return f.startAt(t, h, "/auth/login")
+}
+
+// startAt: start from a sign-in link, /auth/login?next= for one
+func (f *fakeProvider) startAt(t *testing.T, h http.Handler, login string) (string, *http.Cookie) {
+	t.Helper()
+	w := get(h, login, "192.0.2.1:1", nil, nil)
 	to, err := url.Parse(w.Header().Get("Location"))
 	if w.Code != http.StatusSeeOther || err != nil || !strings.HasPrefix(to.String(), f.URL+"/authorize?") {
 		t.Fatalf("start: %d %s", w.Code, to)
@@ -441,7 +447,7 @@ func (f *fakeProvider) start(t *testing.T, h http.Handler) (string, *http.Cookie
 			state = c
 		}
 	}
-	if state == nil || state.Value != q.Get("state") || !state.HttpOnly || !state.Secure || state.SameSite != http.SameSiteLaxMode || state.MaxAge > 600 {
+	if state == nil || !(state.Value == q.Get("state") || strings.HasPrefix(state.Value, q.Get("state")+"~")) || !state.HttpOnly || !state.Secure || state.SameSite != http.SameSiteLaxMode || state.MaxAge > 600 {
 		t.Fatalf("state cookie %+v", state)
 	}
 	code := randomToken()

@@ -37,6 +37,16 @@ signed in (password)
 
 Refused sign-ins are logged too, as `sign-in` events: a wrong password, not an admin, an email not verified, a sign-in that did not start here. Anybody can cause those, so they have their own share of the event log and the alerts, and cannot push the sign-ins and the changes out. A callback with no state cookie is not logged at all, a bad state at most every 10 minutes.
 
+## When the session ends
+
+Sessions live in the admin UI's memory: a restart of its container (an upgrade, `docker compose up -d` with a changed setting, a new pod) ends them all, and a session lasts 12 hours at most ([Sessions](README.md#sessions)). You then sign in again, and come back to where you were:
+
+- **A page you open or refresh** takes you to the login page, which says "Sign in to continue to" the page. Once signed in, with the password or OpenID Connect, you are on that page again, with its query (the filter of the Activity page, a search).
+- **A form you send** (a button that changes something) is not sent: the login page says "Your session ended (the admin UI restarted or you were away): sign in again; the form was not sent." and brings you back to the page of the form. Check it and send it again. The admin UI never replays a form.
+- **The trusted header** signs you in on the request itself: the page opens as asked, with no login page in between.
+
+Only pages of the admin UI count, as a path on the same server: any other address, the login page itself or a static file brings you to the overview instead, so a link cannot send you elsewhere after the sign-in. With OpenID Connect the page waits in the admin UI's signed state cookie; the provider never sees it. Scripts that post without a session (no `text/html` in `Accept`) still get `401 Not signed in`.
+
 ## Who is an admin
 
 With OpenID Connect or the header, only the users you list are admins. Everybody else the provider knows is refused:

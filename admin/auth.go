@@ -380,9 +380,17 @@ func (a *App) authenticated(next handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s := a.currentSession(w, r)
 		if s == nil {
-			if r.Method == http.MethodGet {
+			switch {
+			case r.Method == http.MethodGet || r.Method == http.MethodHead:
+				// back to this page after the sign-in
+				http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			case browser(r) && r.URL.Path == "/logout":
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
-			} else {
+			case browser(r):
+				// a form sent after a restart or an expiry: not replayed, the admin
+				// signs in and finds the page of the form again
+				http.Redirect(w, r, loginURL(a.formPage(r), "ended", "form"), http.StatusSeeOther)
+			default:
 				http.Error(w, "Not signed in", http.StatusUnauthorized)
 			}
 			return
@@ -398,7 +406,13 @@ func (a *App) authenticated(next handler) http.HandlerFunc {
 }
 
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{"Password": a.auth.password != nil, "Error": r.URL.Query().Get("error"), "Kubernetes": a.deployment.Kubernetes()}
+	q := r.URL.Query()
+	next := safeNext(q.Get("next"))
+	data := map[string]any{"Password": a.auth.password != nil, "Error": q.Get("error"), "Kubernetes": a.deployment.Kubernetes(),
+		"Next": next, "Home": orHome(next), "FormLost": q.Get("ended") == "form"}
+	if next != "" {
+		data["NextTitle"] = nextTitle(next)
+	}
 	if a.auth.oidc != nil {
 		data["OIDC"] = a.auth.oidc.name
 	}
@@ -446,11 +460,11 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		a.failures = append(a.failures, time.Now())
 		a.mu.Unlock()
 		a.failedSignIn("", "password", "")
-		http.Redirect(w, r, "/login?error=password", http.StatusSeeOther)
+		http.Redirect(w, r, loginURL(r.PostFormValue("next"), "error", "password"), http.StatusSeeOther)
 		return
 	}
 	a.newSession(w, r, "", "password")
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, orHome(r.PostFormValue("next")), http.StatusSeeOther)
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request, s *session) {
