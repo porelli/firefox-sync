@@ -37,16 +37,16 @@ func TestOauthKeysSetupCheck(t *testing.T) {
 	up := Component{Name: oauthKeysCheck, Up: true, Detail: "http://fxa-auth:9000/v1/jwks answers"}
 	down := Component{Name: oauthKeysCheck, Error: "Get \"http://fxa-auth:9010/v1/jwks\": dial tcp 172.18.0.5:9010: connect: connection refused"}
 
-	c := oauthKeysSetupCheck(up, deployment{}, "http://fxa-auth:9000/v1")
+	c := oauthKeysSetupCheck(up, deployment{}, "http://fxa-auth:9000/v1", true)
 	if !c.OK || c.Name != "Sign-in keys (FXA_OAUTH_SERVER_URL)" || !strings.Contains(c.Text, "http://fxa-auth:9000/v1/jwks answers") {
 		t.Errorf("answering: %+v", c)
 	}
-	c = oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "no keys"}, deployment{}, "http://fxa-auth:9000/v1")
+	c = oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "no keys"}, deployment{}, "http://fxa-auth:9000/v1", true)
 	if c.OK || !strings.Contains(c.Text, "which do not answer (no keys)") || strings.Contains(c.Text, "container-to-container") {
 		t.Errorf("not answering, the right URL: %+v", c)
 	}
 	for _, d := range []deployment{{}, {kind: "quadlets"}} {
-		c = oauthKeysSetupCheck(down, d, "http://fxa-auth:9010/v1")
+		c = oauthKeysSetupCheck(down, d, "http://fxa-auth:9010/v1", true)
 		for _, want := range []string{
 			"FXA_OAUTH_SERVER_URL is http://fxa-auth:9010/v1: ",
 			"FXA_OAUTH_SERVER_URL is container-to-container: inside the stack the accounts API is always fxa-auth:9000; FXA_AUTH_EXPORT_PORT is the host port for your reverse proxy.",
@@ -59,12 +59,25 @@ func TestOauthKeysSetupCheck(t *testing.T) {
 		}
 	}
 	// (even should something answer there)
-	if c = oauthKeysSetupCheck(up, deployment{}, "http://fxa-auth:9010/v1"); c.OK || !strings.Contains(c.Text, "container-to-container") || strings.Contains(c.Text, "()") {
+	if c = oauthKeysSetupCheck(up, deployment{}, "http://fxa-auth:9010/v1", true); c.OK || !strings.Contains(c.Text, "container-to-container") || strings.Contains(c.Text, "()") {
 		t.Errorf("fxa-auth:9010 answering: %+v", c)
+	}
+	// whose accounts get in: the self-hosted ones only, Mozilla's only (said once the keys answer)
+	own := "The Sync server accepts only accounts of this accounts server (FXA_OAUTH_SERVER_URL): Mozilla's accounts are refused."
+	mozilla := "The Sync server accepts Mozilla's accounts (FXA_OAUTH_SERVER_URL)"
+	if c = oauthKeysSetupCheck(up, deployment{}, "http://fxa-auth:9000/v1", true); !c.OK || !strings.Contains(c.Text, own) || strings.Contains(c.Text, mozilla) {
+		t.Errorf("self-hosted accounts: %+v", c)
+	}
+	moz := Component{Name: oauthKeysCheck, Up: true, Detail: "https://oauth.accounts.firefox.com/v1/jwks answers"}
+	if c = oauthKeysSetupCheck(moz, deployment{}, "https://oauth.accounts.firefox.com/v1", false); !c.OK || !strings.Contains(c.Text, mozilla+", and only those: accounts of a self-hosted accounts server are refused.") || strings.Contains(c.Text, own) {
+		t.Errorf("Mozilla's accounts: %+v", c)
+	}
+	if c = oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "no keys"}, deployment{}, "http://fxa-auth:9000/v1", true); strings.Contains(c.Text, "accepts") {
+		t.Errorf("not answering, nothing said of whose accounts: %+v", c)
 	}
 	// the chart: its own URL, never the host's ports
 	k8s := deployment{kind: "kubernetes", prefix: "ffs-firefox-sync", release: "ffs", secret: "s"}
-	if c = oauthKeysSetupCheck(down, k8s, "http://ffs-firefox-sync-fxa-auth:9010/v1"); strings.Contains(c.Text, "FXA_AUTH_EXPORT_PORT") || !strings.Contains(c.Text, "fxa.oauthServerUrl") {
+	if c = oauthKeysSetupCheck(down, k8s, "http://ffs-firefox-sync-fxa-auth:9010/v1", true); strings.Contains(c.Text, "FXA_AUTH_EXPORT_PORT") || !strings.Contains(c.Text, "fxa.oauthServerUrl") {
 		t.Errorf("kubernetes: %+v", c)
 	}
 }

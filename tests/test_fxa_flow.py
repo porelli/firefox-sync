@@ -179,6 +179,92 @@ def test_second_device_sign_in(account):
     assert sorted(stored) == ["bookmark000", "bookmark001", "bookmark002"]
 
 
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def jwt_parts(token):
+    """The header and claims of a JWT (the accounts' access tokens are JWTs)"""
+    def part(text):
+        return json.loads(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+    header, claims, _ = token.split(".")
+    return part(header), part(claims)
+
+
+def forge_jwt(header, claims):
+    """A JWT signed RS256 by a key made now: none of the accounts' keys (/v1/jwks)"""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    signed = f"{b64url(json.dumps(header).encode())}.{b64url(json.dumps(claims).encode())}"
+    return f"{signed}.{b64url(key.sign(signed.encode(), padding.PKCS1v15(), hashes.SHA256()))}"
+
+
+def tokenserver_rows():
+    """The tokenserver's users (their node, generation, keys) as the Sync server's own database
+    has them; None where the tests run without its URL (the chart's test pods)"""
+    url = os.environ.get("SYNC_TOKENSERVER__DATABASE_URL")
+    if not url:
+        return None
+    from sqlalchemy import create_engine
+    from sqlalchemy.sql import text as sqltext
+    with create_engine(url).connect() as conn:
+        return sorted(tuple(row) for row in conn.execute(sqltext(
+            "SELECT uid, email, nodeid, generation, keys_changed_at, client_state, replaced_at FROM users")))
+
+
+def test_foreign_tokens_are_refused(account):
+    # the Sync server verifies Firefox's access token with the keys of FXA_OAUTH_SERVER_URL
+    # (its /v1/jwks, else its /v1/verify): a token of other accounts (Mozilla's) is refused,
+    # whatever its claims say, and nothing is written for it
+    session, key_id = account["session"], account["key_id"]
+    real = authorize(session)
+    kids = [key["kid"] for key in requests.get(f"{AUTH}/v1/jwks", timeout=30).json()["keys"]]
+    if real.count(".") == 2:
+        header, claims = jwt_parts(real)
+        assert claims["sub"] == session.uid and SYNC_SCOPE in claims["scope"], (header, claims)
+        assert header["kid"] in kids, (header, kids)
+    else:
+        # (an opaque access token: the claims of the accounts' JWTs)
+        header = {"alg": "RS256", "typ": "at+jwt", "kid": kids[0]}
+        claims = {"iss": AUTH, "aud": FIREFOX_CLIENT_ID, "client_id": FIREFOX_CLIENT_ID, "sub": session.uid, "scope": SYNC_SCOPE}
+    # the same claims, just issued, valid for an hour
+    now = int(time.time())
+    forged = {**claims, "iat": now, "exp": now + 3600, "jti": uuid.uuid4().hex}
+    tokens = {
+        # (b) another key, a kid the accounts never had
+        "unknown key": forge_jwt({**header, "kid": f"foreign-{uuid.uuid4().hex[:8]}"}, forged),
+        # (c) the accounts' kid, another key: the signature does not match
+        "accounts' kid, another key": forge_jwt(header, forged),
+        # (d) not a JWT: what the Sync server asks FXA_OAUTH_SERVER_URL's /v1/verify about
+        "opaque": uuid.uuid4().hex + uuid.uuid4().hex,
+    }
+    before = tokenserver_rows()
+
+    def ask(token):
+        return requests.get(f"{SYNC}/1.0/sync/1.5", headers={"Authorization": f"Bearer {token}", "X-KeyID": key_id}, timeout=30)
+
+    # (a) the accounts' own token: a Sync token for this account
+    res = ask(real)
+    assert res.status_code == 200 and res.json()["uid"] == account["uid"], res.text
+    seen = {}
+    for name, token in tokens.items():
+        res = ask(token)
+        seen[name] = res.status_code
+        assert res.status_code in (401, 403), (name, res.status_code, res.text)
+        assert "api_endpoint" not in res.text and "invalid-credentials" in res.text, (name, res.text)
+    print(f"foreign tokens ({'JWT' if real.count('.') == 2 else 'opaque'} access tokens here): {seen}")
+    # no user row, no node assignment made or changed for them
+    assert tokenserver_rows() == before, "the tokenserver's users changed for a refused token"
+    # the opaque token was asked only of the stack's accounts API (tests/e2e-fxa.sh counts its
+    # refused /verify in fxa-auth's log: this test sends none itself)
+    oauth = os.environ.get("SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL")
+    if oauth:
+        assert urlparse(oauth).hostname == "fxa-auth" and urlparse(oauth).port == 9000, oauth
+    # and the real token still works after them
+    assert ask(real).status_code == 200
+
+
 def test_wrong_password_rejected():
     with pytest.raises(Exception):
         Client(server_url=f"{AUTH}/v1").login(EMAIL, "not-the-password")

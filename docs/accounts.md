@@ -186,4 +186,8 @@ Privacy, plainly:
 - The accounts service rate-limits sign-in attempts itself, in Redis, with upstream's `rate-limit-rules.txt`. For example: 5 failed sign-ins per IP address and email in 15 minutes. It reads the client's address from `X-Forwarded-For`, see [Client IP address](reverse-proxy.md#client-ip-address).
 - Not available: payments and subscriptions, the recovery phone (SMS), sign-in with Google or Apple, and the deferred clean-up tasks and event notifications to other services. They need Google Cloud. The [security history](#security-history) does not.
 
+### Only your own accounts
+
+A Sync server with self-hosted accounts syncs only the accounts of that accounts service. Mozilla's accounts don't work there, and an account of another self-hosted server doesn't either. The reason is the token check. Firefox sends the Sync server an OAuth access token, and the Sync server checks it with `FXA_OAUTH_SERVER_URL`, your accounts service. A JWT has to be signed by one of its keys (`/jwks`). Any other token is sent to its `/verify`, and Firefox's tokens from these accounts are of that kind. A token signed by Mozilla's accounts, or by any other key, is refused with 401 `invalid-credentials`, and the tokenserver records nothing for it. The tests check this on every release ([Testing](development/testing.md)). The admin UI's setup check **Sign-in keys** says so too. To sync a Mozilla account, use a Sync server set up with Mozilla's accounts, the default.
+
 Upgrades: [Upgrading](upgrading.md#self-hosted-accounts). The tests: [Testing](development/testing.md).

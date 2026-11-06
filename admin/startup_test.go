@@ -264,11 +264,11 @@ func TestPublicChecksGoThroughTheParts(t *testing.T) {
 }
 
 func TestStartingSetupCheck(t *testing.T) {
-	c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Waiting: true, Error: "waiting for Accounts API: checked as soon as it is up"}, deployment{}, "http://fxa-auth:9000/v1")
+	c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Waiting: true, Error: "waiting for Accounts API: checked as soon as it is up"}, deployment{}, "http://fxa-auth:9000/v1", true)
 	if !c.OK || strings.Contains(c.Text, "nobody gets a Sync token") || !strings.Contains(c.Text, "waiting for Accounts API") {
 		t.Errorf("waiting: %+v", c)
 	}
-	if c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "connection refused"}, deployment{}, "http://fxa-auth:9000/v1"); c.OK || !strings.Contains(c.Text, "nobody gets a Sync token") {
+	if c := oauthKeysSetupCheck(Component{Name: oauthKeysCheck, Error: "connection refused"}, deployment{}, "http://fxa-auth:9000/v1", true); c.OK || !strings.Contains(c.Text, "nobody gets a Sync token") {
 		t.Errorf("down: %+v", c)
 	}
 }

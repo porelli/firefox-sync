@@ -123,7 +123,7 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 	}
 	for _, comp := range components {
 		if comp.Name == oauthKeysCheck {
-			checks = append(checks, oauthKeysSetupCheck(comp, a.deployment, os.Getenv("FXA_OAUTH_SERVER_URL")))
+			checks = append(checks, oauthKeysSetupCheck(comp, a.deployment, os.Getenv("FXA_OAUTH_SERVER_URL"), a.fxa != nil))
 		}
 	}
 	if a.fxa != nil {
@@ -155,8 +155,10 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 // oauthKeysSetupCheck: the Sync server checks every sign-in of Firefox with the keys of
 // FXA_OAUTH_SERVER_URL (the hidden component of the health checks, oauthKeysCheck). Pointing
 // at the stack's accounts API on another port than its own (fxa-auth:9010, a port of the host
-// copied over): said as such, it never answers there
-func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupCheck {
+// copied over): said as such, it never answers there. When the keys answer, whose accounts
+// that lets in: a token signed by other keys (Mozilla's, with self-hosted accounts) is refused
+// (tests/test_fxa_flow.py, the foreign tokens)
+func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string, selfHosted bool) setupCheck {
 	c := setupCheck{Name: oauthKeysCheck, OK: comp.Up, Text: "The Sync server checks every sign-in of Firefox with these keys: " + comp.Detail + ".", Checked: comp.Checked, Next: comp.Next}
 	switch {
 	case comp.pending():
@@ -164,6 +166,12 @@ func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupChe
 		c.OK, c.Text = true, "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL: "+comp.Error+"."
 	case !comp.Up:
 		c.Text = "The Sync server checks every sign-in of Firefox with the keys of FXA_OAUTH_SERVER_URL, which do not answer (" + comp.Error + "): nobody gets a Sync token. " + d.checkOAuth()
+	case selfHosted:
+		c.Text += " The Sync server accepts only accounts of this accounts server (FXA_OAUTH_SERVER_URL): Mozilla's accounts are refused."
+	case mozillaOAuth(oauthURL):
+		c.Text += " The Sync server accepts Mozilla's accounts (FXA_OAUTH_SERVER_URL), and only those: accounts of a self-hosted accounts server are refused."
+	default:
+		c.Text += " The Sync server accepts only accounts of the accounts server of FXA_OAUTH_SERVER_URL: Mozilla's accounts are refused."
 	}
 	if hint := oauthInternalPort(oauthURL); hint != "" && d.Kubernetes() == nil {
 		c.OK = false
@@ -174,6 +182,16 @@ func oauthKeysSetupCheck(comp Component, d deployment, oauthURL string) setupChe
 		c.Text += "."
 	}
 	return c
+}
+
+// mozillaOAuth: FXA_OAUTH_SERVER_URL at Mozilla's accounts (oauth.accounts.firefox.com)
+func mozillaOAuth(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "accounts.firefox.com" || strings.HasSuffix(host, ".accounts.firefox.com")
 }
 
 // oauthInternalPort: FXA_OAUTH_SERVER_URL at the stack's accounts API (fxa-auth, the chart's

@@ -1002,6 +1002,10 @@ fi
 
 if runs flow; then
 echo "== sign-up, OAuth and sync through self-hosted FxA"
+# the tokens the accounts did not sign (test_foreign_tokens_are_refused): the opaque one goes
+# to FXA_OAUTH_SERVER_URL's /verify, the stack's fxa-auth, which refuses it (400)
+refused_verify() { dc logs --no-log-prefix fxa-auth 2>&1 | grep -c '"event":"route./verify.400'; }
+verify_before=$(refused_verify)
 dc run --rm -T --no-deps --user root \
   -v "${TESTS}:/tests:ro" -v "${PROJECT}_caddy-ca:/caddy-ca:ro" \
   -e REQUESTS_CA_BUNDLE=/caddy-ca/root.crt \
@@ -1011,6 +1015,7 @@ dc run --rm -T --no-deps --user root \
   --entrypoint /bin/sh syncstorage \
   -c "cd /app && $(pytest_sh "/tests/test_fxa_flow.py ${PYTEST_ARGS}")" < /dev/null
 check "$?" 0 "self-hosted FxA flow tests"
+check "$(( $(refused_verify) - verify_before ))" 1 "the opaque token of another accounts server refused by the stack's fxa-auth (/v1/verify 400), where the tokenserver asked"
 fi
 
 admin_errors() { dc logs ffs-admin 2>&1 | grep -E '(pruning|metrics|event log|database size|rendering [^:]*): '; }
