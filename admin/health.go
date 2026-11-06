@@ -281,6 +281,8 @@ func newHealth(app *App) *Health {
 				return err
 			}},
 		)
+		// nothing leaves the stack: the accounts pages' telemetry settings (telemetry.go)
+		h.checks = append(h.checks, h.telemetryCheckOf(content, env("FXA_CONTENT_URL", "")))
 		// the optional pairing server (COMPOSE_PROFILES=pairing): its version is in the heartbeat,
 		// not compared with the releases (the crate version lags behind the tags)
 		if env("FXA_PAIRING_URL", "") != "" {

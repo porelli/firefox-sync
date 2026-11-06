@@ -125,6 +125,9 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		if comp.Name == oauthKeysCheck {
 			checks = append(checks, oauthKeysSetupCheck(comp, a.deployment, os.Getenv("FXA_OAUTH_SERVER_URL"), a.fxa != nil))
 		}
+		if comp.Name == telemetryCheck {
+			checks = append(checks, telemetrySetupCheck(comp, a.deployment))
+		}
 	}
 	if a.fxa != nil {
 		c := accountsSMTPCheck(smtpServer())
@@ -145,7 +148,7 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 	// checked now, at every load of the overview, but those of the health checks
 	now := time.Now()
 	for i := range checks {
-		if checks[i].Checked.IsZero() && checks[i].Name != oauthKeysCheck {
+		if checks[i].Checked.IsZero() && checks[i].Name != oauthKeysCheck && checks[i].Name != telemetryCheck {
 			checks[i].Checked = now
 		}
 	}

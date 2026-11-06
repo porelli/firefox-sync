@@ -1203,7 +1203,8 @@ def test_public_urls_and_certificates(admin):
         assert seconds and int(seconds.group(1)) > 14 * 86400, (host, metrics[-2000:])
     # FXA_OAUTH_SERVER_URL answers, the node is the public Sync URL
     checks = admin.page().split('<table id="setup"')[1].split("</table>")[0]
-    for name in ("Sync node", r"Sign-in keys \(FXA_OAUTH_SERVER_URL\)", r"Account emails \(FXA_EMAIL_DOMAIN\)"):
+    # (and the accounts pages send nothing out of the stack: their Glean endpoint is themselves)
+    for name in ("Sync node", r"Sign-in keys \(FXA_OAUTH_SERVER_URL\)", r"Account emails \(FXA_EMAIL_DOMAIN\)", "Telemetry of the accounts pages"):
         assert re.search(r"<td>" + name + r'</td><td><span class="ok">ok</span>', checks), (name, checks)
 
 
