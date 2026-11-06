@@ -21,6 +21,8 @@ Firefox keeps signing in at `accounts.firefox.com`, and stores its Sync data on 
 
 To go back to Mozilla's servers: sign out, reset `identity.sync.tokenserver.uri` in `about:config`, and sign in again.
 
+Or, instead of `about:config`, a [user.js file](#a-userjs-file-instead-of-aboutconfig) with `user_pref("identity.sync.tokenserver.uri", "https://sync.example.com/1.0/sync/1.5");`.
+
 ### Android
 
 1. Go to App Menu `⋮` > `Settings` > `About Firefox`, and tap the logo 5 times. Firefox shows `debug menu enabled`.
@@ -49,6 +51,8 @@ Firefox is pointed to your accounts server, which tells it where your Sync serve
 
 To go back to Mozilla's accounts: sign out, reset `identity.fxaccounts.autoconfig.uri` in `about:config`, and restart Firefox.
 
+Or, instead of `about:config`, a [user.js file](#a-userjs-file-instead-of-aboutconfig) with `user_pref("identity.fxaccounts.autoconfig.uri", "https://accounts.example.com");`.
+
 ### Android
 
 1. Go to App Menu `⋮` > `Settings` > `About Firefox`, and tap the logo 5 times. Firefox shows `debug menu enabled`.
@@ -63,6 +67,23 @@ To go back to Mozilla's accounts: sign out, reset `identity.fxaccounts.autoconfi
 1. Go back to the top of the main settings menu, and tap `Advanced Sync Settings`.
 1. Turn on `Use Custom FxA Content Server`, and set `Custom Account Content Server URI` to `https://accounts.example.com`.
 1. Sign in, and turn on Sync.
+
+## A user.js file instead of about:config
+
+On a computer (Windows, macOS, Linux), the one setting above can come from a file, `user.js`, in the folder of the Firefox profile. Firefox reads it at every start and applies its preferences as if set in `about:config`: Sync reads `identity.fxaccounts.autoconfig.uri` from the preferences when it signs in, wherever the value came from. Handy to set up several computers, or someone who would rather not touch `about:config`.
+
+1. Get the file: **Download user.js** on the admin UI's [Connect a device](#from-the-admin-ui) page, or write a plain text file named `user.js` (not `user.js.txt`) with the one line of your case above. The invitation email has that line too.
+1. In Firefox, open `about:profiles`. In the profile marked `This is the profile in use`, click `Open Folder` (`Show in Finder` on macOS).
+1. Put `user.js` in that folder. If the folder already has a `user.js`, add the line to the end of that file instead of replacing it: it may hold other settings.
+1. Restart Firefox, then sign in and turn on Sync as above.
+
+To go back: delete `user.js` (or its line), reset the preference in `about:config`, and restart Firefox. Resetting it in `about:config` alone lasts until the next start: Firefox applies `user.js` again.
+
+With Mozilla's accounts, signing out of Firefox resets `identity.sync.tokenserver.uri` (with the other server addresses it keeps for an account) until the next start, when `user.js` sets it again: restart Firefox before you sign in again. With self-hosted accounts, `identity.fxaccounts.autoconfig.uri` is not reset, and Firefox reads the other addresses from your accounts server at every sign-in.
+
+### Why no policy or MDM profile
+
+Firefox's [enterprise policies](https://mozilla.github.io/policy-templates/) (`policies.json`, Windows Group Policy, macOS configuration profiles) cannot set these two preferences: their `Preferences` policy takes only some prefixes (`browser.`, `network.`, `identity.fxaccounts.toolbar.` and the like, not `identity.fxaccounts.autoconfig.uri` or `identity.sync.tokenserver.uri`), and no policy of their own exists for them. So there is no profile to push from an MDM: `user.js` is the file for computers. Firefox for Android and iOS take these addresses only from their debug settings, by hand.
 
 ## Pair a phone
 
@@ -81,5 +102,8 @@ Open `about:sync-log` on the desktop: the newest logs show no errors.
 ## From the admin UI
 
 The admin UI's **Connect a device** page, in its menu, shows the steps of this page with your server's values. With self-hosted accounts, its [invitations](admin/accounts.md#invitations) send them by email.
+
+- **Download user.js**, under Firefox on a computer: the [user.js file](#a-userjs-file-instead-of-aboutconfig) of your server, its one line under a comment that says what it is and how to undo it.
+- **Show QR code**, under the address a phone needs (the accounts server; with Mozilla's accounts, the Sync server): the address as a QR code. Scan it with the phone's camera to copy the address, then paste it in Firefox's debug settings instead of typing it. The address is written under the code too. The code is drawn by the admin UI itself, without a script or an outside service.
 
 ![The Connect a device page](images/admin/connect.png)

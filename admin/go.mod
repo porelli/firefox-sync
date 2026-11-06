@@ -7,7 +7,9 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/makiuchi-d/gozxing v0.1.1
 	golang.org/x/oauth2 v0.37.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -17,4 +19,5 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 )

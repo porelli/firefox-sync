@@ -402,6 +402,13 @@ dl.addresses code { display: inline-block; padding: .35rem .6rem; font-size: .9r
 .steps h2 .icon { color: var(--accent-text); }
 .steps ol { margin: .5rem 0 0; padding-left: 1.25rem; }
 .steps li { margin: .35rem 0; }
+/* the QR code of an address, folded: a camera copies it from the screen */
+details.qr { margin-top: .4rem; }
+details.qr .qr-box { display: inline-flex; flex-direction: column; align-items: center; gap: .4rem; margin-top: .4rem; padding: .6rem; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+details.qr svg.qr { display: block; width: 12rem; max-width: 100%; height: auto; }
+details.qr .qr-box code { border: 0; padding: 0; background: none; color: #000; font-size: .8rem; user-select: all; }
+.steps .card h3 { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.steps .card .button { margin-top: .25rem; }
 
 /* ---- charts ---- */
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr)); gap: 1.25rem; }

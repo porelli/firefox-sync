@@ -81,13 +81,13 @@ Saving the policy removes only the entries the page showed. An invitation sent f
 It then sends them a plain text email through the stack's SMTP server (`FXA_SMTP_*`, sender `FXA_SMTP_SENDER`):
 
 - the link to create their account, `FXA_CONTENT_URL/?email=<their email>`, which opens the sign-up page with that email;
-- the steps to point Firefox on a computer, Android and iOS to this server, and to pair a phone from a computer.
+- the steps to point Firefox on a computer, Android and iOS to this server, and to pair a phone from a computer. For a computer, the email also has the one line of a [user.js file](../firefox.md#a-userjs-file-instead-of-aboutconfig), as text to save in a file named `user.js`: an email attaches nothing, and the invitee cannot open the admin UI's download.
 
 No HTML, no images, no tracking: the links are the plain URLs of your server. Without an SMTP server the entry is still added, and the page says the email was not sent.
 
 At most 20 invitations an hour go out, whoever sends them, so a stolen session cannot make your SMTP server a spammer. Each one is in the event log.
 
-**Connect a device**, in the menu, shows the same steps on a page, with this server's values. See [From the admin UI](../firefox.md#from-the-admin-ui).
+**Connect a device**, in the menu, shows the same steps on a page, with this server's values, a **Download user.js** button for computers, and QR codes of the addresses a phone needs. See [From the admin UI](../firefox.md#from-the-admin-ui).
 
 ## Sign out and disable
 

@@ -17,8 +17,8 @@
   <p>Firefox signs in with a Mozilla account as usual, and syncs with this server instead of Mozilla's once pointed to it. Sign out of Firefox first if it is already signed in.</p>
   {{end}}
   <dl class="addresses">
-    {{with .Content}}<div><dt>Accounts server</dt><dd><code>{{.}}</code></dd></div>{{end}}
-    <div><dt>Sync server</dt><dd><code>{{.Tokenserver}}</code></dd></div>
+    {{with .Content}}<div><dt>Accounts server</dt><dd><code>{{.}}</code>{{with $.ContentQR}}{{template "qr" .}}{{end}}</dd></div>{{end}}
+    <div><dt>Sync server</dt><dd><code>{{.Tokenserver}}</code>{{with .TokenserverQR}}{{template "qr" .}}{{end}}</dd></div>
     {{with .Pairing}}<div><dt>Pairing server</dt><dd><code>{{.}}</code></dd></div>{{end}}
   </dl>
   {{with .Signup}}<p>New here? Create the account first at <a href="{{.}}">{{.}}</a>, then type the code sent by email.</p>{{end}}
@@ -29,9 +29,17 @@
 <section class="card">
   <h2>{{if eq .Device "Firefox on a computer"}}{{template "icon" "computer"}}{{else}}{{template "icon" "phone"}}{{end}}{{.Device}}</h2>
   <ol>{{range .Steps}}<li>{{.}}</li>{{end}}</ol>
+  {{if .UserJS}}
+  <h3 id="user-js">Or with a user.js file</h3>
+  <p>Instead of <code>about:config</code>: a file with one line, <code>{{$.UserJSLine}}</code></p>
+  <a class="button secondary" href="/connect/user.js" download="user.js">Download user.js</a>
+  <ol>{{range .UserJS}}<li>{{.}}</li>{{end}}</ol>
+  <p class="hint">{{.UserJSNote}}</p>
+  {{end}}
 </section>
 {{end}}
 </div>
 <p class="hint">Sync problems: open <code>about:sync-log</code> in Firefox on a computer.</p>
 </main>
 {{template "foot"}}
+{{define "qr"}}<details class="qr"><summary>Show QR code</summary><div class="qr-box">{{.SVG}}<code>{{.URL}}</code></div><p class="hint">Scan it with the phone's camera to copy the address, then paste it in Firefox.</p></details>{{end}}

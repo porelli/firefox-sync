@@ -306,6 +306,12 @@ def test_connect_a_device(admin):
     steps = page.split('id="device-steps"')[1]
     assert f"identity.sync.tokenserver.uri and set it to {domain}/1.0/sync/1.5" in steps, steps[:2000]
     assert "Custom Sync Token Server URI" in steps and "autoconfig" not in steps
+    # the user.js of a computer, and the tokenserver as a QR code for a phone
+    res = admin.http.get(f"{ADMIN}/connect/user.js", timeout=30)
+    assert res.status_code == 200 and res.headers["Content-Type"] == "application/javascript", (res.status_code, res.headers)
+    assert [line for line in res.text.splitlines() if not line.startswith("//")] == [f'user_pref("identity.sync.tokenserver.uri", "{domain}/1.0/sync/1.5");'], res.text
+    assert 'href="/connect/user.js"' in steps and "restart Firefox before you sign in again" in steps, steps[:3000]
+    assert page.count('<svg class="qr"') == 1 and f'aria-label="QR code of the Sync server address, {domain}/1.0/sync/1.5"' in page, page[:3000]
 
 
 def config_row(page, setting):

@@ -1256,8 +1256,12 @@ def test_invite_sign_up_and_remove(admin):
     text = message["Text"]
     # this server's values, plain text only
     for part in (f"identity.fxaccounts.autoconfig.uri to {CONTENT}", f"{CONTENT}/?email={requests.utils.quote(address, safe='')}",
-                 f"Custom Mozilla account server to {CONTENT}. Leave Custom Sync server empty", f"Custom Account Content Server URI to {CONTENT}"):
+                 f"Custom Mozilla account server to {CONTENT}. Leave Custom Sync server empty", f"Custom Account Content Server URI to {CONTENT}",
+                 # the user.js line as text, no file attached, and where it goes
+                 f'plain text file named user.js (not user.js.txt):\r\n     user_pref("identity.fxaccounts.autoconfig.uri", "{CONTENT}");',
+                 "open about:profiles", "Open Folder (Show in Finder on macOS)", "delete user.js (or its line)"):
         assert part in text, (part, text)
+    assert not message.get("Attachments"), message.get("Attachments")
     assert not message.get("HTML"), "an HTML part"
     row = allowlist_row(admin, address)
     assert row and "not signed up yet" in row and re.search(r"invited \d{4}-\d\d-\d\d", row), row
@@ -1318,6 +1322,23 @@ def test_connect_a_device_page(admin):
     for part in (f"identity.fxaccounts.autoconfig.uri to {CONTENT}", f"Custom Mozilla account server to {CONTENT}. Leave Custom Sync server empty",
                  "tap the Firefox logo 5 times", "Connect another device", "wss://pairing.fxa.test"):
         assert part in steps, (part, steps[:3000])
+    page = admin.get("/connect")
+    # Firefox on a computer: the user.js download, and the steps to put it in the profile
+    assert '<a class="button secondary" href="/connect/user.js" download="user.js">Download user.js</a>' in steps, steps[:3000]
+    for part in ("about:profiles", "Open Folder (Show in Finder on macOS)", "add the line to the end of that file instead of replacing it",
+                 "Firefox applies user.js at every start"):
+        assert part in steps, (part, steps[:3000])
+    res = admin.http.get(f"{ADMIN}/connect/user.js", timeout=30)
+    assert res.status_code == 200 and res.headers["Content-Type"] == "application/javascript", (res.status_code, res.headers)
+    assert res.headers["Content-Disposition"] == 'attachment; filename="user.js"', res.headers
+    assert [line for line in res.text.splitlines() if not line.startswith("//")] == [f'user_pref("identity.fxaccounts.autoconfig.uri", "{CONTENT}");'], res.text
+    # signed out: the sign-in page, no file
+    res = requests.get(f"{ADMIN}/connect/user.js", timeout=30)
+    assert urlsplit(res.url).path == "/login" and "user_pref" not in res.text, (res.url, res.text[:300])
+    # a phone: the accounts server as a QR code (folded), named, with its address under it
+    addresses = page.split('<dl class="addresses">')[1].split("</dl>")[0]
+    assert addresses.count('<svg class="qr"') == 1 and "<summary>Show QR code</summary>" in addresses, addresses[:3000]
+    assert f'aria-label="QR code of the accounts server address, {CONTENT}"' in addresses and f"</svg><code>{CONTENT}</code>" in addresses, addresses[:3000]
 
 
 def config_row(page, setting):

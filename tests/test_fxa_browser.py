@@ -151,7 +151,10 @@ def sso_sign_in(driver):
     raise AssertionError(f"Authelia did not send Firefox back to the accounts pages: {driver.current_url}")
 
 
-def start_firefox(client_certificate=None, sso=None, **extra_prefs):
+def start_firefox(client_certificate=None, sso=None, user_js=None, **extra_prefs):
+    """A new profile; user_js: a user.js of the admin UI (/connect/user.js) points it to the
+    server instead of the test's identity.fxaccounts.autoconfig.uri, added to the end of the
+    test's user.js as its steps say when there is one already"""
     profile = tempfile.mkdtemp(prefix="ffs-firefox-")
     if client_certificate is None:
         client_certificate = ACCESS == "mtls"
@@ -166,9 +169,13 @@ def start_firefox(client_certificate=None, sso=None, **extra_prefs):
         "identity.fxaccounts.loglevel": "Debug",
         **extra_prefs,
     }
+    if user_js is not None:
+        del prefs["identity.fxaccounts.autoconfig.uri"]
     with open(os.path.join(profile, "user.js"), "w") as f:
         for k, v in prefs.items():
             f.write(f"user_pref({json.dumps(k)}, {json.dumps(v)});\n")
+        if user_js is not None:
+            f.write(user_js)
     opts = Options()
     opts.binary_location = os.environ.get("FIREFOX_BINARY", "/usr/bin/firefox")
     opts.add_argument("-headless")
@@ -471,8 +478,35 @@ def test_sign_up_and_sync(first_device):
     assert result["found"] == [BOOKMARK_TITLE]
 
 
+def downloaded_user_js():
+    """The admin UI's user.js (Connect a device, Download user.js), checked; None without the
+    admin UI"""
+    if not os.environ.get("ADMIN_PASSWORD"):
+        return None
+    admin = os.environ.get("ADMIN_URL", "https://admin.fxa.test").rstrip("/")
+    http = requests.Session()
+    http.verify = "/caddy-ca/root.crt"
+    http.post(f"{admin}/login", data={"password": os.environ["ADMIN_PASSWORD"]}, timeout=30)
+    res = http.get(f"{admin}/connect/user.js", timeout=30, allow_redirects=False)
+    assert res.status_code == 200, (res.status_code, res.text[:300])
+    assert res.headers["Content-Type"] == "application/javascript", res.headers
+    assert res.headers["Content-Disposition"] == 'attachment; filename="user.js"', res.headers
+    prefs = [line for line in res.text.splitlines() if not line.startswith("//")]
+    assert prefs == [f'user_pref("identity.fxaccounts.autoconfig.uri", {json.dumps(CONTENT)});'], res.text
+    return res.text
+
+
 def test_second_device_gets_the_bookmark(first_device):
-    driver = start_firefox()
+    # pointed to the server by the admin UI's user.js, not by the test's pref (when there
+    # is an admin UI): signs in and syncs all the same
+    user_js = downloaded_user_js()
+    driver = start_firefox(user_js=user_js)
+    if user_js is not None:
+        root = chrome(driver, """
+            const done = arguments[arguments.length - 1];
+            done(Services.prefs.getStringPref("identity.fxaccounts.autoconfig.uri", ""));
+        """)
+        assert root == CONTENT, root
     user = sign_in(driver)
     assert user["uid"] == first_uid(first_device)
     wait_for_sync(driver)

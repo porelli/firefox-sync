@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -87,21 +88,26 @@ func TestSchemaLevelsView(t *testing.T) {
 }
 
 func TestDeviceSteps(t *testing.T) {
-	text := stepsText(deviceSteps("https://accounts.example.com", "https://sync.example.com", "wss://pairing.example.com"))
+	text := stepsText(deviceSteps("https://accounts.example.com", "https://sync.example.com", "wss://pairing.example.com"), "https://accounts.example.com", "https://sync.example.com")
 	for _, want := range []string{
 		"set identity.fxaccounts.autoconfig.uri to https://accounts.example.com and restart Firefox",
 		"tap the Firefox logo 5 times",
 		"Custom Mozilla account server to https://accounts.example.com. Leave Custom Sync server empty",
 		"Custom Account Content Server URI to https://accounts.example.com",
 		"Connect another device", "wss://pairing.example.com",
+		// the user.js line as text (an email attaches nothing), and where it goes
+		"save this one line in a plain text file named user.js (not user.js.txt):\r\n     user_pref(\"identity.fxaccounts.autoconfig.uri\", \"https://accounts.example.com\");\r\n",
+		"open about:profiles", "Open Folder (Show in Finder on macOS)", "add the line to the end of that file instead of replacing it",
+		"delete user.js (or its line), reset identity.fxaccounts.autoconfig.uri in about:config and restart Firefox",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("no %q in %s", want, text)
 		}
 	}
 	// Mozilla's accounts: the tokenserver URL only
-	text = stepsText(deviceSteps("", "https://sync.example.com", ""))
-	if !strings.Contains(text, "identity.sync.tokenserver.uri and set it to https://sync.example.com/1.0/sync/1.5") || strings.Contains(text, "autoconfig") {
+	text = stepsText(deviceSteps("", "https://sync.example.com/", ""), "", "https://sync.example.com/")
+	if !strings.Contains(text, "identity.sync.tokenserver.uri and set it to https://sync.example.com/1.0/sync/1.5") || strings.Contains(text, "autoconfig") ||
+		!strings.Contains(text, `user_pref("identity.sync.tokenserver.uri", "https://sync.example.com/1.0/sync/1.5");`) || !strings.Contains(text, "restart Firefox before you sign in again") {
 		t.Errorf("Mozilla's accounts: %s", text)
 	}
 	subject, body := inviteEmail("https://accounts.example.com", "https://sync.example.com", "", "bob+x@example.net", true)
@@ -111,6 +117,90 @@ func TestDeviceSteps(t *testing.T) {
 	}
 	if strings.Contains(body, "<") {
 		t.Errorf("not plain text: %s", body)
+	}
+}
+
+func TestUserJSFile(t *testing.T) {
+	file := userJSFile("https://accounts.example.com", "https://sync.example.com")
+	lines := strings.Split(strings.TrimSuffix(file, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != `user_pref("identity.fxaccounts.autoconfig.uri", "https://accounts.example.com");` {
+		t.Errorf("the line: %q", last)
+	}
+	for _, l := range lines[:len(lines)-1] {
+		if !strings.HasPrefix(l, "//") {
+			t.Errorf("not a comment: %q", l)
+		}
+	}
+	if !strings.Contains(file, "Firefox Sync server https://accounts.example.com.") || !strings.Contains(file, "reset identity.fxaccounts.autoconfig.uri in") ||
+		!strings.Contains(file, "about:profiles") {
+		t.Errorf("header: %s", file)
+	}
+	// Mozilla's accounts: the tokenserver of the node
+	if file := userJSFile("", "https://sync.example.com/"); !strings.HasSuffix(file, "\n"+`user_pref("identity.sync.tokenserver.uri", "https://sync.example.com/1.0/sync/1.5");`+"\n") ||
+		strings.Contains(file, "autoconfig") {
+		t.Errorf("Mozilla's accounts: %s", file)
+	}
+	// nothing ends the string or the comment early: quotes, backslashes, line breaks,
+	// a closing script tag
+	odd := "https://x.example.com/\"); evil(\"\\\n</script>\u2028"
+	file = userJSFile(odd, "")
+	lines = strings.Split(strings.TrimSuffix(file, "\n"), "\n")
+	if want := `user_pref("identity.fxaccounts.autoconfig.uri", "https://x.example.com/\"); evil(\"\\\n\u003c/script\u003e\u2028");`; lines[len(lines)-1] != want {
+		t.Errorf("escaped:\n%s\nwant\n%s", lines[len(lines)-1], want)
+	}
+	for _, l := range lines[:len(lines)-1] {
+		if !strings.HasPrefix(l, "//") || strings.ContainsRune(l, '\u2028') {
+			t.Errorf("header line broken: %q", l)
+		}
+	}
+}
+
+func TestUserJSDownload(t *testing.T) {
+	fake := &fakeFxa{}
+	app := testApp()
+	app.sync, app.syncDomain = &SyncDB{db: sql.OpenDB(fake)}, "https://sync.example.com"
+	h := app.routes()
+	// signed in only: else the sign-in page
+	if w := get(h, "/connect/user.js", "192.0.2.1:1", nil, nil); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?next=%2Fconnect%2Fuser.js" || strings.Contains(w.Body.String(), "user_pref") {
+		t.Errorf("not signed in: %d %q %s", w.Code, w.Header().Get("Location"), w.Body)
+	}
+	c, _ := passwordSession(t, app, h)
+	w := getPage(h, "/connect/user.js", c)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/javascript" ||
+		w.Header().Get("Content-Disposition") != `attachment; filename="user.js"` || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("%d %v", w.Code, w.Header())
+	}
+	if body := w.Body.String(); !strings.HasSuffix(body, "\n"+`user_pref("identity.sync.tokenserver.uri", "https://sync.example.com/1.0/sync/1.5");`+"\n") {
+		t.Errorf("Mozilla's accounts: %s", body)
+	}
+	// self-hosted accounts: FXA_CONTENT_URL; the query changes nothing
+	app.fxa, app.contentURL = fake.db("127.0.0.1:1"), "https://accounts.example.com"
+	w = getPage(h, "/connect/user.js?u=https://evil.example", c)
+	if body := w.Body.String(); !strings.HasSuffix(body, "\n"+`user_pref("identity.fxaccounts.autoconfig.uri", "https://accounts.example.com");`+"\n") || strings.Contains(body, "evil") {
+		t.Errorf("self-hosted accounts: %s", body)
+	}
+	// the page: the button, the line, a QR code of the accounts server
+	page := getPage(h, "/connect", c).Body.String()
+	for _, want := range []string{`<a class="button secondary" href="/connect/user.js" download="user.js">Download user.js</a>`,
+		`user_pref(&#34;identity.fxaccounts.autoconfig.uri&#34;, &#34;https://accounts.example.com&#34;);`,
+		`<summary>Show QR code</summary>`, `aria-label="QR code of the accounts server address, https://accounts.example.com"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("connect page: no %s", want)
+		}
+	}
+	if n := strings.Count(page, "<svg class=\"qr\""); n != 1 {
+		t.Errorf("%d QR codes", n)
+	}
+	svg := page[strings.Index(page, `<svg class="qr"`):]
+	if got := decodeQR(t, svg[:strings.Index(svg, "</svg>")+6]); got != "https://accounts.example.com" {
+		t.Errorf("QR code: %q", got)
+	}
+	// Mozilla's accounts: the Sync server's
+	app.fxa = nil
+	page = getPage(h, "/connect", c).Body.String()
+	if !strings.Contains(page, `aria-label="QR code of the Sync server address, https://sync.example.com/1.0/sync/1.5"`) || strings.Count(page, `<svg class="qr"`) != 1 ||
+		!strings.Contains(page, `href="/connect/user.js"`) {
+		t.Errorf("Mozilla's accounts page: %s", page)
 	}
 }
 

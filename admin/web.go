@@ -343,6 +343,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST "+invitePath, a.authenticated(a.invite))
 	mux.HandleFunc("POST /accounts/allowlist/remove", a.authenticated(a.removeFromAllowlist))
 	mux.HandleFunc("GET /connect", a.authenticated(a.connectPage))
+	mux.HandleFunc("GET /connect/user.js", a.authenticated(a.userJS))
 	mux.HandleFunc("GET /config", a.authenticated(a.configPage))
 	mux.HandleFunc("GET /find", a.authenticated(a.find))
 	mux.HandleFunc("POST /users/{uid}/reset-sync", a.authenticated(a.resetSync))
