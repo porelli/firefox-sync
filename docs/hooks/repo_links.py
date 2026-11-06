@@ -31,7 +31,8 @@ log = logging.getLogger("mkdocs.hooks.repo_links")
 _state = {"repo": None, "root": None, "docs": None, "files": None, "page": None}
 
 
-def _unique(id, ids):
+# (Markdown 3.11 also passes counters, a cache of its own: GitHub's -1, -2 suffixes need none)
+def _unique(id, ids, counters=None):
     base, n = id, 0
     while id in ids or not id:
         n += 1
