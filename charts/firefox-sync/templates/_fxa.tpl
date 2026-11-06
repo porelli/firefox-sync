@@ -443,6 +443,23 @@ also the input of the pods' checksum/fxa-config
 {{- end }}
 
 {{/*
+Nothing leaves the stack: the env entries of files/fxa/no-telemetry.env (compose's and the
+Quadlets' config/fxa/no-telemetry.env, byte-identical: tests/helm_parity.py), every telemetry,
+metrics and error-reporting setting of the accounts services off. Every accounts container has
+them, as in compose (docs/accounts.md#telemetry)
+*/}}
+{{- define "firefox-sync.fxaNoTelemetryEnv" -}}
+{{- range .Files.Lines "files/fxa/no-telemetry.env" }}
+{{- $line := trim . }}
+{{- if and $line (not (hasPrefix "#" $line)) }}
+{{- $kv := splitn "=" 2 $line }}
+- name: {{ $kv._0 }}
+  value: {{ $kv._1 | default "" | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 fxa.extraCaCerts (chart-only, no compose counterpart): the CA of your SMTP server or of your
 own HTTPS hosts for the accounts' node servers, the ConfigMap at /ffs-ca. The env entry, the
 volumeMount and the volume, each empty without it

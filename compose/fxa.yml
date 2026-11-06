@@ -22,6 +22,12 @@ x-fxa: &fxa
 # the accounts database: fxa-db (fxa-mysql.yml or fxa-mariadb.yml), or your own MySQL 8.4 or 9
 # (9 with our images) or MariaDB 11.4+ server (12 with our images; FXA_DB_CONTAINERS=0,
 # docs/reference/database-users.md#the-accounts)
+# nothing leaves the stack: every telemetry, metrics and error-reporting setting of the
+# accounts services, off (config/fxa/no-telemetry.env, also the Quadlets' and the chart's;
+# docs/accounts.md#telemetry). Every running accounts service has it
+x-no-telemetry: &no-telemetry
+  env_file: ../config/fxa/no-telemetry.env
+
 x-fxa-mysql: &fxa-mysql
   MYSQL_HOST: ${FXA_MYSQL_HOST:-fxa-db}
   MYSQL_PORT: ${FXA_MYSQL_PORT:-3306}
@@ -140,7 +146,7 @@ services:
     restart: "no"
 
   fxa-auth:
-    <<: *fxa
+    <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-auth-server/dist/packages/fxa-auth-server
     # keys are only generated when missing, the volume keeps them across restarts
     command:
@@ -230,7 +236,6 @@ services:
       FIRESTORE_ENABLED: "false"
       SNS_TOPIC_ARN: disabled
       GEODB_ENABLED: "false"
-      AUTH_GLEAN_ENABLED: "false"
       CUSTOMS_SERVER_URL: none
       RECOVERY_PHONE__ENABLED: "false"
       RECOVERY_PHONE__TWILIO__CREDENTIAL_MODE: ""
@@ -261,7 +266,7 @@ services:
       - ${FXA_AUTH_EXPORT_PORT:-127.0.0.1:9000}:9000
 
   fxa-content:
-    <<: *fxa
+    <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-content-server
     command:
       - sh
@@ -287,6 +292,9 @@ services:
       FEATURE_FLAGS_REDIS_HOST: fxa-redis
       REDIS_HOST: fxa-redis
       GEODB_ENABLED: "false"
+      # where the pages' Glean pings go (they turn Glean on by themselves, whatever
+      # no-telemetry.env says): to these pages, which answer 404, never to Mozilla's default
+      GLEAN_SERVER_ENDPOINT: ${FXA_CONTENT_URL}
     volumes:
       - ../config/fxa:/fxa-config:ro
     depends_on:
@@ -305,7 +313,7 @@ services:
       - ${FXA_CONTENT_EXPORT_PORT:-127.0.0.1:3030}:3030
 
   fxa-profile:
-    <<: *fxa
+    <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-profile-server
     command: [node, bin/server.js]
     environment:
@@ -342,7 +350,7 @@ services:
       - ${FXA_PROFILE_EXPORT_PORT:-127.0.0.1:1111}:1111
 
   fxa-profile-worker:
-    <<: *fxa
+    <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-profile-server
     command: [node, bin/worker.js]
     environment:
@@ -360,7 +368,7 @@ services:
       retries: 5
 
   fxa-profile-static:
-    <<: *fxa
+    <<: [*fxa, *no-telemetry]
     working_dir: /fxa/packages/fxa-profile-server
     command: [node, bin/_static.js]
     environment:
@@ -381,6 +389,7 @@ services:
 
   # optional, COMPOSE_PROFILES=pairing and FXA_PAIRING_URL=wss://pairing.example.com in .env
   fxa-pairing:
+    <<: *no-telemetry
     # FXA_PAIRING_IMAGE (a full image reference) wins; else FXA_PAIRING_REPOSITORY (default: the
     # accounts' FXA_IMAGE) and FXA_PAIRING_VERSION
     image: ${FXA_PAIRING_IMAGE:-${FXA_PAIRING_REPOSITORY:-${FXA_IMAGE:-ghcr.io/porelli/firefox-sync}}:${FXA_PAIRING_VERSION:-fxa-channelserver-latest}}

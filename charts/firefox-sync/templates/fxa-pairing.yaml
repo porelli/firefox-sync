@@ -65,6 +65,8 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: PAIR_HOSTNAME
               value: 0.0.0.0
             - name: PAIR_PORT

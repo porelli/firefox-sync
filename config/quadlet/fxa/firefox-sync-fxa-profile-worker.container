@@ -11,6 +11,8 @@ PodmanArgs=--network-alias=fxa-profile-worker
 # --arch only for another architecture than this host's (Mozilla's amd64 image, emulated): with it
 # podman 4 pulls the tag from the registry at every start, over the local image
 PodmanArgs=%FXA_ARCH_ARGS%
+# nothing leaves the stack: telemetry, metrics and error reports off (as compose's and the chart's, docs/accounts.md#telemetry)
+EnvironmentFile=%SCRIPT_DIR%/config/fxa/no-telemetry.env
 Environment="NODE_ENV=production"
 Environment="WORKER_HOST=0.0.0.0"
 Environment="IMG=local"

@@ -318,6 +318,8 @@ spec:
               node /fxa-config/oauth-clients.js /fxa-keys/oauth-clients.json &&
               exec node bin/key_server.js
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: NODE_ENV
               value: prod
             - name: CONFIG_FILES
@@ -415,8 +417,6 @@ spec:
             - name: SNS_TOPIC_ARN
               value: disabled
             - name: GEODB_ENABLED
-              value: "false"
-            - name: AUTH_GLEAN_ENABLED
               value: "false"
             - name: CUSTOMS_SERVER_URL
               value: none

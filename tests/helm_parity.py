@@ -319,6 +319,7 @@ IDENTICAL_FILES = {
     "charts/firefox-sync/files/db-setup.sh": "db/db-setup.sh",
     "charts/firefox-sync/files/fxa/content-server.js": "config/fxa/content-server.js",
     "charts/firefox-sync/files/fxa/oauth-clients.js": "config/fxa/oauth-clients.js",
+    "charts/firefox-sync/files/fxa/no-telemetry.env": "config/fxa/no-telemetry.env",
 }
 # and the setup migrations of db/<engine>/setup/ (files/db/, tests/setup_migrations.sh too)
 for _setup in sorted(glob.glob(os.path.join(REPO, "db", "*", "setup", "*", "*.sql"))):

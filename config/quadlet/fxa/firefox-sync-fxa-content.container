@@ -15,6 +15,8 @@ PodmanArgs=--network-alias=fxa-content
 # --arch only for another architecture than this host's (Mozilla's amd64 image, emulated): with it
 # podman 4 pulls the tag from the registry at every start, over the local image
 PodmanArgs=%FXA_ARCH_ARGS%
+# nothing leaves the stack: telemetry, metrics and error reports off (as compose's and the chart's, docs/accounts.md#telemetry)
+EnvironmentFile=%SCRIPT_DIR%/config/fxa/no-telemetry.env
 Environment="NODE_ENV=production"
 Environment="CONFIG_FILES=/tmp/content-server.json"
 Environment="CONTENT_SESSION_SECRET=%FXA_CONTENT_SESSION_SECRET%"
@@ -30,6 +32,8 @@ Environment="FLOW_ID_KEY=%FXA_FLOW_ID_KEY%"
 Environment="FEATURE_FLAGS_REDIS_HOST=fxa-redis"
 Environment="REDIS_HOST=fxa-redis"
 Environment="GEODB_ENABLED=false"
+# the pages' Glean pings go to these pages (404), never to Mozilla's default: see GLEAN_SERVER_ENDPOINT in compose/fxa.yml
+Environment="GLEAN_SERVER_ENDPOINT=%FXA_CONTENT_URL%"
 Volume=%SCRIPT_DIR%/config/fxa:/fxa-config:ro,z
 PublishPort=%FXA_CONTENT_EXPORT_PORT%:3030
 HealthCmd=["node", "-e", "fetch('http://localhost:3030/__heartbeat__').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

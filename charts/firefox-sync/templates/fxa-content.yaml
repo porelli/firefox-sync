@@ -68,6 +68,8 @@ spec:
               node /fxa-config/content-server.js /tmp/content-server.json &&
               exec node server/bin/fxa-content-server.js
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: CONFIG_FILES
@@ -98,6 +100,9 @@ spec:
             {{- include "firefox-sync.fxaRedisEnv" (dict "root" . "names" (list "REDIS_HOST")) | trim | nindent 12 }}
             - name: GEODB_ENABLED
               value: "false"
+            # the pages' Glean pings go to these pages (404), never to Mozilla's default (compose's)
+            - name: GLEAN_SERVER_ENDPOINT
+              value: {{ $f.contentUrl | quote }}
             {{- with include "firefox-sync.fxaCaEnv" . }}{{ . | nindent 12 }}{{ end }}
           ports:
             - name: http

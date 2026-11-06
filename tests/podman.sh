@@ -1529,6 +1529,10 @@ if [ -z "${SKIP_FXA:-}" ]; then
     sleep 2
   done
   check "${ok}" yes "accounts web pages answer (quadlets)"
+  # nothing leaves the stack: config/fxa/no-telemetry.env (EnvironmentFile=) in the container, the
+  # pages' Glean pings to themselves (docs/accounts.md#telemetry)
+  check "$(podman exec firefox-sync-fxa-content sh -c 'echo "${GLEAN_ENABLED} ${AMPLITUDE_DISABLED} ${CONTENT_SERVER_GLEAN_ENABLED} ${SENTRY_DSN-unset}${SENTRY_DSN:-empty} ${GLEAN_SERVER_ENDPOINT}"' 2>&1) $(podman exec firefox-sync-fxa-auth sh -c 'echo "${AMPLITUDE_ENABLED} ${AUTH_GLEAN_ENABLED}"' 2>&1)" \
+    "false true false empty $(env_of FXA_CONTENT_URL) false false" "the accounts run with no-telemetry.env, their Glean endpoint the accounts pages (quadlets)"
   ok=""
   for _ in $(seq 1 225); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${AUTH_PORT}/__heartbeat__)" = 200 ] && ok=yes && break

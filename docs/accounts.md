@@ -178,6 +178,37 @@ Privacy, plainly:
     - the accounts' backups: `fxa.securityEvents` is in every dump, for the newest `BACKUP_KEEP` runs.
 - The admin UI reads the name, time, IP address and whether the sign-in was confirmed, not the rest. The full entry can hold the recovery phone's number.
 
+## Telemetry
+
+Nothing leaves the stack. The accounts services send no telemetry, metrics or error reports to Mozilla or anybody else. Mozilla's defaults already send little from a self-hosted install. The stack also turns every one of these paths off by name, so that a default that changes in a new release cannot turn one on.
+
+The settings are in one file, [config/fxa/no-telemetry.env](/config/fxa/no-telemetry.env). Every accounts service reads it: compose (`env_file` in `compose/fxa.yml`), the Quadlets (`EnvironmentFile=`) and the Helm chart (its copy, `files/fxa/no-telemetry.env`, as the first env entries of every accounts container). Each service reads its own settings and ignores the rest. It is not a setting of `.env`: edit the file only to turn something on knowingly.
+
+The one exception is `GLEAN_SERVER_ENDPOINT`, set in the content server's environment because it is your `FXA_CONTENT_URL`. The accounts pages run Glean whatever `GLEAN_ENABLED` and `GLEAN_UPLOAD_ENABLED` say: while nobody is signed in always, for a signed-in account when its data collection switch (below) is on. They send their pings to `GLEAN_SERVER_ENDPOINT`, and to Mozilla's `incoming.telemetry.mozilla.org` when it is empty. Here they go to the accounts pages themselves, which answer 404 and keep nothing: the content server logs the request's path, not what it carried.
+
+| What | Where it would go | Mozilla's default | Here |
+| --- | --- | --- | --- |
+| Glean in the accounts pages: usage pings from the browser | `incoming.telemetry.mozilla.org` (`GLEAN_SERVER_ENDPOINT`) | on in the pages (see below), Mozilla's endpoint | `GLEAN_ENABLED=false`, `GLEAN_UPLOAD_ENABLED=false`, and `GLEAN_SERVER_ENDPOINT` the accounts pages themselves (`FXA_CONTENT_URL`) |
+| Glean events of the content and auth servers | their logs, which Mozilla's own deployment ships to its telemetry | on | `CONTENT_SERVER_GLEAN_ENABLED=false`, `AUTH_GLEAN_ENABLED=false` |
+| Amplitude events | the logs, which Mozilla ships to Amplitude | on | `AMPLITUDE_ENABLED=false` (auth), `AMPLITUDE_DISABLED=true` (content) |
+| The pages' flow events | the content server's log | on | `FLOW_METRICS_DISABLED=true` |
+| Sentry error reports, of the servers and of the pages | the Sentry project of `SENTRY_DSN` | none (empty) | `SENTRY_DSN` empty |
+| StatsD metrics | `DD_AGENT_HOST` (auth), `METRIC_HOST` (content), `PAIR_STATSD_HOST` (pairing server) | off, off, `localhost:8125` | `STATSD_ENABLE=false`, `METRIC_ENABLED=false`, `PAIR_STATSD_HOST` empty |
+| OpenTelemetry traces | Google Cloud Trace or an OTLP collector | off | `TRACING_GCP_EXPORTER_ENABLED=false`, `TRACING_OTEL_EXPORTER_ENABLED=false`, `TRACING_SAMPLE_RATE=0` |
+| Nimbus experiments | Mozilla's Cirrus service (`NIMBUS_CIRRUS_HOST`) | off | `NIMBUS_ENABLED=false` |
+| The pairing server's IP reputation | an IP reputation service | none (empty) | `PAIR_IP_REPUTATION_SERVER` empty |
+
+The other Mozilla and Google services the accounts service knows (Firestore, SNS, the customs server, Twilio, the GeoIP lookup) are off too, in the environment of each service: see [What works](#what-works).
+
+Two things still reach Mozilla, by design and only when someone uses them: pairing a phone with a QR code goes through Mozilla's channel server unless you [run your own](reverse-proxy.md#pairing), and Firefox's send tab uses Mozilla's push service. Firefox itself has its own telemetry, its own setting in Firefox.
+
+**The switch in the account settings.** The account settings show "Allow Mozilla accounts to send technical and interaction data to Mozilla" under Data collection and use. It is part of Mozilla's pages, kept as it is. It stores a preference for that account (`metricsOptOutAt` in the accounts database) and tells the Firefox signed in to it. Off, the pages run no Glean while that account is signed in; on, they send their pings to themselves, as above. Nothing reaches Mozilla either way.
+
+To be sure it stays so:
+
+- The admin UI's setup check **Telemetry of the accounts pages** reads the settings the accounts pages run with, every hour, and warns when Glean, Sentry or Nimbus is on, or the Glean endpoint is not the accounts pages themselves (empty is Mozilla's), naming where the data would go ([Setup checks](admin/monitoring.md#setup-checks)).
+- The real-Firefox tests ([Testing](development/testing.md)) record every request the accounts pages and the admin UI make, and fail on any to a host outside the stack.
+
 ## What works
 
 - Tested on every release: sign-up, email confirmation, sign-in, OAuth for Sync, syncing, and a second device. A real Firefox signs up on one profile through the accounts pages, and a second profile signs in and receives its bookmark.

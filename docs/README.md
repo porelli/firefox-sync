@@ -42,7 +42,7 @@ Setting up:
 - [limits.md](limits.md): who can use your server, `SYNC_MAX_USERS`, invite-only Sync (`SYNC_ALLOWED_ACCOUNTS`) and `FXA_MAX_ACCOUNTS`
 - [single-sign-on.md](single-sign-on.md): single sign-on (Authelia) and client certificates in front of the accounts pages and the admin UI, and why not the other hosts
 - [firefox.md](firefox.md): Firefox on desktop, Android and iOS, with Mozilla's accounts or yours
-- [accounts.md](accounts.md): self-hosted Mozilla accounts
+- [accounts.md](accounts.md): self-hosted Mozilla accounts, and their [telemetry](accounts.md#telemetry), all off
 - [databases.md](databases.md): choosing a backend, the supported versions, your own database server
 
 Running it:

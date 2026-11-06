@@ -23,6 +23,12 @@
 # render as there, nothing else
 PARITY_BASE=${PARITY_BASE:-2512e9a}
 
+# the entries of files/fxa/no-telemetry.env (nothing leaves the stack, docs/accounts.md#telemetry),
+# every accounts container's first ones: NAME=value lines; their names, a JSON list (the checks of
+# each container's own env leave them out, no_telemetry_check checks them)
+no_telemetry_env() { grep -E '^[A-Z]' "${CHART_DIR}/files/fxa/no-telemetry.env"; }
+no_telemetry_names() { no_telemetry_env | cut -d= -f1 | jq -Rsc 'split("\n") | map(select(. != ""))'; }
+
 fxa_lint() {
   echo "=== The self-hosted accounts (fxa.*) ==="
   local fxa="${CHART_DIR}/ci/fxa-values.yaml" out values
@@ -360,8 +366,8 @@ fxa_pairing_lint() {
   [[ -n "${pod}" ]] || fail "no Deployment ${f}-fxa-pairing with fxa.pairing.enabled"
   # (compose's healthcheck, verbatim)
   local hc='exec 3<>/dev/tcp/127.0.0.1/8000 && printf '"'"'GET /__heartbeat__ HTTP/1.0\r\nHost: localhost\r\n\r\n'"'"' >&3 && head -n 1 <&3 | grep -q '"'"' 200 '"'"
-  jq -e --arg hc "${hc}" '.spec.containers | length == 1 and (.[0] | .name == "pairing" and .image == "ghcr.io/porelli/firefox-sync:fxa-channelserver-latest"
-    and ([.env[] | "\(.name)=\(.value)"] == ["PAIR_HOSTNAME=0.0.0.0", "PAIR_PORT=8000", "PAIR_HUMAN_LOGS=true", "PAIR_TRUSTED_PROXY_LIST=127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"])
+  jq -e --arg hc "${hc}" --argjson nt "$(no_telemetry_names)" '.spec.containers | length == 1 and (.[0] | .name == "pairing" and .image == "ghcr.io/porelli/firefox-sync:fxa-channelserver-latest"
+    and ([.env[] | select(.name as $n | $nt | index($n) | not) | "\(.name)=\(.value)"] == ["PAIR_HOSTNAME=0.0.0.0", "PAIR_PORT=8000", "PAIR_HUMAN_LOGS=true", "PAIR_TRUSTED_PROXY_LIST=127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"])
     and .ports == [{name: "http", containerPort: 8000}]
     and .startupProbe == {exec: {command: ["bash", "-c", $hc]}, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 30}
     and .readinessProbe == {exec: {command: ["bash", "-c", $hc]}, periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3}
@@ -377,7 +383,7 @@ fxa_pairing_lint() {
   # (the values: its image, the trusted proxies, the resources)
   pod=$(helm template test-release "${CHART_DIR}" -f "${fxa}" --set fxa.pairing.image=example.test/pairing:1 --set fxa.pairing.trustedProxies=10.0.0.0/8 \
     --set fxa.pairing.resources.requests.memory=16Mi | manifests | jq -c --arg n "${f}-fxa-pairing" '.[] | select(.kind == "Deployment" and .metadata.name == $n) | .spec.template.spec.containers[0]')
-  jq -e '.image == "example.test/pairing:1" and (.env[3] | .name == "PAIR_TRUSTED_PROXY_LIST" and .value == "10.0.0.0/8") and .resources == {requests: {memory: "16Mi"}}' <<< "${pod}" > /dev/null \
+  jq -e '.image == "example.test/pairing:1" and (.env[] | select(.name == "PAIR_TRUSTED_PROXY_LIST") | .value == "10.0.0.0/8") and .resources == {requests: {memory: "16Mi"}}' <<< "${pod}" > /dev/null \
     || fail "fxa.pairing.image, trustedProxies, resources: $(jq -c '[.image, .env, .resources]' <<< "${pod}")"
   # none without it, or without the accounts
   for args in "--set fxa.pairing.enabled=false" "--set fxa.enabled=false"; do
@@ -785,7 +791,13 @@ fxa_objects_lint() {
   # and img-proxy, chart-only) of ci/fxa-values.yaml
   fxa_pod() { fxa_objs "${@:2}" | jq -c --arg n "test-release-firefox-sync-fxa-$1" '.[] | select(.kind == "Deployment" and .metadata.name == $n) | .spec.template'; }
   # fxa_env <pod> <container>: its env, a line each, NAME=value or NAME=secret:KEY
-  fxa_env() { jq -r --arg c "$2" '.spec.containers[] | select(.name == $c) | (.env // [])[] | "\(.name)=\(.value // ("secret:" + .valueFrom.secretKeyRef.key))"' <<< "$1"; }
+  fxa_env() { jq -r --arg c "$2" --argjson nt "$(no_telemetry_names)" '.spec.containers[] | select(.name == $c) | (.env // [])[] | select(.name as $n | $nt | index($n) | not)
+    | "\(.name)=\(.value // ("secret:" + .valueFrom.secretKeyRef.key))"' <<< "$1"; }
+  # no_telemetry_check <pod> <container>: its first env entries are those of no-telemetry.env, as written
+  no_telemetry_check() {
+    [[ "$(jq -r --arg c "$2" --argjson n "$(no_telemetry_env | wc -l)" '.spec.containers[] | select(.name == $c) | .env[0:$n][] | "\(.name)=\(.value)"' <<< "$1")" == "$(no_telemetry_env)" ]] \
+      || fail "$2: not the entries of files/fxa/no-telemetry.env first: $(jq -c --arg c "$2" '.spec.containers[] | select(.name == $c) | .env[0:5]' <<< "$1")"
+  }
   local content profile heartbeat
   heartbeat='http://test-release-firefox-sync-fxa-auth:9000/__heartbeat__'
   content=$(fxa_pod content)
@@ -804,7 +816,7 @@ fxa_objects_lint() {
   want+=" FXA_URL=https://api.example.test FXA_OAUTH_URL=https://api.example.test FXA_PROFILE_URL=https://profile.example.test FXA_PROFILE_IMAGES_URL=https://profile.example.test/img"
   want+=" SYNC_TOKENSERVER_URL=https://sync.example.test PAIRING_SERVER_BASE_URI=wss://pairing.example.test SERVICES_WITH_EMAIL_VERIFICATION=32aaeb6f1c21316a,"
   want+=" FLOW_ID_KEY=secret:FXA_FLOW_ID_KEY FEATURE_FLAGS_REDIS_HOST=test-release-firefox-sync-fxa-redis REDIS_HOST=test-release-firefox-sync-fxa-redis"
-  want+=" REDIS_PASSWORD=secret:FXA_REDIS_PASSWORD GEODB_ENABLED=false"
+  want+=" REDIS_PASSWORD=secret:FXA_REDIS_PASSWORD GEODB_ENABLED=false GLEAN_SERVER_ENDPOINT=https://accounts.example.test"
   [[ "$(fxa_env "${content}" content | paste -sd' ' -)" == "${want}" ]] || fail "content's env: $(fxa_env "${content}" content | paste -sd' ' -)"
   local signin=(--set admin.fxaSignIn=true --set admin.allowed.users=@example.test --set admin.oidc.redirectUrl=https://admin.example.test/auth/callback)
   [[ "$(fxa_env "$(fxa_pod content --set fxa.pairing.enabled=false --set fxa.pairing.url= --set fxa.adminClientId=0123456789abcdef "${signin[@]}")" content | grep -E '^(PAIRING|SERVICES)' | paste -sd' ' -)" == \
@@ -845,6 +857,11 @@ fxa_objects_lint() {
   [[ "$(fxa_env "${profile}" profile-worker | paste -sd' ' -)" == "NODE_ENV=production WORKER_HOST=127.0.0.1 IMG=local" ]] || fail "profile-worker's env: $(fxa_env "${profile}" profile-worker | paste -sd' ' -)"
   [[ "$(fxa_env "${profile}" profile-static | paste -sd' ' -)" == "NODE_ENV=production HOST=0.0.0.0 IMG=local" ]] || fail "profile-static's env: $(fxa_env "${profile}" profile-static | paste -sd' ' -)"
   [[ -z "$(fxa_env "${profile}" img-proxy)" ]] || fail "img-proxy has an env"
+  # nothing leaves the stack: every accounts container has the entries of no-telemetry.env
+  no_telemetry_check "$(fxa_pod auth)" auth
+  no_telemetry_check "${content}" content
+  for c in profile profile-worker profile-static; do no_telemetry_check "${profile}" "${c}"; done
+  no_telemetry_check "$(fxa_pod pairing)" pairing
   jq -e '(.spec.containers[] | select(.name == "img-proxy") | .securityContext.readOnlyRootFilesystem == true)
     and .spec.volumes == [{name: "images", persistentVolumeClaim: {claimName: "test-release-firefox-sync-fxa-profile-images"}}, {name: "fxa-config", configMap: {name: "test-release-firefox-sync-fxa-config"}}]
     and (.metadata.annotations | (.["checksum/fxa-config"] | test("^[0-9a-f]{64}$")) and (.["checksum/secrets"] | test("^[0-9a-f]{64}$")))' <<< "${profile}" > /dev/null \

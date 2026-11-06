@@ -12,6 +12,8 @@ PodmanArgs=--network-alias=fxa-auth
 # --arch only for another architecture than this host's (Mozilla's amd64 image, emulated): with it
 # podman 4 pulls the tag from the registry at every start, over the local image
 PodmanArgs=%FXA_ARCH_ARGS%
+# nothing leaves the stack: telemetry, metrics and error reports off (as compose's and the chart's, docs/accounts.md#telemetry)
+EnvironmentFile=%SCRIPT_DIR%/config/fxa/no-telemetry.env
 Environment="MYSQL_HOST=%FXA_MYSQL_HOST%"
 Environment="MYSQL_PORT=%FXA_MYSQL_PORT%"
 Environment="MYSQL_USERNAME=%FXA_MYSQL_USER%"
@@ -81,7 +83,6 @@ Environment="SMTP_SENDER=%FXA_SMTP_SENDER%"
 Environment="FIRESTORE_ENABLED=false"
 Environment="SNS_TOPIC_ARN=disabled"
 Environment="GEODB_ENABLED=false"
-Environment="AUTH_GLEAN_ENABLED=false"
 Environment="CUSTOMS_SERVER_URL=none"
 Environment="RECOVERY_PHONE__ENABLED=false"
 Environment="RECOVERY_PHONE__TWILIO__CREDENTIAL_MODE="

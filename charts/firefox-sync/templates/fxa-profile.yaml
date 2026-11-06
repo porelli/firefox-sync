@@ -129,6 +129,8 @@ spec:
           {{- end }}
           args: [node, bin/server.js]
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: HOST
@@ -204,6 +206,8 @@ spec:
           {{- end }}
           args: [node, bin/worker.js]
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: WORKER_HOST
@@ -244,6 +248,8 @@ spec:
           {{- end }}
           args: [node, bin/_static.js]
           env:
+            # nothing leaves the stack: telemetry, metrics and error reports off (files/fxa/no-telemetry.env)
+            {{- include "firefox-sync.fxaNoTelemetryEnv" $ | nindent 12 }}
             - name: NODE_ENV
               value: production
             - name: HOST
