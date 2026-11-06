@@ -164,7 +164,11 @@
   component: fxa-mono
   # the pull request was rebased on a main that removed backfill-account-authorizations-v2 and
   # changed fxa-auth-server's package.json: base...sha does not apply to v1.348.5, which has
-  # them. It gets the pull request's head before the rebase, the same change
+  # them. It gets the pull request's head before the rebase, the same change.
+  # v1.349.0 dropped the exact @types/mysql@2.15.27 of an OpenTelemetry instrumentation from
+  # yarn.lock: base...sha conflicts there. Its port is base...sha with the then orphaned
+  # @types/mysql entry removed as well (nothing else depends on it once the root's goes)
+  ports: upstream-patches/fxa-mysql2
   releases:
     v1.348.5:
       base: 3e2cb676f8c561e7c293d44ec979c3be88eb81cb
