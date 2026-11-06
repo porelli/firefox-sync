@@ -59,7 +59,7 @@ func deviceSteps(content, node, pairing string) []deviceSetup {
 		}},
 		{"Firefox for Android", []string{
 			"In Settings > About Firefox, tap the Firefox logo 5 times: \"debug menu enabled\".",
-			"Back in Settings, tap Sync Debug: set Custom Mozilla account server to " + content + " and Custom Sync server to " + tokenserver + ".",
+			"Back in Settings, tap Sync Debug and set Custom Mozilla account server to " + content + ". Leave Custom Sync server empty: the accounts server tells Firefox where the Sync server is.",
 			"Restart Firefox when it asks, then sign in and turn on Sync.",
 		}},
 		{"Firefox for iOS", []string{

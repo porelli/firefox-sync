@@ -91,7 +91,7 @@ func TestDeviceSteps(t *testing.T) {
 	for _, want := range []string{
 		"set identity.fxaccounts.autoconfig.uri to https://accounts.example.com and restart Firefox",
 		"tap the Firefox logo 5 times",
-		"Custom Mozilla account server to https://accounts.example.com and Custom Sync server to https://sync.example.com/1.0/sync/1.5",
+		"Custom Mozilla account server to https://accounts.example.com. Leave Custom Sync server empty",
 		"Custom Account Content Server URI to https://accounts.example.com",
 		"Connect another device", "wss://pairing.example.com",
 	} {

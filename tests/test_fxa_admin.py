@@ -1255,7 +1255,7 @@ def test_invite_sign_up_and_remove(admin):
     text = message["Text"]
     # this server's values, plain text only
     for part in (f"identity.fxaccounts.autoconfig.uri to {CONTENT}", f"{CONTENT}/?email={requests.utils.quote(address, safe='')}",
-                 f"Custom Sync server to {SYNC}/1.0/sync/1.5", f"Custom Account Content Server URI to {CONTENT}"):
+                 f"Custom Mozilla account server to {CONTENT}. Leave Custom Sync server empty", f"Custom Account Content Server URI to {CONTENT}"):
         assert part in text, (part, text)
     assert not message.get("HTML"), "an HTML part"
     row = allowlist_row(admin, address)
@@ -1314,7 +1314,7 @@ def test_invite_without_the_allowlist(admin):
 
 def test_connect_a_device_page(admin):
     steps = admin.get("/connect").split('id="device-steps"')[1]
-    for part in (f"identity.fxaccounts.autoconfig.uri to {CONTENT}", f"Custom Sync server to {SYNC}/1.0/sync/1.5",
+    for part in (f"identity.fxaccounts.autoconfig.uri to {CONTENT}", f"Custom Mozilla account server to {CONTENT}. Leave Custom Sync server empty",
                  "tap the Firefox logo 5 times", "Connect another device", "wss://pairing.fxa.test"):
         assert part in steps, (part, steps[:3000])
 

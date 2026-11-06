@@ -11,7 +11,7 @@
 <section class="card" aria-labelledby="addresses-title">
   <h2 id="addresses-title">What Firefox needs</h2>
   {{if .Content}}
-  <p>This server runs its own accounts: each Firefox is pointed to it before signing in, then finds the Sync server by itself.</p>
+  <p>This server runs its own accounts: each Firefox is pointed to it before signing in, then finds the Sync server by itself, from the accounts server. Nothing to set for the Sync server, on any device: its address below is for reference.</p>
   <p class="box warn-soft"><strong>Mozilla's accounts do not work here.</strong> Sign out of Firefox first if it is signed in to one.</p>
   {{else}}
   <p>Firefox signs in with a Mozilla account as usual, and syncs with this server instead of Mozilla's once pointed to it. Sign out of Firefox first if it is already signed in.</p>

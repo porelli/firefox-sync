@@ -37,7 +37,7 @@ To go back to Mozilla's servers: sign out, reset `identity.sync.tokenserver.uri`
 
 ## Self-hosted accounts
 
-Firefox is pointed to your accounts server, which tells it where your Sync server is. Mozilla's accounts do not work with your server: each person needs an account created on it. They sign up from Firefox, or from an [invitation](admin/accounts.md#invitations) of the admin UI.
+Firefox is pointed to your accounts server, which tells it where your Sync server is: `sync_tokenserver_base_url` of its `/.well-known/fxa-client-configuration`, read on every device, Android included. Mozilla's accounts do not work with your server: each person needs an account created on it. They sign up from Firefox, or from an [invitation](admin/accounts.md#invitations) of the admin UI.
 
 ### Desktop
 
@@ -54,7 +54,7 @@ To go back to Mozilla's accounts: sign out, reset `identity.fxaccounts.autoconfi
 1. Go to App Menu `⋮` > `Settings` > `About Firefox`, and tap the logo 5 times. Firefox shows `debug menu enabled`.
 1. Go back to the main settings menu. `Sync Debug` is at the top: tap it.
 1. Set `Custom Mozilla account server` to `https://accounts.example.com`.
-1. Set `Custom Sync server` to `https://sync.example.com/1.0/sync/1.5`.
+1. Leave `Custom Sync server` empty: Firefox gets the Sync server from the accounts server, as on desktop and iOS. A value there replaces it, so a typo breaks Sync.
 1. Restart Firefox when it asks, then sign in and turn on Sync.
 
 ### iOS
