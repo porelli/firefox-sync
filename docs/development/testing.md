@@ -50,7 +50,7 @@ The defaults follow each database's long-term tag (`mariadb:lts`, `mysql:lts`; P
 | Sync | MySQL 8 (installs from before) | syncstorage-rs.yml `test` (`SYNC_DB=mysql`, `SYNC_MYSQL_IMAGE=mysql:8`) | syncstorage-rs.yml `test` (`SYNC_MYSQL_IMAGE=mysql:8`), admin.yml `e2e-fxa` (`FXA_MYSQL_IMAGE=mysql:8`: one server for Sync and the accounts) |
 | Sync | PostgreSQL `latest` (its major pinned) | syncstorage-rs.yml `test`, admin.yml `e2e`, helm.yml `e2e` (amd64 and arm64), and `e2e-fxa` with the accounts (`SYNC_BACKEND=postgres`) | syncstorage-rs.yml `test`, admin.yml `e2e`, helm.yml `e2e` |
 | Sync | PostgreSQL, the major before that of `latest`, moved to `latest` | syncstorage-rs.yml `test` (`PG_MAJOR_MOVE=1`) | - |
-| Accounts | MySQL `lts` (images with mozilla/fxa#21554) | fxa.yml `test`, admin.yml `e2e-fxa` and helm.yml `e2e-fxa` (each on amd64 and arm64) | admin.yml `e2e-fxa`, helm.yml `e2e-fxa` |
+| Accounts | MySQL `lts` (images with mozilla/fxa#21709) | fxa.yml `test`, admin.yml `e2e-fxa` and helm.yml `e2e-fxa` (each on amd64 and arm64) | admin.yml `e2e-fxa`, helm.yml `e2e-fxa` |
 | Accounts | MySQL 8 with `mysql_native_password` (installs from before, images without it) | fxa.yml `test` (`FXA_MYSQL_IMAGE=mysql:8`), syncstorage-rs.yml `test-fxa` (Mozilla's images), fxa.yml `test-upgrade` (then to `lts`) | admin.yml `e2e-fxa` (`FXA_MYSQL_IMAGE=mysql:8`) |
 | Accounts | MariaDB `lts` (needs mozilla/fxa#21494) | fxa.yml `test-mariadb`, admin.yml `e2e-fxa`, helm.yml `e2e-fxa` | admin.yml `e2e-fxa` (`FXA_DB=mariadb EXTERNAL_DB=1`) |
 | Accounts | MariaDB 11 (installs from before) | fxa.yml `test-mariadb` (`mariadb:11`) | - |
@@ -143,7 +143,7 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
   - When it fails, the log shows what each Firefox window showed: the version, the address, the text and the form fields. `tests/e2e-fxa.sh` also keeps their page source and a screenshot, in a new `ffs-browser-artifacts.*` directory under `RUNNER_TEMP` or `/tmp` that it prints. CI uploads it as the `browser-pages-<job>` artifact.
 - [test_fxa_pairing.py](/tests/test_fxa_pairing.py) checks the pairing server's websocket channel.
 - It runs with the newest Mozilla accounts release every week, and on amd64 and arm64 for the [accounts images](/.github/workflows/fxa.yml).
-- The accounts database is MySQL, `FXA_MYSQL_IMAGE`: by default `mysql:lts` for an accounts image with mozilla/fxa#21554 in its label, else `mysql:8` with `FXA_MYSQL_ARGS` (`mysql_native_password`).
+- The accounts database is MySQL, `FXA_MYSQL_IMAGE`: by default `mysql:lts` for an accounts image with mozilla/fxa#21709 in its label, else `mysql:8` with `FXA_MYSQL_ARGS` (`mysql_native_password`).
 - With `FXA_DB=mariadb` it is MariaDB, `FXA_MARIADB_IMAGE`: by default `mariadb:lts`, or `mariadb:11` for an accounts image without mozilla/fxa#21494. `tests/podman.sh` takes `FXA_DB` too, for the Quadlets.
 - `db/mysql/keep-major.sh` refuses MariaDB 11 data on `mariadb:lts` without `SYNC_MARIADB_IMAGE`, and says what to set.
 
@@ -152,7 +152,7 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
 1. It starts the stack on an older release (`FXA_FROM`), where [test_fxa_upgrade.py](/tests/test_fxa_upgrade.py) signs up, registers a device, gets a refresh token and syncs.
 1. Then a backup, the new `FXA_VERSION`, `docker compose pull` and `docker compose up -d`. With `FXA_SAME_TAG=1` the older release is installed under the new tag, as an install following `fxa-mono-latest` has it, and `docker compose up -d` without the pull must keep it.
 1. After it: the migrations ran up to the levels of the new image's `target-patch.json`; the sign-up policy and the admin UI's procedures are installed again; the old session, device and refresh token still work; the Sync data reads back on the same tokenserver user; a new sign-in and a new sign-up work; the admin UI is all up, shows the new release and recorded each migrated schema as an event.
-1. On MySQL the install runs `mysql:8` with `mysql_native_password`, as those from before: the new files without its settings (`fxa-db` refuses to upgrade the data), `--upgrade`, the upgrade, then, with a new image that has mozilla/fxa#21554, the move to `mysql:lts` of [MySQL 8 to 9](../upgrading.md#mysql-8-to-9) (`FXA_MYSQL_TO`).
+1. On MySQL the install runs `mysql:8` with `mysql_native_password`, as those from before: the new files without its settings (`fxa-db` refuses to upgrade the data), `--upgrade`, the upgrade, then, with a new image that has mozilla/fxa#21709, the move to `mysql:lts` of [MySQL 8 to 9](../upgrading.md#mysql-8-to-9) (`FXA_MYSQL_TO`).
 
 [fxa.yml](/.github/workflows/fxa.yml) runs it from the published `fxa-mono-latest` to every new release before publishing it (amd64; not for a rebuild of a release older than the published one). It upgrades to `FXA_IMAGE:FXA_VERSION` (default: `IMAGE_REPOSITORY`, `fxa-mono-latest`), reads the release the admin UI must show from that image, and refuses a target older than `FXA_FROM`. Locally, for example:
 

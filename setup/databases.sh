@@ -38,7 +38,7 @@ render_sync_sql() {
     db_setup_print sync "${1}" "${SCRIPT_DIR}/database-setup.sql"
 }
 # database-setup-fxa.sql: render_fxa_sql <mysql|mariadb> [native]; native: the accounts' user
-# on mysql_native_password (MySQL, an accounts image without mozilla/fxa#21554), the "-- native:"
+# on mysql_native_password (MySQL, an accounts image without mozilla/fxa#21709), the "-- native:"
 # lines of db/mysql/setup/fxa-mysql instead of those after them, as db/db-setup.sh takes them
 # with mysql_native_password in FXA_MYSQL_ARGS
 render_fxa_sql() {

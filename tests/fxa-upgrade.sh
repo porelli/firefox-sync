@@ -27,7 +27,7 @@
 #   FXA_MYSQL_TO     with FXA_DB=mysql, after the upgrade of the accounts: the move of
 #                    docs/upgrading.md#mysql-8-to-9 to this image (the users on caching_sha2_password,
 #                    the native options dropped, a backup, the image); default: mysql:lts when the
-#                    new accounts image has mozilla/fxa#21554, else none; keep: none
+#                    new accounts image has mozilla/fxa#21709, else none; keep: none
 #   FXA_MARIADB_IMAGE with FXA_DB=mariadb (default: mariadb:11, as the installs from before
 #                    MariaDB 12 have it; mariadb:lts (12) needs FXA_FROM with mozilla/fxa#21494)
 #   FXA_MARIADB_FROM with FXA_DB=mariadb: the install starts on this MariaDB (e.g. mariadb:11)
@@ -255,13 +255,13 @@ else
 fi
 pull_image "${FXA_FROM}" "${from_arch}" || { echo "FAIL: pull ${FXA_FROM}"; exit 1; }
 new_release=$(release_of "${NEW}" "${NEW_ARCH}") old_release=$(release_of "${FXA_FROM}" "${from_arch}")
-# docs/upgrading.md#mysql-8-to-9 after the upgrade: with an image that has mozilla/fxa#21554
+# docs/upgrading.md#mysql-8-to-9 after the upgrade: with an image that has mozilla/fxa#21709
 MYSQL_TO=""
 if [ "${FXA_DB}" = mysql ]; then
   MYSQL_TO=${FXA_MYSQL_TO:-}
   # shellcheck source=tests/fxa_fix.sh
   source "${TESTS}/fxa_fix.sh"
-  if [ -z "${MYSQL_TO}" ] && fxa_image_fixed mozilla/fxa#21554 "${NEW}"; then
+  if [ -z "${MYSQL_TO}" ] && fxa_image_fixed mozilla/fxa#21709 "${NEW}"; then
     MYSQL_TO=mysql:lts
   fi
   [ "${MYSQL_TO}" != keep ] || MYSQL_TO=""

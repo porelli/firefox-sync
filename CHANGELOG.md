@@ -39,6 +39,7 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 - A new install publishes the Sync server on `127.0.0.1` only. An install from before keeps its `CONTAINER_EXPORT_PORT`. With no port set at all it is `127.0.0.1:5000`, before a random port on every interface.
 - `PODMAN.md` is now [Podman](docs/install/podman.md); `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/` are now `db/mysql/init/` and `db/postgres/init/`.
 - The admin UI, when you turn it on, compares the running versions with the newest releases on GitHub (`ADMIN_UPDATE_CHECK`) and checks your public URLs every hour (`ADMIN_PUBLIC_CHECK`). Set them to `false` to stop that. See [Settings](docs/reference/settings.md).
+- The accounts images carry Mozilla's switch to the mysql2 driver, [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) (merged, not in a release yet), instead of our mozilla/fxa#21554, plus [mozilla/fxa#21731](https://github.com/mozilla/fxa/pull/21731): with mysql2, a wrong `FXA_MYSQL_PASSWORD` made `fxa-migrations` exit without an error instead of stopping at once with `Access denied`. Images with either pull request in their label work on MySQL 9. See [Upstream patches](docs/reference/images.md#upstream-patches).
 
 ### Fixed
 

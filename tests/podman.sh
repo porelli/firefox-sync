@@ -1359,7 +1359,7 @@ if [ -z "${SKIP_FXA:-}" ]; then
   echo "== quadlets with self-hosted Mozilla accounts (${FXA_DB})"
   # answers: ..., image tag, admin UI, FxA, FxA domain, SMTP host, port, user, password, sender, allowlist,
   # one pull up front, otherwise every unit pulls the 5 GB image at the same time; before
-  # prepare_environment.sh, which reads its label (mozilla/fxa#21554: MySQL lts)
+  # prepare_environment.sh, which reads its label (mozilla/fxa#21709: MySQL lts)
   case "$(uname -m)" in aarch64|arm64) fxa_arch=arm64 ;; *) fxa_arch=amd64 ;; esac
   fxa_image=$(grep '^IMAGE_REPOSITORY=' .env-example | cut -d= -f2):$(grep '^FXA_VERSION=' .env-example | cut -d= -f2)
   if [ -n "${FXA_TEST_IMAGE:-}" ]; then
@@ -1379,16 +1379,16 @@ if [ -z "${SKIP_FXA:-}" ]; then
   check "$(health_parity "${QUADLET_DIR}" docker compose --env-file .env --profile admin --profile backup --profile pairing "${fxa_compose[@]}")" same \
     "every long-running service has a healthcheck, the Quadlets with the accounts compose's (${FXA_DB})"
   check "$(ls "${QUADLET_DIR}"/firefox-sync-fxa-*.{container,volume} 2> /dev/null | wc -l)" 13 "accounts quadlet files installed"
-  # MySQL: lts when the accounts image of .env has mozilla/fxa#21554, else 8 with mysql_native_password
+  # MySQL: lts when the accounts image of .env has mozilla/fxa#21709, else 8 with mysql_native_password
   if [ "${FXA_DB}" = mariadb ]; then
     expected_image=docker.io/library/mariadb:lts expected_exec=mariadbd
   elif [ "$(env_of FXA_MYSQL_IMAGE)" = mysql:lts ]; then
     expected_image=docker.io/library/mysql:lts expected_exec="mysqld --event-scheduler=ON "
-    check "[$(env_of FXA_MYSQL_ARGS)] $(grep -c 'does not have mozilla/fxa#21554' setup-fxa-quadlets.log)" "[] 0" "the accounts on MySQL lts: no mysql_native_password"
+    check "[$(env_of FXA_MYSQL_ARGS)] $(grep -c 'does not have mozilla/fxa#21709' setup-fxa-quadlets.log)" "[] 0" "the accounts on MySQL lts: no mysql_native_password"
   else
     expected_image=docker.io/library/mysql:8 expected_exec="mysqld --event-scheduler=ON --mysql-native-password=ON --authentication-policy=mysql_native_password"
-    check "$(env_of FXA_MYSQL_IMAGE) $(grep -cE 'does not have mozilla/fxa#21554|could not read the labels of' setup-fxa-quadlets.log)" "mysql:8 1" \
-      "the accounts on MySQL 8 with mysql_native_password, for an accounts image without mozilla/fxa#21554 (said)"
+    check "$(env_of FXA_MYSQL_IMAGE) $(grep -cE 'does not have mozilla/fxa#21709|could not read the labels of' setup-fxa-quadlets.log)" "mysql:8 1" \
+      "the accounts on MySQL 8 with mysql_native_password, for an accounts image without mozilla/fxa#21709 (said)"
   fi
   check "$(fxa_db_image) $(sed -n 's/^Image=//p' "${QUADLET_DIR}/firefox-sync-backup-fxa.container")" "${expected_image} ${expected_image}" "accounts database ${FXA_DB} and its backups"
   [ "${FXA_DB}" = mariadb ] || check "$(sed -n 's/^Exec=//p' "${QUADLET_DIR}/firefox-sync-fxa-db.container")" "${expected_exec}" "fxa-db's options (FXA_MYSQL_ARGS)"
@@ -1443,15 +1443,15 @@ if [ -z "${SKIP_FXA:-}" ]; then
     firefox-sync-fxa-profile-worker.service firefox-sync-fxa-profile-static.service firefox-sync-admin.service
   check "$?" 0 "systemctl --user start (syncstorage and accounts)"
   # the image the accounts' units run is the one whose label chose fxa-db's MySQL: lts only with
-  # mozilla/fxa#21554 in it, and the units did not pull another one over it (podman 4 does with
+  # mozilla/fxa#21709 in it, and the units did not pull another one over it (podman 4 does with
   # --arch, which the units have only for another architecture)
   run_id=$(podman image inspect -f '{{.Id}}' "${fxa_image}" 2> /dev/null)
   check "$(sed -n 's/^Image=//p' "${QUADLET_DIR}"/firefox-sync-fxa-{migrations,auth}.container | sort -u) [$(grep -h '^PodmanArgs=--arch' "${QUADLET_DIR}"/firefox-sync-fxa-{migrations,auth}.container | sort -u)] $(grep -hc '^PodmanArgs=--network-alias=fxa-' "${QUADLET_DIR}"/firefox-sync-fxa-{migrations,auth}.container | awk '{ s += $1 } END { print s }') ${run_id}" \
     "${fxa_image} [$([ "${fxa_arch}" = "$(case "$(uname -m)" in aarch64|arm64) echo arm64 ;; *) echo amd64 ;; esac)" ] || echo "PodmanArgs=--arch=${fxa_arch}")] 2 ${fxa_image_id}" \
     "the accounts' units run ${fxa_image}, the image prepare_environment.sh read (not pulled over: no --arch on this host's architecture)"
   if [ "${FXA_DB}" != mariadb ] && [ -z "${fxa_from}" ]; then
-    fxa_image_fixed mozilla/fxa#21554 "${fxa_image}" podman && want_db=docker.io/library/mysql:lts || want_db=docker.io/library/mysql:8
-    check "$(fxa_db_image)" "${want_db}" "fxa-db's MySQL agrees with the image the units run ($([ "${want_db##*:}" = lts ] && echo with || echo without) mozilla/fxa#21554)"
+    fxa_image_fixed mozilla/fxa#21709 "${fxa_image}" podman && want_db=docker.io/library/mysql:lts || want_db=docker.io/library/mysql:8
+    check "$(fxa_db_image)" "${want_db}" "fxa-db's MySQL agrees with the image the units run ($([ "${want_db##*:}" = lts ] && echo with || echo without) mozilla/fxa#21709)"
   fi
   ok=""
   for _ in $(seq 1 225); do

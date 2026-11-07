@@ -86,8 +86,8 @@ unless fxa.database.allowMajorUpgrade=true (set it back to false after the move:
 keeps it) (docs/upgrading.md#database-majors).
 {{- if eq .Values.fxa.database.backend "mysql" }}
 {{- if eq (include "firefox-sync.imageMajor" $fxaDb) "8" }} On MySQL 8 with mysql_native_password, for
-accounts images without mozilla/fxa#21554; the move to MySQL 9: docs/upgrading.md#mysql-8-to-9.
-{{- else }} MySQL {{ include "firefox-sync.imageMajor" $fxaDb | default "lts" }} needs an accounts image with mozilla/fxa#21554 (ours);
+accounts images without mozilla/fxa#21709; the move to MySQL 9: docs/upgrading.md#mysql-8-to-9.
+{{- else }} MySQL {{ include "firefox-sync.imageMajor" $fxaDb | default "lts" }} needs an accounts image with mozilla/fxa#21709 (ours);
 with another set fxa.database.image.mysql to docker.io/library/mysql:8.
 {{- end }}
 {{- end }}

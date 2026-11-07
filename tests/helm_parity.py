@@ -87,7 +87,7 @@ ALLOWED_DIFFERENCES = {
     f"{BUNDLED}:db-init/SYNC_DB_CONTAINERS": "compose passes it always; the chart only with database.bundled false (no "
     "setup migration recorded there), so that the default render stays that of 0.1.0: unset, the init container takes 1",
     "fxa-external:fxa-db-bootstrap/FXA_MYSQL_ARGS": "compose-only: FXA_MYSQL_ARGS of .env says mysql_native_password for an "
-    "accounts image without mozilla/fxa#21554 (the \"-- native:\" lines of db/mysql/setup/fxa-mysql); the chart's own server takes the "
+    "accounts image without mozilla/fxa#21709 (the \"-- native:\" lines of db/mysql/setup/fxa-mysql); the chart's own server takes the "
     "server's default authentication, as docs/databases.md#with-helm says",
     "*:db-init/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the init container's warning; no .env here",
     "*:admin/FFS_OLD_ENV_NAMES": "compose-only: the old .env names still set, for the admin UI's setup check; no .env here",

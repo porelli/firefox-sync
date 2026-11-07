@@ -1,8 +1,9 @@
 # The mozilla/fxa pull requests of upstream-patches.yml that Mozilla released: the pull request
 # and the first accounts release with it, one per line, e.g.
-#   mozilla/fxa#21554 v1.352.0
+#   mozilla/fxa#21709 v1.352.0
 # Added when the entry leaves upstream-patches.yml (its when_released says so): our images then
 # lose that part of their label org.firefox-sync.upstream-patches, and an accounts image has the
 # fix when it is of that release or a later one (its label org.opencontainers.image.version,
 # else its tag), Mozilla's too. Read by prepare_environment.sh (fxa_has_fix) and the tests.
-# None yet: mozilla/fxa#21494 (MariaDB 12) and mozilla/fxa#21554 (MySQL 9) are not released.
+# None yet: mozilla/fxa#21494 (MariaDB 12) and mozilla/fxa#21709 (MySQL 9, merged after v1.349.0)
+# are not in a release.

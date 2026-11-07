@@ -157,32 +157,42 @@
 
 - id: fxa-mysql2
   repo: mozilla/fxa
-  pr: 21554
-  head_repo: porelli/fxa
-  base: 3f78fe7dff13ea51635aec6d6fd5e7d5f69e1aa5
-  sha: bb2b77bb9bf1aa568be5fe52185e25272853f6c7
+  pr: 21709
+  head_repo: mozilla/fxa
+  base: 86aa1fa5448e9be350cf2b41b8605224a30691f5
+  sha: d49421941032a18387b91a71fd67bd25a9afb11a
   component: fxa-mono
-  # the pull request was rebased on a main that removed backfill-account-authorizations-v2 and
-  # changed fxa-auth-server's package.json: base...sha does not apply to v1.348.5, which has
-  # them. It gets the pull request's head before the rebase, the same change.
-  # v1.349.0 dropped the exact @types/mysql@2.15.27 of an OpenTelemetry instrumentation from
-  # yarn.lock: base...sha conflicts there. Its port is base...sha with the then orphaned
-  # @types/mysql entry removed as well (nothing else depends on it once the root's goes)
-  ports: upstream-patches/fxa-mysql2
-  releases:
-    v1.348.5:
-      base: 3e2cb676f8c561e7c293d44ec979c3be88eb81cb
-      sha: a99361eb6229441aa1214a5d6acdf310cc925e02
+  # merged into main after v1.349.0 (857250d): applied until a release has it. Before
+  # fxa-migrations-refused-signin, which changes the patcher on top of it
   why: >-
-    fix(shared): replace mysql with mysql2 for MySQL 8.4+/9 auth. The accounts used the
-    unmaintained mysqljs driver, which only speaks mysql_native_password: MySQL 8.4 needs
-    mysql_native_password=ON for it and MySQL 9 removed the plugin. With mysql2 the accounts
-    connect with caching_sha2_password, so fxa-db can be MySQL 9 (mysql:lts).
+    fix(shared): replace mysql with mysql2. The accounts used the unmaintained mysqljs driver,
+    which only speaks mysql_native_password: MySQL 8.4 needs mysql_native_password=ON for it and
+    MySQL 9 removed the plugin. With mysql2 the accounts connect with caching_sha2_password, so
+    fxa-db can be MySQL 9 (mysql:lts).
   when_released: >-
     Every accounts image from that release on, Mozilla's too, works on MySQL 9 and on 8.4
     without mysql_native_password: say so (the release) instead of "our images" in docs/accounts.md,
     docs/databases.md#supported-versions, docs/reference/images.md#upstream-patches,
     docs/upgrading.md#database-majors, .env-example and prepare_environment.sh, add the line
-    "mozilla/fxa#21554 <that release>" to config/fxa/fixed-in (our images lose the label;
+    "mozilla/fxa#21709 <that release>" to config/fxa/fixed-in (our images lose the label;
     prepare_environment.sh and the tests then take every image of that release or later as
-    having it).
+    having it). Until mozilla/fxa#21731 is released too, a wrong FXA_MYSQL_PASSWORD makes
+    Mozilla's fxa-migrations exit without "Access denied" (retried, not stopped at once).
+
+- id: fxa-migrations-refused-signin
+  repo: mozilla/fxa
+  pr: 21731
+  head_repo: porelli/fxa
+  base: ccca044a9380383f86ba7ea4e4e523476d64cc57
+  sha: f98a8e519cf2c2cd047d43c07d0bee2a2f38c230
+  component: fxa-mono
+  why: >-
+    fix(db-migrations): don't hang when the database refuses the sign-in. With mysql2
+    (mozilla/fxa#21709) the patcher awaited end() of a connection whose handshake was refused,
+    which never calls back: on a wrong password or missing grants fxa-migrations exited
+    without an error (an unsettled top-level await), so the migrations' command could not
+    tell "Access denied" (stop at once, not retried) from a database not up yet.
+  when_released: >-
+    Nothing to undo: the migrations' commands (compose/fxa.yml, the Quadlet
+    firefox-sync-fxa-migrations.container, the chart's fxa-auth.yaml) already stop at
+    "Access denied for user"; tests/helm-fxa.sh checks it with every image tested.

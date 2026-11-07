@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Sourced by the tests that choose the accounts' database by the accounts image: whether an
-# image has a fix of upstream-patches.yml (mozilla/fxa#21494 for MariaDB 12, mozilla/fxa#21554
+# image has a fix of upstream-patches.yml (mozilla/fxa#21494 for MariaDB 12, mozilla/fxa#21709
 # for MySQL 9), decided as prepare_environment.sh decides it (fxa_has_fix): its label
 # org.firefox-sync.upstream-patches, or once Mozilla released it its release from that one on
 # (config/fxa/fixed-in, the label org.opencontainers.image.version, else the tag).

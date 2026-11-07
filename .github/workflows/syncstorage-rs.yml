@@ -641,7 +641,7 @@ jobs:
           REPOSITORY: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}
           TAG: ${{ needs.prepare-env.outputs.service_tag }}-${{ needs.prepare-env.outputs.build_date }}-linux-amd64
           # Mozilla's own images: early warning about a new release before fxa.yml builds it
-          # (without mozilla/fxa#21554: the accounts on mysql:8 with mysql_native_password, as
+          # (without mozilla/fxa#21709: the accounts on mysql:8 with mysql_native_password, as
           # the installs from before)
           FXA_IMAGE: docker.io/mozilla/fxa-mono
           FXA_VERSION: ${{ steps.fxa.outputs.version }}

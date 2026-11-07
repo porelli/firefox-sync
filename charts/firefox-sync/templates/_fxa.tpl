@@ -61,7 +61,7 @@ wait and of its backups
 {{/*
 The bundled accounts database's args (a JSON list), compose's fxa-db command: mysqld
 --event-scheduler=ON ${FXA_MYSQL_ARGS}, where prepare_environment.sh writes FXA_MYSQL_ARGS
-(mysql_native_password, for an accounts image without mozilla/fxa#21554) only with a MySQL 8
+(mysql_native_password, for an accounts image without mozilla/fxa#21709) only with a MySQL 8
 pin: so here, by the image, a MySQL 8 one (mysql:8, mysql:8.4.x) gets them, any other none
 (MySQL 9 refuses them). MariaDB: mariadbd --event-scheduler=ON (its default authentication is
 already mysql_native_password)

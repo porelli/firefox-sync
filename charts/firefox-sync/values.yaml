@@ -144,7 +144,7 @@ fxa:
     bundled: true
     # the server's image, also the client of the backups and of the wait for the server
     # (FXA_MYSQL_IMAGE, FXA_MARIADB_IMAGE): MySQL's and MariaDB's long-term major, as compose's.
-    # mysql:lts (MySQL 9) needs an accounts image with mozilla/fxa#21554 (ours); with another
+    # mysql:lts (MySQL 9) needs an accounts image with mozilla/fxa#21709 (ours); with another
     # (Mozilla's, or ours from before) pin MySQL 8, docker.io/library/mysql:8: a MySQL 8 pin
     # gets compose's FXA_MYSQL_ARGS, --mysql-native-password=ON
     # --authentication-policy=mysql_native_password, any other image none. lts moves on to the

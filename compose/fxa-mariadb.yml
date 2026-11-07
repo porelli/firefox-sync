@@ -23,7 +23,7 @@ services:
       FFS_MYSQL_IMAGE: ${FXA_MARIADB_IMAGE:-}
       FFS_MYSQL_SETTING: FXA_MARIADB_IMAGE
     # the default authentication is mysql_native_password (MariaDB has no caching_sha2_password),
-    # which both of the accounts' drivers speak (mysql, and mysql2 with mozilla/fxa#21554)
+    # which both of the accounts' drivers speak (mysql, and mysql2 with mozilla/fxa#21709)
     command: [sh, /ffs-db/keep-major.sh, docker-entrypoint.sh, mariadbd, --event-scheduler=ON]
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]

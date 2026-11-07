@@ -5,7 +5,7 @@
 services:
   fxa-db:
     # FXA_MYSQL_IMAGE: mysql:lts by default, MySQL's newest long-term major (9 today), for
-    # accounts images with https://github.com/mozilla/fxa/pull/21554 (the mysql2 driver,
+    # accounts images with https://github.com/mozilla/fxa/pull/21709 (the mysql2 driver,
     # caching_sha2_password; applied to our images until it is in a release,
     # upstream-patches.yml). The installs from before, and the images without it (Mozilla's,
     # ours from before), run mysql:8 with FXA_MYSQL_ARGS=--mysql-native-password=ON

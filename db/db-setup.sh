@@ -204,7 +204,7 @@ done < <(sql_settings "${KIND}")
 # <SETTING> for them (what the messages and the logs say). The parts of a file the settings
 # leave out: without ADMIN_DB_PASSWORD (an install from before it) what follows "-- The admin
 # UI:" (the admin UI keeps its tables in the tokenserver database); the accounts on MySQL with
-# mysql_native_password (FXA_MYSQL_ARGS, an accounts image without mozilla/fxa#21554) the
+# mysql_native_password (FXA_MYSQL_ARGS, an accounts image without mozilla/fxa#21709) the
 # "-- native:" lines instead of those after them; without a policy user (FXA_MYSQL_POLICY_USER)
 # its grants to FXA_MYSQL_USER, as docs/reference/database-users.md#the-accounts says; without
 # FXA_ADMIN_DB_PASSWORD (optional, fxa-policy then creates no ffs_admin) its lines; the bootstrap

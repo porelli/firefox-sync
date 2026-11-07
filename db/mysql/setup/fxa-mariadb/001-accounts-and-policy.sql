@@ -17,7 +17,7 @@
 --   log_bin_trust_function_creators=ON (with binary logging: the sign-up policy's function and trigger)
 -- The database names are fixed: fxa, fxa_oauth, fxa_profile, pushbox and ffs.
 -- mysql_native_password, explicit whatever the server's default: MariaDB has no caching_sha2_password,
--- and both of the accounts' drivers speak it (mysql, and mysql2 with mozilla/fxa#21554)
+-- and both of the accounts' drivers speak it (mysql, and mysql2 with mozilla/fxa#21709)
 -- (again: a new password after prepare_environment.sh ran again)
 CREATE USER IF NOT EXISTS '@FXA_USER@'@'%' IDENTIFIED VIA mysql_native_password USING PASSWORD('@FXA_PASSWORD@');
 ALTER USER '@FXA_USER@'@'%' IDENTIFIED VIA mysql_native_password USING PASSWORD('@FXA_PASSWORD@');

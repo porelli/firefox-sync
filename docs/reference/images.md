@@ -76,7 +76,8 @@ Today:
 | Pull request | Image | What it fixes |
 |---|---|---|
 | [mozilla/fxa#21494](https://github.com/mozilla/fxa/pull/21494) | `fxa-mono` | the accounts' migrations on MariaDB 12, see [MariaDB 12](../accounts.md#mariadb-12) |
-| [mozilla/fxa#21554](https://github.com/mozilla/fxa/pull/21554) | `fxa-mono` | the accounts on MySQL 9, and on 8.4 without `mysql_native_password`, see [MySQL 9](../accounts.md#mysql-9) |
+| [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) | `fxa-mono` | the accounts on MySQL 9, and on 8.4 without `mysql_native_password`, see [MySQL 9](../accounts.md#mysql-9). Merged, not in a release yet. Our images from before list mozilla/fxa#21554, the same change |
+| [mozilla/fxa#21731](https://github.com/mozilla/fxa/pull/21731) | `fxa-mono` | with mysql2, `fxa-migrations` exited without an error when the database refused its user (a wrong `FXA_MYSQL_PASSWORD`), instead of stopping at once with `Access denied`, see [Troubleshooting](../troubleshooting.md#databases) |
 | [mozilla-services/syncstorage-rs#2638](https://github.com/mozilla-services/syncstorage-rs/pull/2638) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | ties between tokenserver nodes, which on MariaDB made upstream's `test_user_creation` fail |
 | [mozilla-services/syncstorage-rs#2671](https://github.com/mozilla-services/syncstorage-rs/pull/2671) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same millisecond |
 | [mozilla-services/syncstorage-rs#2680](https://github.com/mozilla-services/syncstorage-rs/pull/2680) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same centisecond |
@@ -87,7 +88,7 @@ Each image lists what was applied in its label `org.firefox-sync.upstream-patche
 docker image inspect -f '{{index .Config.Labels "org.firefox-sync.upstream-patches"}}' ghcr.io/porelli/firefox-sync:fxa-mono-latest
 ```
 
-The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`: the commit of the pull request applied, which for a release the newest commit does not apply to can be an earlier head of it (for example `mozilla/fxa#21554@3e2cb67..a99361e` on v1.348.5). A ported change, made by hand, ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
+The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`: the commit of the pull request applied, which for a release the newest commit does not apply to can be an earlier head of it (for example `mozilla/fxa#21554@3e2cb67..a99361e` on v1.348.5, in our images from before mozilla/fxa#21709). A ported change, made by hand, ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
 
 The label decides what works. Once Mozilla releases a pull request, its entry leaves upstream-patches.yml and the label: [config/fxa/fixed-in](/config/fxa/fixed-in) then names the first accounts release with it, and every accounts image of that release or later has it (Mozilla's too), read from its label `org.opencontainers.image.version`, else its tag.
 

@@ -343,11 +343,11 @@ fxa_ingress_lint() {
   # password and the move to 9, on lts the patch it needs; nothing with your own server
   grep -q "^Their database runs docker.io/library/mysql:lts: a helm upgrade that would move it to another major is refused$" <<< "${out}" \
     && grep -q "^unless fxa.database.allowMajorUpgrade=true" <<< "${out}" \
-    && grep -q "MySQL lts needs an accounts image with mozilla/fxa#21554 (ours);$" <<< "${out}" || fail "NOTES: the accounts database on mysql:lts: ${out}"
+    && grep -q "MySQL lts needs an accounts image with mozilla/fxa#21709 (ours);$" <<< "${out}" || fail "NOTES: the accounts database on mysql:lts: ${out}"
   grep -q "On MySQL 8 with mysql_native_password, for" <<< "$(notes -f "${fxa}" --set fxa.database.image.mysql=docker.io/library/mysql:8)" \
     || fail "NOTES: the accounts database on mysql:8 without its native password note"
   out=$(notes -f "${fxa}" --set fxa.database.backend=mariadb)
-  grep -q "^Their database runs docker.io/library/mariadb:lts:" <<< "${out}" && ! grep -q 'mozilla/fxa#21554' <<< "${out}" || fail "NOTES: the accounts database on MariaDB: ${out}"
+  grep -q "^Their database runs docker.io/library/mariadb:lts:" <<< "${out}" && ! grep -q 'mozilla/fxa#21709' <<< "${out}" || fail "NOTES: the accounts database on MariaDB: ${out}"
   ! grep -q '^Their database runs' <<< "$(notes -f "${CHART_DIR}/ci/fxa-external-values.yaml")" || fail "NOTES: the bundled accounts database with your own server"
   # the GitOps hint (without existingSecret): the accounts' keys too, fxaGeneratedKeys (as checkSecretKeys)
   keys=$(sed -n '/define "firefox-sync.fxaGeneratedKeys"/{n;p;}' "${CHART_DIR}/templates/_fxa.tpl")
@@ -630,7 +630,7 @@ fxa_objects_lint() {
   [[ "$(fxa_db_spec)" == '{"args":["mysqld","--event-scheduler=ON"],"claim":"data","env":{"MYSQL_ROOT_PASSWORD":"FXA_MYSQL_PASSWORD"},"image":"docker.io/library/mysql:lts","mount":{"mountPath":"/var/lib/mysql","name":"data","subPath":"data"},"probe":["sh","-c","MYSQL_PWD=${MYSQL_ROOT_PASSWORD} mysqladmin ping -h 127.0.0.1 --protocol=tcp -uroot --silent"]}' ]] \
     || fail "fxa-db (mysql): $(fxa_db_spec)"
   # compose's FXA_MYSQL_ARGS: mysql_native_password on a MySQL 8 pin alone (an accounts image
-  # without mozilla/fxa#21554), after --event-scheduler=ON as in compose's command; the
+  # without mozilla/fxa#21709), after --event-scheduler=ON as in compose's command; the
   # defaults those of compose's FXA_MYSQL_IMAGE and FXA_MARIADB_IMAGE (mysql:lts, mariadb:lts)
   local native='["mysqld","--event-scheduler=ON","--mysql-native-password=ON","--authentication-policy=mysql_native_password"]' pin want
   for pin in docker.io/library/mysql:8 mysql:8.4 docker.io/library/mysql:8.4.7@sha256:00 docker.io/library/mysql:9 docker.io/library/mysql:9.7 docker.io/library/mysql:latest; do
@@ -966,7 +966,7 @@ fxa_base_parity() {
 # REPOSITORY, TAG: the Sync server's images, as tests/helm.sh; FXA_IMAGE (default REPOSITORY),
 # FXA_VERSION (default fxa-mono-latest): the accounts'; FXA_MARIADB_IMAGE, FXA_MYSQL_IMAGE:
 # their database (as tests/e2e-fxa.sh: the chart's lts when the accounts image has
-# mozilla/fxa#21494, mozilla/fxa#21554, else mariadb:11, mysql:8), also your own server's
+# mozilla/fxa#21494, mozilla/fxa#21709, else mariadb:11, mysql:8), also your own server's
 fxa_e2e() {
   local backend=${1:-} external=${EXTERNAL_DB:-}
   case "${backend}" in
@@ -997,12 +997,12 @@ fxa_e2e() {
     || fail "no fxa.redis.image in values.yaml"
   # the chart's lts needs a patch in the accounts image (the label of our builds,
   # upstream-patches.yml), as tests/e2e-fxa.sh: MariaDB lts (12) mozilla/fxa#21494, else
-  # mariadb:11; MySQL lts (9) mozilla/fxa#21554, else mysql:8 (with mysql_native_password, the
+  # mariadb:11; MySQL lts (9) mozilla/fxa#21709, else mysql:8 (with mysql_native_password, the
   # chart's for a MySQL 8 pin). FXA_MARIADB_IMAGE, FXA_MYSQL_IMAGE: that one
   local db_args=() pr fallback given
   case "${backend}" in
     mariadb) pr=21494 fallback=docker.io/library/mariadb:11 given=${FXA_MARIADB_IMAGE:-} ;;
-    mysql) pr=21554 fallback=docker.io/library/mysql:8 given=${FXA_MYSQL_IMAGE:-} ;;
+    mysql) pr=21709 fallback=docker.io/library/mysql:8 given=${FXA_MYSQL_IMAGE:-} ;;
   esac
   ADMIN_TAG=${TAG:-latest}
   CLUSTER="ffs-helm-fxa-${backend}${external:+-extdb}$([[ ${SYNC_BACKEND} == "${backend}" ]] || echo "-sync-${SYNC_BACKEND}")"
@@ -1213,7 +1213,7 @@ fxa_e2e_main() {
   if [[ -n "${external}" ]]; then
     # your own server: nothing of the bundled one; the policy as its own user, which may not
     # CREATE USER (the administrator's SQL made ffs_admin); the accounts' user on the server's
-    # default authentication, or mysql_native_password for an image without mozilla/fxa#21554
+    # default authentication, or mysql_native_password for an image without mozilla/fxa#21709
     ! kubectl get sts,svc,pvc -o name | grep -q -- '-fxa-db' || fail "a bundled accounts database with your own server: $(kubectl get sts,svc,pvc -o name | grep -- '-fxa-db')"
     # (the servers' too, tests/helm/fxa-values.yaml: below)
     [[ "$(kubectl get networkpolicy -o name | grep -c -- '-fxa-\(redis\|db\)$')" == 1 ]] && ! kubectl get networkpolicy "${FULL}-fxa-db" > /dev/null 2>&1 \
@@ -2128,7 +2128,7 @@ fxa_delete_test_jobs() {
 # StatefulSet extdb-fxa (the database image of the e2e, its data in an emptyDir), as
 # docs/databases.md#server-requirements says (binary logging, on by default on MySQL, with
 # log_bin_trust_function_creators; mysql_native_password=ON only on MySQL 8, for an accounts
-# image without mozilla/fxa#21554), its users made by its administrator with
+# image without mozilla/fxa#21709), its users made by its administrator with
 # db/mysql/setup/fxa-mysql (user fxa, policy user ffs_policy; on MySQL 8 its "-- native:"
 # lines); the Secret ffs-own with the chart's keys as it generates them, the passwords of
 # those users and FXA_MYSQL_POLICY_PASSWORD

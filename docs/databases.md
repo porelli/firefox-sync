@@ -45,7 +45,7 @@ Some of these need an accounts image with [the upstream patches](reference/image
 | MariaDB 12 and later | yes | no: the migrations stop with `ER_CANT_DROP_FIELD_OR_KEY` |
 | MariaDB 11.4 to 11.8 | yes | yes |
 
-The patches are [mozilla/fxa#21554](https://github.com/mozilla/fxa/pull/21554) for MySQL ([MySQL 9](accounts.md#mysql-9)) and [mozilla/fxa#21494](https://github.com/mozilla/fxa/pull/21494) for MariaDB ([MariaDB 12](accounts.md#mariadb-12)). The Sync server's patches fix an upstream test and the order of tied nodes. They don't change which servers the Sync server supports.
+The patches are [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) for MySQL ([MySQL 9](accounts.md#mysql-9)) and [mozilla/fxa#21494](https://github.com/mozilla/fxa/pull/21494) for MariaDB ([MariaDB 12](accounts.md#mariadb-12)). The Sync server's patches fix an upstream test and the order of tied nodes. They don't change which servers the Sync server supports.
 
 ### Default tags and pins
 
@@ -133,7 +133,7 @@ Every setting, with its Helm value: [Settings](reference/settings.md#your-own-da
 
   Granting `SUPER` instead works too, but is not recommended.
 - **MariaDB and MySQL:** `explicit_defaults_for_timestamp=ON`, the default since MySQL 8.0 and MariaDB 10.10.
-- **The accounts on MySQL with an image without mozilla/fxa#21554:** MySQL 8.4 started with `mysql_native_password=ON`, and the accounts' user created with it. `prepare_environment.sh` writes the SQL that way for such an image. With our images nothing is needed. MariaDB needs nothing either.
+- **The accounts on MySQL with an image without mozilla/fxa#21709:** MySQL 8.4 started with `mysql_native_password=ON`, and the accounts' user created with it. `prepare_environment.sh` writes the SQL that way for such an image. With our images nothing is needed. MariaDB needs nothing either.
 
 ### Create the databases and users
 

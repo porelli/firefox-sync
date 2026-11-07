@@ -41,6 +41,12 @@ Upstream pull requests target upstream `main`, which runs ahead of the releases:
 1. Move the entry's `base` and `sha` to the new head.
 1. If the new head no longer applies to the release built here, pin the old head for that release under `releases` (see below). Check with `upstream-patches.py apply` on a clone of the release.
 
+## A merged pull request
+
+When Mozilla merges its own version of a change we carry (a pull request of theirs, not ours), the entry can point at theirs until a release has it: their pull request, `head_repo` their repository (a branch of mozilla/fxa is `mozilla/fxa`), `sha` its head and `base` the parent of its first commit. Merged and not in the release built, it is applied as an open one is; once a release has it, the run flags the entry for removal. Close ours as superseded.
+
+Entries are applied in the order of the file. A pull request made on top of another one (its `base` has the other's changes) comes after it. mozilla/fxa#21709 (the mysql2 driver, Mozilla's version of our mozilla/fxa#21554) is applied before mozilla/fxa#21731, which fixes the patcher with that driver.
+
 ## Release pins
 
 `releases` maps a release tag to another commit of the same pull request, with its own `base`:
@@ -58,7 +64,7 @@ Upstream pull requests target upstream `main`, which runs ahead of the releases:
 - Any other release gets the entry's `base...sha`. When that does not apply, the build tries the pin of the newest older release with `git apply --check`, then the newest older port. Whatever applies cleanly first is used, and the run warns: review it on the new release and pin it for that release.
 - A release pin that does not apply to its own release fails the build, as a port that does not apply does.
 
-mozilla/fxa#21554 has a release pin for v1.348.5: the pull request was rebased on a `main` that removed a script it changed (`backfill-account-authorizations-v2`) and changed `fxa-auth-server`'s `package.json`, so its new head no longer applies to that release. The pin is its head before the rebase.
+mozilla/fxa#21554 had a release pin for v1.348.5: the pull request was rebased on a `main` that removed a script it changed (`backfill-account-authorizations-v2`) and changed `fxa-auth-server`'s `package.json`, so its new head no longer applied to that release. The pin was its head before the rebase. Its entry now points at mozilla/fxa#21709, Mozilla's own version of the change, see [A merged pull request](#a-merged-pull-request).
 
 ## Per-release ports
 
@@ -68,7 +74,7 @@ mozilla/fxa#21554 has a release pin for v1.348.5: the pull request was rebased o
 - Any other release gets its release pin or `base...sha` as always. When `base...sha` does not apply and no older release pin does, the build tries the newest port of an older release with `git apply --check`. If it applies cleanly it is used, the label names that port (`+v1.347.3` on a later release), and the run warns: review the change on the new release and add its port. If nothing applies, the build fails: add a release pin or a port, or rebase the pull request.
 - Review a port like the pull request: the release's code, the same change.
 
-(mozilla/fxa#21554 had a port for v1.347.3, where the shared database code was still in `packages/fxa-shared`.)
+(mozilla/fxa#21554 had ports for v1.347.3, where the shared database code was still in `packages/fxa-shared`, and v1.349.0.)
 
 ## What a run says
 
@@ -84,7 +90,7 @@ In one commit: the entry (its release pins with it), what its `when_released` sa
 
 A release pin, or a port, that no release built here needs any more (the entry's `base...sha` applies to the release built) can go on its own.
 
-An accounts pull request that `prepare_environment.sh` and the tests look for in the label (mozilla/fxa#21494, mozilla/fxa#21554) also gets a line in [config/fxa/fixed-in](/config/fxa/fixed-in): the pull request and the first release with it. Without it, the images built after the removal, which no longer list it, would count as images without it.
+An accounts pull request that `prepare_environment.sh` and the tests look for in the label (mozilla/fxa#21494, mozilla/fxa#21709) also gets a line in [config/fxa/fixed-in](/config/fxa/fixed-in): the pull request and the first release with it. Without it, the images built after the removal, which no longer list it, would count as images without it.
 
 ## In the tests
 

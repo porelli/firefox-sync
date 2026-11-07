@@ -7,7 +7,7 @@
 # Accounts images and the upstream pull requests of upstream-patches.yml they need: MariaDB 12
 # and later (FXA_MARIADB_IMAGE=mariadb:lts, the default) need mozilla/fxa#21494, MySQL 9
 # (FXA_MYSQL_IMAGE=mysql:lts, the default) and MySQL without mysql_native_password need
-# mozilla/fxa#21554 (the mysql2 driver). An image has one when its label
+# mozilla/fxa#21709 (the mysql2 driver). An image has one when its label
 # org.firefox-sync.upstream-patches lists it (ours, while Mozilla has not released it), or when
 # it is of the release that has it or a later one (config/fxa/fixed-in, once Mozilla released
 # it: every image then, Mozilla's too; its release from the label org.opencontainers.image.version,
@@ -33,7 +33,13 @@ fxa_image_inspect_remote() {
     printf '%s' "${out}"
 }
 # has_fxa_patch <pull request> <label>: e.g. mozilla/fxa#21494 in "mozilla/fxa#21494@517651a..aa0b178 ..."
-has_fxa_patch() { case " ${2} " in *" ${1}@"*) return 0 ;; esac; return 1; }
+# Our images built before Mozilla merged the mysql2 switch (mozilla/fxa#21709) list our own pull
+# request for it, mozilla/fxa#21554, instead: the same driver
+has_fxa_patch() {
+    case " ${2} " in *" ${1}@"*) return 0 ;; esac
+    [ "${1}" = mozilla/fxa#21709 ] && case " ${2} " in *" mozilla/fxa#21554@"*) return 0 ;; esac
+    return 1
+}
 # fxa_fixed_in <pull request>: the first accounts release with it, once Mozilla released it
 # (config/fxa/fixed-in of this checkout), nothing before
 fxa_fixed_in() {
@@ -159,7 +165,7 @@ fxa_mariadb_image_check() {
     echo "  FXA_VERSION=fxa-mono-latest) or MariaDB 11 (FXA_MARIADB_IMAGE=mariadb:11), see docs/accounts.md#mysql-or-mariadb"
     echo ""
 }
-# the options of fxa-db (FXA_MYSQL_ARGS) for accounts images without mozilla/fxa#21554: their
+# the options of fxa-db (FXA_MYSQL_ARGS) for accounts images without mozilla/fxa#21709: their
 # driver speaks mysql_native_password only, which MySQL 8.4 has off by default and MySQL 9 not
 # at all (mysqld 9 refuses these options and does not start)
 FXA_MYSQL_NATIVE_ARGS="--mysql-native-password=ON --authentication-policy=mysql_native_password"
@@ -176,19 +182,19 @@ fxa_mysql_image_check() {
     image=$(env_value FXA_IMAGE):$(env_value FXA_VERSION)
     if ! mysql_8 "${db_image}" && [ "${native}" = yes ]; then
         echo "WARNING: FXA_MYSQL_ARGS has --mysql-native-password=ON, which MySQL ${db_image##*:} (FXA_MYSQL_IMAGE=${db_image})"
-        echo "  refuses: fxa-db would not start. On MySQL 9 the accounts need an image with mozilla/fxa#21554 and"
+        echo "  refuses: fxa-db would not start. On MySQL 9 the accounts need an image with mozilla/fxa#21709 and"
         echo "  their users on caching_sha2_password first: docs/upgrading.md#mysql-8-to-9 (or FXA_MYSQL_IMAGE=mysql:8)"
         echo ""
         return 0
     fi
-    fxa_image_has mozilla/fxa#21554; rc=$?
+    fxa_image_has mozilla/fxa#21709; rc=$?
     if [ "${rc}" = 0 ]; then
         if [ -n "${FXA_IMAGE_PULL}" ] && ! { mysql_8 "${db_image}" && [ "${native}" = yes ]; }; then
-            echo "WARNING: your local ${image} does not have mozilla/fxa#21554, without which the accounts cannot"
+            echo "WARNING: your local ${image} does not have mozilla/fxa#21709, without which the accounts cannot"
             echo "  log in on MySQL ${db_image##*:}; the registry's has it: pull it before starting (docker compose pull, podman pull)"
             echo ""
         elif [ "${native}" = yes ] && [ "${UPGRADING:-}" = yes ]; then
-            echo "NOTE: ${image} has mozilla/fxa#21554 (caching_sha2_password): the accounts database can move"
+            echo "NOTE: ${image} has mozilla/fxa#21709 (caching_sha2_password): the accounts database can move"
             echo "  from MySQL 8 with mysql_native_password to MySQL lts, when you choose: docs/upgrading.md#mysql-8-to-9"
             echo ""
         elif mysql_8 "${db_image}" && [ "${UPGRADING:-}" = yes ]; then
@@ -204,12 +210,12 @@ fxa_mysql_image_check() {
     mysql_8 "${db_image}" && [ "${native}" = yes ] && return 0
     if [ "${rc}" = 2 ]; then
         echo "NOTE: could not read the labels of ${image}: MySQL ${db_image##*:} without mysql_native_password"
-        echo "  needs an accounts image with mozilla/fxa#21554 (label org.firefox-sync.upstream-patches, docs/accounts.md#mysql-or-mariadb)"
+        echo "  needs an accounts image with mozilla/fxa#21709 (label org.firefox-sync.upstream-patches, docs/accounts.md#mysql-or-mariadb)"
         echo ""
         return 0
     fi
     echo "WARNING: the accounts on MySQL ${db_image##*:} (FXA_MYSQL_IMAGE=${db_image}${args:+, FXA_MYSQL_ARGS=${args}}) need an image"
-    echo "  with mozilla/fxa#21554, which ${image} does not have (Mozilla's images, or ours built before it):"
+    echo "  with mozilla/fxa#21709, which ${image} does not have (Mozilla's images, or ours built before it):"
     echo "  they cannot log in. Use our images (FXA_IMAGE=ghcr.io/porelli/firefox-sync, FXA_VERSION=fxa-mono-latest)"
     echo "  or FXA_MYSQL_IMAGE=mysql:8 with FXA_MYSQL_ARGS=${FXA_MYSQL_NATIVE_ARGS}"
     echo "  (on a new database only: MySQL 8 cannot open MySQL 9's data), see docs/accounts.md#mysql-or-mariadb"

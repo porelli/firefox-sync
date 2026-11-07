@@ -224,7 +224,7 @@ jobs:
           EXTERNAL_DB: ${{ matrix.external_db || '' }}
           # your own server on lts: the stack applies the SQL itself (MySQL 8: checked only)
           DB_BOOTSTRAP: ${{ matrix.external_db == '1' && !matrix.fxa_mysql_image && '1' || '' }}
-          # (empty: the default, mysql:lts for an accounts image with mozilla/fxa#21554)
+          # (empty: the default, mysql:lts for an accounts image with mozilla/fxa#21709)
           FXA_MYSQL_IMAGE: ${{ matrix.fxa_mysql_image || '' }}
           ADMIN_IMAGE: ${{ needs.build.outputs.image }}
           FXA_IMAGE: ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}

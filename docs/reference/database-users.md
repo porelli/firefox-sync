@@ -75,7 +75,7 @@ Without `SYNC_POSTGRES_APP_USER` (an install from before it), the Sync server st
 How the accounts' user signs in:
 
 - MySQL, with our accounts images: the server's default, `caching_sha2_password`.
-- MySQL, with an image without mozilla/fxa#21554: `mysql_native_password`, the file's `-- native:` lines. `prepare_environment.sh` uses them for such an image. See [MySQL 9](../accounts.md#mysql-9).
+- MySQL, with an image without mozilla/fxa#21709: `mysql_native_password`, the file's `-- native:` lines. `prepare_environment.sh` uses them for such an image. See [MySQL 9](../accounts.md#mysql-9).
 - MariaDB: `mysql_native_password`, explicitly. MariaDB has no `caching_sha2_password`, and both drivers speak it.
 
 What the policy user installs at every start ([admin/fxainit.go](/admin/fxainit.go)), and what the admin UI's user `ffs_admin` gets on it:

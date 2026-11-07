@@ -15,7 +15,7 @@
 --   log_bin_trust_function_creators=ON (the sign-up policy's function and trigger)
 -- The database names are fixed: fxa, fxa_oauth, fxa_profile, pushbox and ffs.
 -- The accounts' user has the server's default authentication (caching_sha2_password): accounts
--- images with mozilla/fxa#21554 (the mysql2 driver; ours, docs/accounts.md#mysql-or-mariadb). The images
+-- images with mozilla/fxa#21709 (the mysql2 driver; ours, docs/accounts.md#mysql-or-mariadb). The images
 -- without it (Mozilla's, ours from before) speak mysql_native_password only: a MySQL 8.4 server
 -- with mysql_native_password=ON, and the "-- native:" lines instead of the ones after them
 -- (prepare_environment.sh does that for such an image)

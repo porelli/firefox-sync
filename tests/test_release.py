@@ -76,9 +76,9 @@ class Decision(unittest.TestCase):
 
     def test_new_pairing_server_and_patches(self):
         self.assertTrue(release.decide("schedule", "v2026.11.02", STATE, state(channelserver="0.9.4"), [])[0])
-        go, why = release.decide("schedule", "v2026.11.02", STATE, state(patches_fxa="mozilla/fxa#21554@c..d"), [])
+        go, why = release.decide("schedule", "v2026.11.02", STATE, state(patches_fxa="mozilla/fxa#21709@c..d"), [])
         self.assertTrue(go)
-        self.assertIn("the upstream patches of fxa: none -> mozilla/fxa#21554@c..d", why)
+        self.assertIn("the upstream patches of fxa: none -> mozilla/fxa#21709@c..d", why)
 
     def test_unreleased_entries(self):
         go, why = release.decide("schedule", "v2026.11.02", STATE, state(), release.unreleased_entries(FILLED))

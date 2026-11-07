@@ -227,25 +227,28 @@ TMPDIR=${WORK}/tmp
 
 echo "== setup/images.sh: accounts images with a fix of upstream-patches.yml (fxa_has_fix, config/fxa/fixed-in)"
 has() { fxa_has_fix "$@"; echo $?; }
-check "$(fxa_fixed_in mozilla/fxa#21554)|$(fxa_fixed_in mozilla/fxa#21494)" "|" "config/fxa/fixed-in: no release has them yet"
-LABEL='mozilla/fxa#21494@3e2cb67..0eaa3a2 mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3'
+check "$(fxa_fixed_in mozilla/fxa#21709)|$(fxa_fixed_in mozilla/fxa#21494)" "|" "config/fxa/fixed-in: no release has them yet"
+LABEL='mozilla/fxa#21494@3e2cb67..0eaa3a2 mozilla/fxa#21709@86aa1fa..d494219 mozilla/fxa#21731@ccca044..f98a8e5'
 # not released: the label only
-check "$(has mozilla/fxa#21554 "${LABEL}" v1.347.3 fxa-mono-latest) $(has mozilla/fxa#21494 "${LABEL}" "" fxa-mono-latest)" "0 0" "not released: an image with the patch in its label has it"
-check "$(has mozilla/fxa#21554 none v1.400.0 fxa-mono-latest) $(has mozilla/fxa#21554 "" "" v1.400.0) $(has mozilla/fxa#21494 "mozilla/fxa#21554@a..b" "" fxa-mono-v1.400.0)" "1 1 1" \
+check "$(has mozilla/fxa#21709 "${LABEL}" v1.347.3 fxa-mono-latest) $(has mozilla/fxa#21494 "${LABEL}" "" fxa-mono-latest)" "0 0" "not released: an image with the patch in its label has it"
+check "$(has mozilla/fxa#21709 none v1.400.0 fxa-mono-latest) $(has mozilla/fxa#21709 "" "" v1.400.0) $(has mozilla/fxa#21494 "mozilla/fxa#21709@a..b" "" fxa-mono-v1.400.0)" "1 1 1" \
   "not released: without it in the label, none has it, whatever its release"
-check "$(has mozilla/fxa#2155 "${LABEL}" "" "") $(has fxa#21554 "${LABEL}" "" "")" "1 1" "another pull request's number is not it"
+check "$(has mozilla/fxa#2170 "${LABEL}" "" "") $(has fxa#21709 "${LABEL}" "" "")" "1 1" "another pull request's number is not it"
+OLD_LABEL='mozilla/fxa#21494@3e2cb67..0eaa3a2 mozilla/fxa#21554@3e2cb67..bb2b77b+v1.349.0'
+check "$(has mozilla/fxa#21709 "${OLD_LABEL}" v1.349.0 fxa-mono-latest) $(has mozilla/fxa#21494 "mozilla/fxa#21554@a..b" "" "") $(has mozilla/fxa#2155 "${OLD_LABEL}" "" "")" "0 1 1" \
+  "an image of ours from before mozilla/fxa#21709 (our mozilla/fxa#21554 in its label) has the mysql2 switch, nothing else"
 # released in v1.352.0 (a fixed-in of a test checkout)
 SELF_DIR=${WORK}/checkout
 mkdir -p "${SELF_DIR}/config/fxa"
 cp "${CODE}/config/fxa/fixed-in" "${SELF_DIR}/config/fxa/fixed-in"
-printf 'mozilla/fxa#21554 v1.352.0\n' >> "${SELF_DIR}/config/fxa/fixed-in"
-check "$(fxa_fixed_in mozilla/fxa#21554)|$(fxa_fixed_in mozilla/fxa#21494)" "v1.352.0|" "fixed-in: the release of a pull request, the others none"
-check "$(has mozilla/fxa#21554 none v1.352.0 fxa-mono-latest) $(has mozilla/fxa#21554 "" v1.360.2 latest) $(has mozilla/fxa#21554 "" "" v1.352.1) $(has mozilla/fxa#21554 "" "" fxa-mono-v1.400.0) $(has mozilla/fxa#21554 "" 1.352.0 "")" \
+printf 'mozilla/fxa#21709 v1.352.0\n' >> "${SELF_DIR}/config/fxa/fixed-in"
+check "$(fxa_fixed_in mozilla/fxa#21709)|$(fxa_fixed_in mozilla/fxa#21494)" "v1.352.0|" "fixed-in: the release of a pull request, the others none"
+check "$(has mozilla/fxa#21709 none v1.352.0 fxa-mono-latest) $(has mozilla/fxa#21709 "" v1.360.2 latest) $(has mozilla/fxa#21709 "" "" v1.352.1) $(has mozilla/fxa#21709 "" "" fxa-mono-v1.400.0) $(has mozilla/fxa#21709 "" 1.352.0 "")" \
   "0 0 0 0 0" "released: an image of that release or a later one has it, its version label or its tag (ours, Mozilla's)"
-check "$(has mozilla/fxa#21554 none v1.351.9 fxa-mono-latest) $(has mozilla/fxa#21554 "" "" v1.347.3) $(has mozilla/fxa#21554 "" v1.35.0 v1.400.0)" "1 1 1" \
+check "$(has mozilla/fxa#21709 none v1.351.9 fxa-mono-latest) $(has mozilla/fxa#21709 "" "" v1.347.3) $(has mozilla/fxa#21709 "" v1.35.0 v1.400.0)" "1 1 1" \
   "released: an older image has not (the version label first, then the tag)"
-check "$(has mozilla/fxa#21554 "${LABEL}" v1.347.3 fxa-mono-v1.347.3)" 0 "released: an older image of ours with the patch in its label still has it"
-check "$(has mozilla/fxa#21554 "" "" latest) $(has mozilla/fxa#21554 "" "" "sha256:abc")" "2 2" "released: an image of no known release, not known"
+check "$(has mozilla/fxa#21709 "${LABEL}" v1.347.3 fxa-mono-v1.347.3)" 0 "released: an older image of ours with the patch in its label still has it"
+check "$(has mozilla/fxa#21709 "" "" latest) $(has mozilla/fxa#21709 "" "" "sha256:abc")" "2 2" "released: an image of no known release, not known"
 check "$(has mozilla/fxa#21494 none v1.400.0 latest)" 1 "released: another pull request still by its label"
 check "$(version_at_least 1.352.0 1.352.0 && echo y) $(version_at_least 1.352.10 1.352.9 && echo y) $(version_at_least 1.400 1.352.1 && echo y) $(version_at_least 1.352 1.352.1 || echo n) $(version_at_least 2.0.0 1.999.999 && echo y)" \
   "y y y n y" "version_at_least: part by part, numbers"
@@ -253,7 +256,7 @@ check "$(fxa_release v1.347.3) $(fxa_release fxa-mono-v1.347.3) $(fxa_release 1.
   "fxa_release: of the version label or the tag"
 # the JSON of an image (docker, podman inspect, buildx imagetools)
 json='[{"Config":{"Labels":{"org.firefox-sync.upstream-patches":"none","org.opencontainers.image.version":"v1.353.0"}}}]'
-check "$(fxa_inspected_has mozilla/fxa#21554 "${json}" fxa-mono-latest; echo $?) $(fxa_inspected_has mozilla/fxa#21494 "${json}" fxa-mono-latest; echo $?)" "0 1" \
+check "$(fxa_inspected_has mozilla/fxa#21709 "${json}" fxa-mono-latest; echo $?) $(fxa_inspected_has mozilla/fxa#21494 "${json}" fxa-mono-latest; echo $?)" "0 1" \
   "the labels of an image's JSON: released and newer has it, the other not"
 
 echo "== prepare_environment.sh: setup/ of its real path"
