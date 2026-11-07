@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       rebuild:
-        description: Rebuild all images from scratch instead of reusing identical ones (scheduled runs, and releases, a tagged commit on main, always do)
+        description: Rebuild all images from scratch instead of reusing identical ones (scheduled runs always do)
         type: boolean
         default: false
       fxa_version:
@@ -46,6 +46,11 @@ on:
       - 'docs/hooks/**'
       - 'docs/requirements.txt'
       - 'tests/check_site_anchors.py'
+      # the releases (.github/workflows/release.yml): no image of their own
+      - 'CHANGELOG.md'
+      - '.github/workflows/release.yml'
+      - '.github/scripts/release.py'
+      - 'tests/test_release.py'
       # the local VM's script (docs/development/testing.md#local-vm): CI does not run it
       - 'tests/vm/**'
 
@@ -65,8 +70,6 @@ env:
   SERVICE_REPOSITORY_SERVER: github.com
   SERVICE_REPOSITORY_NAME: mozilla-services/syncstorage-rs
   SERVICE_CHANGELOG_PATH: CHANGELOG.md # upstream's file (check-links: ignore)
-  # specific for this component (image tags used to name the GitHub release)
-  IMAGE_TAGS: mysql
   # bump when the way the app image is built changes in this workflow (platforms, the steps
   # before the build, ...): app images are otherwise reused as long as the upstream tag, the
   # upstream patches, the build arguments and the scripts that prepare the sources (in
@@ -81,7 +84,6 @@ jobs:
     permissions:
       contents: read
     outputs:
-      github_release: ${{ steps.set-version-suffix-and-release-strategy.outputs.github_release }}
       service_tag: ${{ steps.get-service-latest-tag.outputs.service_tag }}
       internal_commit_head: ${{ steps.find-code.outputs.internal_commit_head }}
       build_date: ${{ steps.build_date.outputs.build_date }}
@@ -97,19 +99,6 @@ jobs:
         with:
           event_name: ${{ github.event_name }}
           repository_main_branch: ${{ env.REPOSITORY_MAIN_BRANCH }}
-
-      - name: Decide release strategy
-        id: set-version-suffix-and-release-strategy
-        # <GIT_BRANCH>   , <GIT_TAG> on head, github release
-        # main           , yes              , yes
-        # non-main-branch, yes              , no
-        # any-branch     , no               , no
-        run: |
-          if [[ "${{ steps.find-code.outputs.internal_commit_branch_name }}" == ${{ env.REPOSITORY_MAIN_BRANCH }} ]] && [[ "${{ steps.find-code.outputs.internal_commit_tag }}" != "" ]]; then
-            echo 'github_release=true' >> ${GITHUB_OUTPUT}
-          else
-            echo 'github_release=false' >> ${GITHUB_OUTPUT}
-          fi
 
       - name: Fetch latest tags from service repository
         id: get-service-latest-tag
@@ -381,9 +370,9 @@ jobs:
           printf 'cache_from<<EOF\n%s\nEOF\n' "${cache_from}" >> "${GITHUB_OUTPUT}"
           echo "tags=${tags},${key_tag}" >> "${GITHUB_OUTPUT}"
 
-          # scheduled builds, releases and manual rebuilds start from scratch to pick up
+          # scheduled builds and manual rebuilds start from scratch to pick up
           # base image (security) updates
-          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.rebuild }}" = true ] || [ "${{ needs.prepare-env.outputs.github_release }}" = true ]; then
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.rebuild }}" = true ]; then
             echo "Fresh build (${{ github.event_name }})"
             echo "fresh=true" >> ${GITHUB_OUTPUT}
             exit 0
@@ -745,77 +734,6 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.REPOSITORY_REGISTRY }}/${{ env.REPOSITORY_FULL_NAME }}:${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-latest
-
-  ## Prepare GitHub release ##
-  prepare-release:
-    runs-on: ubuntu-latest
-
-    needs:
-      - prepare-env
-      - build-and-push-containers
-      - build-and-push-manifests
-
-    permissions:
-      contents: write
-      packages: write
-
-    steps:
-      - name: Checkout workflows
-        uses: actions/checkout@v7
-        with:
-          path: workflows
-          persist-credentials: false
-
-      - name: Prepare image name
-        id: image_name
-        uses: ./workflows/.github/actions/image-name-suffix
-        with:
-          image_type: 'app'
-          image_tags: ${{ env.IMAGE_TAGS }}
-          service_tag: ${{ needs.prepare-env.outputs.service_tag }}
-
-      - name: Clean workflows
-        run: |
-          rm -Rf ./workflows
-
-      - name: Get changelog from service
-        if: needs.prepare-env.outputs.github_release == 'true'
-        run: |
-          mkdir -p mozilla-services/${{ env.SERVICE_NAME }}
-          curl -H 'Accept: application/vnd.github.v3.raw' -L -s https://github.com/mozilla-services/syncstorage-rs/raw/refs/tags/${{ needs.prepare-env.outputs.service_tag }}/CHANGELOG.md -o mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}
-
-      - name: Checkout repository history
-        if: needs.prepare-env.outputs.github_release == 'true'
-        uses: actions/checkout@v7
-        with:
-          path: repository
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Prepare release notes
-        if: needs.prepare-env.outputs.github_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # the previous release is the latest one, before this run creates a new one
-          previous=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName 2> /dev/null || true)
-          cd repository
-          ./.github/scripts/release-notes.sh \
-            "${{ needs.prepare-env.outputs.service_tag }}" \
-            "${{ needs.prepare-env.outputs.build_date }}" \
-            "../mozilla-services/${{ env.SERVICE_NAME }}/${{ env.SERVICE_CHANGELOG_PATH }}" \
-            "${previous}" \
-            "${{ github.repository }}" \
-            "${{ github.server_url }}" > ../release-notes.md
-          cat ../release-notes.md
-
-      - name: Create Release
-        if: needs.prepare-env.outputs.github_release == 'true'
-        uses: ncipollo/release-action@v1
-        with:
-          name: ${{ env.SERVICE_NAME }}
-          tag: ${{ env.SERVICE_NAME }}-${{ steps.image_name.outputs.docker_image_name_suffix }}-${{ needs.prepare-env.outputs.build_date }}
-          bodyFile: ./release-notes.md
 
   ## An entry of upstream-patches.yml in the release now (not applied any more) ##
   # red until it is removed and its when_released done; after publishing, not holding it back

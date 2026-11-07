@@ -27,6 +27,9 @@ on:
   schedule:
     - cron: '45 6 * * 1' # every Monday, after the syncstorage-rs build
   push:
+    # branches only: a tag (a release, .github/workflows/release.yml) builds nothing
+    branches:
+      - '**'
     paths:
       - .github/workflows/fxa.yml
       - upstream-patches.yml

@@ -1,4 +1,7 @@
 name: Find head
+# The commit of this repository the run builds (the init images): the checked out one, the
+# head of the branch pushed, or of the default branch for scheduled and manual runs. The
+# releases are .github/workflows/release.yml's.
 
 inputs:
   event_name:
@@ -13,10 +16,6 @@ outputs:
     value: ${{ steps.checkout.outputs.internal_commit_branch_name }}
   internal_commit_head:
     value: ${{ steps.checkout.outputs.internal_commit_head }}
-  internal_commit_tag_present:
-    value: ${{ steps.checkout.outputs.internal_commit_tag_present }}
-  internal_commit_tag:
-    value: ${{ steps.checkout.outputs.internal_commit_tag }}
 
 runs:
   using: "composite"
@@ -24,41 +23,19 @@ runs:
     - name: Checkout
       uses: actions/checkout@v7
       with:
-        fetch-tags: true
         fetch-depth: 0
 
-    - name: Handle checkout based on trigger type
+    - name: The commit
       id: checkout
       shell: bash
+      env:
+        EVENT: ${{ inputs.event_name }}
+        MAIN: ${{ inputs.repository_main_branch }}
       run: |
-        # scheduled runs and manual runs on the main branch build a release
-        if [ "${{ inputs.event_name }}" == "schedule" ] || { [ "${{ inputs.event_name }}" == "workflow_dispatch" ] && [ "${{ github.ref_name }}" == "${{ inputs.repository_main_branch }}" ]; }; then
-          echo "Triggered by ${{ inputs.event_name }}, looking for the latest tag on main branch."
-
-          # Fetch all tags from the repository
-          git fetch --tags
-
-          echo "internal_commit_branch_name=${{ inputs.repository_main_branch }}" >> ${GITHUB_OUTPUT}
-
-          # Check for the latest tag on the main branch
-          latest_tag=$(git describe --tags --abbrev=0 ${{ inputs.repository_main_branch }})
-
-          if [ -z "${latest_tag}" ]; then
-            echo "No tag found on the main branch."
-            echo "internal_commit_tag_present=true" >> ${GITHUB_OUTPUT}
-            git checkout ${latest_tag}
-          else
-            echo "Latest tag: ${latest_tag}"
-            echo "internal_commit_tag=${latest_tag}" >> ${GITHUB_OUTPUT}
-            echo "internal_commit_tag_present=false" >> ${GITHUB_OUTPUT}
-          fi
-        elif [ "${{ github.event_name }}" == "push" ]; then
-          # Check if the last commit has an associated tag
-          echo "internal_commit_branch_name=$(git rev-parse --abbrev-ref HEAD)" >> ${GITHUB_OUTPUT}
-          latest_tag=$(git describe --tags --always --exact-match || echo "")
-          echo "internal_commit_tag=${latest_tag}" >> ${GITHUB_OUTPUT}
-          echo "internal_commit_tag_present=true" >> ${GITHUB_OUTPUT}
+        if [ "${EVENT}" = push ]; then
+          branch=$(git rev-parse --abbrev-ref HEAD)
+        else
+          branch=${MAIN}
         fi
-
-        head=`git rev-parse HEAD`
-        echo "internal_commit_head=${head}" >> ${GITHUB_OUTPUT}
+        echo "internal_commit_branch_name=${branch}" >> "${GITHUB_OUTPUT}"
+        echo "internal_commit_head=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"

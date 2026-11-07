@@ -12,6 +12,9 @@ name: admin
 on:
   workflow_dispatch:
   push:
+    # branches only: a tag (a release, .github/workflows/release.yml) builds nothing
+    branches:
+      - '**'
     paths:
       - admin/**
       - .github/workflows/admin.yml

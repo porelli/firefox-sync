@@ -1,0 +1,162 @@
+name: release
+# The releases of this repository, vYYYY.MM.DD (.N for another one the same day), by
+# .github/scripts/release.py. See docs/development/releasing.md#releases.
+#
+# - a tag vYYYY.MM.DD[.N] pushed by a maintainer, on a commit of the default branch: released
+#   once every CI run of that commit passed (the plan job waits for them);
+# - after the weekly (scheduled) runs of syncstorage-rs.yml and fxa.yml, once both completed:
+#   released only when what they published changed since the previous release (the upstream
+#   versions, the upstream patches applied) or CHANGELOG.md's Unreleased has entries. The tag
+#   goes on the commit the weekly runs built. Otherwise the run says why there is none;
+# - by hand (workflow_dispatch) on the default branch, as the weekly one, with dry_run off;
+# - on a push to another branch: a dry run, what the weekly run would release now.
+# Then the publish job, the only one that writes (contents: write), creates the GitHub release
+# and moves Unreleased into a dated section of CHANGELOG.md with a commit [skip ci] to the
+# default branch.
+on:
+  push:
+    branches:
+      - '**'
+    # (path filters do not apply to tags)
+    tags:
+      - 'v[0-9]*'
+  workflow_run:
+    workflows: [syncstorage-rs-mysql, fxa-mono]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be released (a release needs the default branch and this off)
+        type: boolean
+        default: true
+
+# one release at a time, never cancelled; a branch's dry runs per branch, the newest only
+concurrency:
+  group: release-${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
+
+permissions: {}
+
+jobs:
+  plan:
+    # not on a push to the default branch (the weekly runs and tags release it), and after a
+    # run of syncstorage-rs.yml or fxa.yml only when it was the scheduled one
+    if: >-
+      (github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch))
+      || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'schedule')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # a tag waits for the CI of its commit
+    timeout-minutes: 330
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      target: ${{ steps.plan.outputs.target }}
+      title: ${{ steps.plan.outputs.title }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # the commit released (CHANGELOG.md and Chart.yaml there) and the default branch
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Unit tests of the release script
+        run: python3 -I tests/test_release.py
+
+      - name: Plan
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          case "${EVENT}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                args=(--event tag --tag "${GITHUB_REF_NAME}")
+              else
+                args=(--event manual --dry-run)
+              fi ;;
+            workflow_run) args=(--event schedule) ;;
+            *)
+              args=(--event manual)
+              if [ "${DRY_RUN}" != false ] || [ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]; then
+                args+=(--dry-run)
+              fi ;;
+          esac
+          python3 -I .github/scripts/release.py plan "${args[@]}" --output "${RUNNER_TEMP}/release"
+
+      - name: The release planned
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: ignore
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      TARGET: ${{ needs.plan.outputs.target }}
+      TITLE: ${{ needs.plan.outputs.title }}
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: The release planned
+        uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+
+      - name: GitHub release
+        run: |
+          notes="${RUNNER_TEMP}/release/notes.md"
+          if [ "${GITHUB_REF}" = "refs/tags/${TAG}" ]; then
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag --latest --title "${TITLE}" --notes-file "${notes}"
+          else
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --target "${TARGET}" --latest --title "${TITLE}" --notes-file "${notes}"
+          fi
+
+      - name: CHANGELOG.md, Unreleased into its section
+        run: |
+          [ -f CHANGELOG.md ] || { echo "no CHANGELOG.md on ${DEFAULT_BRANCH}"; exit 0; }
+          d="${RUNNER_TEMP}/release"
+          date=$(jq -r .date "${d}/decision.json")
+          upstream=$(jq -r .upstream "${d}/decision.json")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          # a push to the default branch meanwhile: again from it
+          for attempt in 1 2 3; do
+            git fetch -q origin "${DEFAULT_BRANCH}"
+            git reset -q --hard "origin/${DEFAULT_BRANCH}"
+            python3 -I .github/scripts/release.py changelog --version "${TAG}" --date "${date}" \
+              --released "${d}/unreleased.md" --upstream "${upstream}" CHANGELOG.md
+            if git diff --quiet; then
+              exit 0
+            fi
+            # [skip ci]: CHANGELOG.md only, no workflow to run
+            git commit -q -a -m "chore(release) ${TAG}: CHANGELOG.md [skip ci]"
+            if git push -q origin "HEAD:${DEFAULT_BRANCH}"; then
+              git log -1 --stat
+              exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          echo "::error::could not push CHANGELOG.md to ${DEFAULT_BRANCH}: move Unreleased into ${TAG} by hand"
+          exit 1
