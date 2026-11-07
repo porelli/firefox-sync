@@ -1454,14 +1454,15 @@ fxa_e2e_main() {
   for name in content:content profile:profile; do
     [[ "$(kubectl exec "deploy/${FULL}-fxa-${name%%:*}" -c "${name#*:}" -- printenv REDIS_PASSWORD)" == "${want}" ]] || fail "${name%%:*}: REDIS_PASSWORD is not FXA_REDIS_PASSWORD"
   done
-  # (connected: Redis' clients from their pods; the check of no NOAUTH error above ran with
-  # them up, before the test's own unauthenticated clients)
+  # (connected: Redis' client from the profile pod; the check of no NOAUTH error above ran with
+  # it up, before the test's own unauthenticated clients. The content server's REDIS_PASSWORD
+  # is for its feature flags, read from Redis by the Backbone app's index page only: since
+  # v1.349.0, without that app, it opens no Redis connection; earlier releases, still pinnable
+  # with fxa.image.tag, do, so the chart keeps its Redis env and its NetworkPolicy)
   out=$(kubectl exec "${redis}" -- redis-cli CLIENT LIST)
-  for name in content profile; do
-    got=$(kubectl get pods -l "app.kubernetes.io/instance=${REL},app.kubernetes.io/component=fxa-${name}" -o jsonpath='{.items[0].status.podIP}')
-    grep -q " addr=${got}:" <<< "${out}" || fail "no Redis client from the ${name} pod (${got}): ${out}"
-  done
-  check "the avatars' volume: 10001's, the image's var/public in it; IMG_PROVIDERS_FXA compose's (\$\$ as \$); REDIS_PASSWORD of content and profile FXA_REDIS_PASSWORD, both connected to Redis"
+  got=$(kubectl get pods -l "app.kubernetes.io/instance=${REL},app.kubernetes.io/component=fxa-profile" -o jsonpath='{.items[0].status.podIP}')
+  grep -q " addr=${got}:" <<< "${out}" || fail "no Redis client from the profile pod (${got}): ${out}"
+  check "the avatars' volume: 10001's, the image's var/public in it; IMG_PROVIDERS_FXA compose's (\$\$ as \$); REDIS_PASSWORD of content and profile FXA_REDIS_PASSWORD, profile connected to Redis"
 
   # from a pod of the cluster, with curl (the Sync server's image): Firefox's configuration
   # on the chart's URLs, the avatars under /img/ (img-proxy) and without it (profile-static)
