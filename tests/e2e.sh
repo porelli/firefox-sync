@@ -588,7 +588,8 @@ check "$([ $? != 0 ] && echo failed) $(state syncstorage Running || echo false) 
   "with both names: docker compose up fails, the Sync server stays down"
 # (PostgreSQL: sync_role_init, which runs first)
 both=$([ "${BACKEND}" = mysql ] && echo "SYNC_TOKENSERVER_DB_PASSWORD and MARIADB_TOKENSERVER_PASSWORD" || echo "SYNC_POSTGRES_PASSWORD and POSTGRES_PASSWORD")
-both_logs=$(dc logs "$([ "${BACKEND}" = postgres ] && echo sync_role_init || echo syncstorage_migrate)" 2>&1)
+# (your own server: db-bootstrap, which runs before both, refuses first)
+both_logs=$(dc logs "$(if [ -n "${EXTDB}" ]; then echo db-bootstrap; elif [ "${BACKEND}" = postgres ]; then echo sync_role_init; else echo syncstorage_migrate; fi)" 2>&1)
 both_said=$(grep -c "ERROR: ${both} are both set (in .env or in the environment docker compose runs in): run ./prepare_environment.sh --upgrade for .env, or unset ${both##* } in your shell (docs/upgrading.md#renamed-settings)" <<< "${both_logs}")
 check "${both_said}" 1 "it names them, and what to run"
 [ "${both_said}" = 1 ] || { tail -5 <<< "${both_logs}"; tail -5 "${WORK}/both.log"; }
