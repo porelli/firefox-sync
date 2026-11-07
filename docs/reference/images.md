@@ -32,7 +32,7 @@ The images here are built as close to Mozilla's as possible. They add arm64, Mar
 
 | Image | Tags | What it is |
 |---|---|---|
-| `fxa-mono` | `fxa-mono-latest`, `fxa-mono-<release>` (for example `fxa-mono-v1.347.1`) | Mozilla's accounts service, built from [its Dockerfile](https://github.com/mozilla/fxa/blob/main/_dev/docker/mono/Dockerfile), about 5 GB unpacked |
+| `fxa-mono` | `fxa-mono-latest`, `fxa-mono-<release>` (for example `fxa-mono-v1.349.0`) | Mozilla's accounts service, built from [its Dockerfile](https://github.com/mozilla/fxa/blob/main/_dev/docker/mono/Dockerfile), about 5 GB unpacked |
 | `fxa-channelserver` | `fxa-channelserver-latest`, `fxa-channelserver-<release>` | the optional pairing server for QR codes, built the same way from [Mozilla's channelserver](https://github.com/mozilla-services/channelserver) |
 
 - Architectures: amd64 and arm64, both tested before publishing. Mozilla publishes [`mozilla/fxa-mono`](https://hub.docker.com/r/mozilla/fxa-mono) for amd64 only.
@@ -45,7 +45,7 @@ Mozilla's own image works too, on amd64:
 
 ```ini
 FXA_IMAGE=docker.io/mozilla/fxa-mono
-FXA_VERSION=v1.347.1
+FXA_VERSION=v1.349.0
 FXA_ARCH=amd64
 # with the pairing server: Mozilla's, as FXA_IMAGE has none
 FXA_PAIRING_IMAGE=docker.io/mozilla/channelserver:latest

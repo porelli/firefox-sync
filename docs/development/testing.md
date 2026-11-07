@@ -158,7 +158,7 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
 
 ```bash
 # from Mozilla's own image (amd64, emulated on arm64) with older schemas
-FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_VERSION=fxa-mono-v1.347.3 tests/fxa-upgrade.sh
+FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_VERSION=fxa-mono-v1.349.0 tests/fxa-upgrade.sh
 # from one of our older builds on MariaDB
 FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_DB=mariadb tests/fxa-upgrade.sh
 # from an older fxa-mono-latest

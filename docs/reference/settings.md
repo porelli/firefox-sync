@@ -178,7 +178,7 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `.env` | Helm | Default | Meaning | Old name |
 |---|---|---|---|---|
 | `FXA_IMAGE` | `fxa.image.repository` (empty: `image.repository`) | `ghcr.io/porelli/firefox-sync` | the accounts' image. Mozilla's own: `docker.io/mozilla/fxa-mono` (amd64 only) | |
-| `FXA_VERSION` | `fxa.image.tag` | `fxa-mono-latest` | its tag: the newest tested release, or a pinned one such as `fxa-mono-v1.347.1`. [Upgrading](../upgrading.md#self-hosted-accounts) | |
+| `FXA_VERSION` | `fxa.image.tag` | `fxa-mono-latest` | its tag: the newest tested release, or a pinned one such as `fxa-mono-v1.349.0`. [Upgrading](../upgrading.md#self-hosted-accounts) | |
 | `FXA_ARCH` | – (the node's) | `amd64` | `amd64` or `arm64`, set by `prepare_environment.sh` (`amd64` with Mozilla's images) | |
 | `FXA_CONTENT_URL` | `fxa.contentUrl` | required | the public URL of the accounts pages, for example `https://accounts.example.com` | |
 | `FXA_AUTH_URL` | `fxa.authUrl` | required | the public URL of the accounts API | |

@@ -63,8 +63,8 @@ fxa:
   # 3-4 GB of memory), on the three public URLs below (required), each a host of its own
   enabled: false
   # FXA_IMAGE (empty: image.repository) and FXA_VERSION: our builds of Mozilla's releases, amd64
-  # and arm64; pin a release with e.g. fxa-mono-v1.347.1 (docs/upgrading.md#self-hosted-accounts). Mozilla's own
-  # (amd64 only): repository docker.io/mozilla/fxa-mono, tag v1.347.1
+  # and arm64; pin a release with e.g. fxa-mono-v1.349.0 (docs/upgrading.md#self-hosted-accounts). Mozilla's own
+  # (amd64 only): repository docker.io/mozilla/fxa-mono, tag v1.349.0
   image:
     repository: ""
     tag: fxa-mono-latest

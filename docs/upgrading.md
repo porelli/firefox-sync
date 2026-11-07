@@ -36,7 +36,7 @@ A new Mozilla release comes about every two weeks. It is published here only aft
 With docker compose:
 
 1. Make a backup of the accounts. With the backup service: `docker compose exec backup-fxa sh /ffs-backup/backup.sh now`. Without it, back up the `fxa-db` volume (`fxa-db-mariadb` with MariaDB) and the `fxa-keys` volume. With your own database server, back up its `fxa`, `fxa_oauth`, `fxa_profile`, `pushbox` and `ffs` databases.
-1. To decide when to upgrade, pin a release in `.env`, for example `FXA_VERSION=fxa-mono-v1.347.1`, and change it to upgrade.
+1. To decide when to upgrade, pin a release in `.env`, for example `FXA_VERSION=fxa-mono-v1.349.0`, and change it to upgrade.
 1. Pull and start, pinned or not:
 
     ```bash
@@ -55,7 +55,7 @@ With docker compose:
 With the Helm chart:
 
 1. Make a backup: `kubectl create job --from=cronjob/ffs-firefox-sync-backup backup-now-$(date +%s)` dumps the accounts first. The keys stay on their PVC or in `fxa.keys.existingSecret`, untouched.
-1. Pin a release in your values, for example `fxa.image.tag: fxa-mono-v1.347.3`, and change it to upgrade. With `fxa-mono-latest` and `image.pullPolicy: IfNotPresent`, a node that has the image never pulls a newer one.
+1. Pin a release in your values, for example `fxa.image.tag: fxa-mono-v1.349.0`, and change it to upgrade. With `fxa-mono-latest` and `image.pullPolicy: IfNotPresent`, a node that has the image never pulls a newer one.
 1. `helm upgrade` as in [Helm](#helm). The auth pod stops, and its new pod runs the migrations, then the sign-up policy, in its init containers before it serves. The content and profile servers wait for it.
 1. Check `kubectl logs deploy/ffs-firefox-sync-fxa-auth -c migrations`, and the admin UI's overview as above. A failed migration keeps the auth pod in `Init:Error` and out of its Service. To go back to the older release, restore the backup ([Restore on Kubernetes](backups.md#restore-on-kubernetes)).
 
@@ -109,7 +109,7 @@ The self-hosted accounts:
 
     ```bash
     ./prepare_environment.sh --render-units
-    podman pull ghcr.io/porelli/firefox-sync:fxa-mono-v1.347.3
+    podman pull ghcr.io/porelli/firefox-sync:fxa-mono-v1.349.0
     ```
 
 1. Run the migrations again. Restarting their unit restarts, in order, the units that require it: the sign-up policy, then the auth server, the accounts pages, the profile server and the admin UI. The profile worker and its static server do not require it, so restart them too:
