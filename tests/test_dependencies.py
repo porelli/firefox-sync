@@ -42,7 +42,7 @@ class Filters(unittest.TestCase):
         m = dep.matches
         self.assertTrue(m(["admin/**"], "admin/go.mod"))
         self.assertTrue(m(["admin/**"], "admin/templates/x.html"))
-        self.assertFalse(m(["admin/**"], "docs/admin/x.md"))
+        self.assertFalse(m(["admin/**"], "docs/admin/README.md"))
         self.assertTrue(m(["**/README.md"], "README.md"))
         self.assertTrue(m(["**/README.md"], "config/quadlet/README.md"))
         self.assertTrue(m(["tests/helm*"], "tests/helm-fxa.sh"))
@@ -53,10 +53,10 @@ class Filters(unittest.TestCase):
     def test_starts(self):
         on = {"workflow_dispatch": None, "push": {"branches": ["**"], "paths": ["admin/**"]}}
         self.assertTrue(dep.starts(on, "main", ["admin/go.sum"]))
-        self.assertFalse(dep.starts(on, "main", ["docs/x.md"]))
+        self.assertFalse(dep.starts(on, "main", ["docs/databases.md"]))
         ign = {"push": {"branches": ["main", "**"], "paths-ignore": ["docs/development/**", "**/README.md"]}}
-        self.assertFalse(dep.starts(ign, "b", ["docs/development/x.md", "README.md"]))
-        self.assertTrue(dep.starts(ign, "b", ["docs/development/x.md", "admin/go.mod"]))
+        self.assertFalse(dep.starts(ign, "b", ["docs/development/testing.md", "README.md"]))
+        self.assertTrue(dep.starts(ign, "b", ["docs/development/testing.md", "admin/go.mod"]))
         self.assertTrue(dep.starts({"push": None}, "b", ["x"]))
         self.assertFalse(dep.starts({"schedule": [{"cron": "x"}]}, "b", ["x"]))
         self.assertTrue(dep.starts(["push", "workflow_dispatch"], "b", ["x"]))
