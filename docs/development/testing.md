@@ -17,7 +17,7 @@ On a branch, syncstorage-rs.yml tests the images of the branch's inputs: an imag
 | [tests/podman.sh](/tests/podman.sh) | rootless Podman, with Quadlets (also with self-hosted accounts) and with docker compose on the Podman socket, set up with `prepare_environment.sh` and its answers by name | CI: syncstorage-rs.yml, fxa.yml, admin.yml | `SYNC_DB`, `FXA_DB`, `EXTERNAL_DB`, `DB_BOOTSTRAP`, `UPGRADE_FROM` |
 | [tests/fxa-upgrade.sh](/tests/fxa-upgrade.sh) | the self-hosted accounts upgraded in place from an older release, see [Accounts](#accounts) | CI: fxa.yml `test-upgrade` | `FXA_FROM`, `FXA_IMAGE`, `FXA_VERSION`, `FXA_SAME_TAG`, `FXA_DB`, `FXA_MARIADB_FROM`, `FXA_MYSQL_TO` |
 | [tests/helm.sh](/tests/helm.sh) `<lint\|parity\|e2e>` | the Helm chart, see [Helm chart](#helm-chart) | CI: helm.yml | `EXTERNAL_DB`, `DB_BOOTSTRAP`, `SKIP_BUILD`, `REPOSITORY`, `TAG` |
-| [tests/migrate.sh](/tests/migrate.sh) `<scenario>` | the moves of [Migrating](../migrating.md) from other Sync servers (Mozilla's compose files, dan-r, jeena, NixOS, YunoHost) and the upgrades of older firefox-sync releases ([Upgrading](../upgrading.md#older-firefox-sync-releases)), read back with [migrate_client.py](/tests/migrate_client.py) | local only | the scenario; `PORT` |
+| [tests/migrate.sh](/tests/migrate.sh) `<scenario>` | the moves of [Migrating](../migrating.md) from other Sync servers (Mozilla's compose files, dan-r, jeena, NixOS, YunoHost) and the upgrade of the earlier firefox-sync release with compose and Quadlets, and with Watchtower and `podman auto-update` on its images ([Upgrading](../upgrading.md#the-earlier-firefox-sync-release)), read back with [migrate_client.py](/tests/migrate_client.py) | local only (the VM: `vm.sh ssh`) | the scenario; `PORT`, `REPOSITORY`, `TAG`, `INIT_TAG` |
 | [tests/test_upstream_patches.py](/tests/test_upstream_patches.py) | the decisions of `.github/scripts/upstream-patches.py` on fixtures, no network | CI: the jobs that pick the release | none |
 | [tests/test_release.py](/tests/test_release.py) | [release.py](/.github/scripts/release.py), no network: when a release is cut (nothing new, a new syncstorage-rs, FxA or pairing server, other upstream patches, Unreleased entries, a tag), its tag, title and notes, the moving of Unreleased in CHANGELOG.md (empty subsections dropped, idempotent, later entries kept), see [Releases](releasing.md#releases) | CI: docs.yml and release.yml, every push | none |
 | [tests/test_syncstorage_rs_build.py](/tests/test_syncstorage_rs_build.py) | the cache mounts `.github/scripts/syncstorage-rs-build.py` drops from upstream's Dockerfile, on fixtures | CI: syncstorage-rs.yml `prepare-env` | none |
@@ -110,7 +110,7 @@ Tested on macOS on Apple silicon (arm64, HVF). macOS on Intel and Linux with KVM
 `tests/e2e.sh`:
 
 - with `SYNC_DB=mysql`, the stack on MySQL (`SYNC_MYSQL_IMAGE`: `mysql:lts`, or `mysql:8` as the installs from before; then it also checks that `lts` refuses their data, that `--upgrade` pins them, and the move to `lts`);
-- the upgrade from an install before `ADMIN_DB_PASSWORD` (with `UPGRADE_FROM=<checkout>`, that release's own files and images), which moves the admin UI's event log out of the Sync server's users' reach;
+- the upgrade from an install before `ADMIN_DB_PASSWORD` (this tree without it, the admin UI's tables in the tokenserver database, the old setting names), which moves the admin UI's event log out of the Sync server's users' reach;
 - the Sync MariaDB containers of an install from before `SYNC_MARIADB_IMAGE`, pinned by `--upgrade` to the major of their data;
 - with `PG_MAJOR_MOVE=1` (postgres), the install on the major before that of `postgres:latest` (read at run time) and, at the end, the move of [PostgreSQL](../upgrading.md#postgresql): the backup, the new major refused on the old data (by [keep-major.sh](/db/postgres/keep-major.sh)), the restore into an empty volume, the same accounts and items read back on the new major, also after a restart.
 
@@ -122,7 +122,6 @@ Tested on macOS on Apple silicon (arm64, HVF). macOS on Intel and Linux with KVM
 - the PostgreSQL Quadlets as rendered (also on your own server); with `SYNC_DB=postgres`, the compose phase on PostgreSQL only and the Quadlets on PostgreSQL: pinned to the major of Podman's `postgres:latest` and running it, the Sync server's own role, the backups and the restore of [Restore with Quadlets](../backups.md#restore-with-quadlets), `--upgrade`, `--render-units`, and another major refused by `keep-major.sh`;
 - `--upgrade` renaming the old setting names and writing `COMPOSE_FILE` with the files of `compose/` ([Files that moved](../upgrading.md#files-that-moved));
 - the commands of the docs for the Quadlets, read from the pages and run as written: the dumps of an install loaded into a new one ([Loading into firefox-sync](../migrating.md#loading-into-firefox-sync), for `SYNC_DB`); with `SYNC_MYSQL_FROM=mysql:8` (and `SYNC_DB=mysql`) the Sync databases started on it and moved to `mysql:lts`, with `FXA_MYSQL_FROM=mysql:8` the accounts' (with `mysql_native_password`, their users moved first) as [MySQL 8 to 9](../upgrading.md#mysql-8-to-9) says, with `FXA_MARIADB_FROM=mariadb:11` (and `FXA_DB=mariadb`) as [MariaDB](../upgrading.md#mariadb) says;
-- with `UPGRADE_FROM=<checkout>`, the Quadlet upgrade steps of [Upgrading](../upgrading.md#quadlets) (the `systemctl --user stop` line is read from that page): the old release where this tree is, the files swapped as `git pull` does, `--upgrade` keeping every secret, no `SET PASSWORD`;
 - `--render-units` on the running Quadlets (a setting, an `ADMIN_IMAGE` pin, `ADMIN_INSECURE_COOKIE`), and with the accounts on MariaDB (`FXA_LOG_LEVEL`): only the changed units written, the secrets kept, a second run changing nothing, the stack started again;
 - where the Sync server listens: `SYNC_EXPORT_PORT` of a new install on `127.0.0.1` (the answers, nginx, `PublishPort`, `ss`), an upgraded one keeping its value;
 - the bundled Caddy as a Quadlet (`PROXY=caddy`, `--render-units`): on the host's network and ports of its own, the Sync server through it with a certificate of Caddy's own CA, HTTP redirected to HTTPS; its units removed with `PROXY=own`.
@@ -159,18 +158,18 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
 
 ```bash
 # from Mozilla's own image (amd64, emulated on arm64) with older schemas
-FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/porelli/firefox-sync-dev FXA_VERSION=fxa-mono-v1.347.3 tests/fxa-upgrade.sh
+FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_VERSION=fxa-mono-v1.347.3 tests/fxa-upgrade.sh
 # from one of our older builds on MariaDB
-FXA_FROM=ghcr.io/porelli/firefox-sync-dev:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/porelli/firefox-sync-dev FXA_DB=mariadb tests/fxa-upgrade.sh
+FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_DB=mariadb tests/fxa-upgrade.sh
 # from an older fxa-mono-latest
-FXA_FROM=ghcr.io/porelli/firefox-sync-dev:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/porelli/firefox-sync-dev FXA_SAME_TAG=1 tests/fxa-upgrade.sh
+FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_SAME_TAG=1 tests/fxa-upgrade.sh
 # an install on MariaDB 11 moved to lts (12), with the new image that has mozilla/fxa#21494
-FXA_FROM=ghcr.io/porelli/firefox-sync-dev:fxa-mono-v1.347.3 FXA_IMAGE=ghcr.io/porelli/firefox-sync-dev FXA_DB=mariadb FXA_MARIADB_FROM=mariadb:11 FXA_MARIADB_IMAGE=mariadb:lts tests/fxa-upgrade.sh
+FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.3 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_DB=mariadb FXA_MARIADB_FROM=mariadb:11 FXA_MARIADB_IMAGE=mariadb:lts tests/fxa-upgrade.sh
 # on MySQL: mysql:8 with mysql_native_password, --upgrade, then the move to mysql:lts
-FXA_FROM=ghcr.io/porelli/firefox-sync-dev:fxa-mono-v1.347.3 FXA_IMAGE=ghcr.io/porelli/firefox-sync-dev tests/fxa-upgrade.sh
+FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.3 FXA_IMAGE=ghcr.io/<owner>/<repo> tests/fxa-upgrade.sh
 ```
 
-Our builds are in the registry of the repository whose fxa.yml built them; the examples use the development builds.
+Our builds are in the registry of the repository whose fxa.yml built them: `ghcr.io/<owner>/<repo>`, for example `ghcr.io/porelli/firefox-sync`.
 
 ### Access control
 
@@ -273,7 +272,7 @@ Some tests read commands from the docs and check them word for word, so a page a
 | `tests/helm-fxa.sh` | [backups.md](../backups.md#restore-on-kubernetes) | `restore() {` to its closing `}`, and the `restore restore-accounts 'run=` command to its line ending `backup-accounts`, both indented four spaces, each exactly once; with `SYNC_BACKEND=postgres` also the `for db in postgres; do` loop to its `done`, and the PostgreSQL block from `kubectl get deploy $F-syncstorage -o json | jq` to the `PGPASSWORD="$ADMIN_DB_PASSWORD" psql` line (two `restore restore-` commands) |
 | `tests/podman.sh` | [backups.md](../backups.md#restore-with-quadlets), [upgrading.md](../upgrading.md#with-quadlets) | the `set -o pipefail` and `dump sync/$run/ffs_admin.sql.gz` lines, exactly once each; with `SYNC_DB=postgres` the PostgreSQL commands of the Quadlet restore, as written; the Quadlet `systemctl --user stop` line, exactly once; the Quadlet commands of [MariaDB](../upgrading.md#mariadb) and [MySQL 8 to 9](../upgrading.md#mysql-8-to-9) with `*_FROM` |
 | `tests/podman.sh` | [migrating.md](../migrating.md#loading-into-firefox-sync) | the Quadlet loading: the `systemctl --user start` and `podman exec -i` commands, and the compose `docker compose exec -T <db>_db sh -c` lines it turns into the Quadlets' |
-| `tests/migrate.sh` | [migrating.md](../migrating.md), [upgrading.md](../upgrading.md#older-firefox-sync-releases) | every command it runs, with `grep -qF` in either page |
+| `tests/migrate.sh` | [migrating.md](../migrating.md), [upgrading.md](../upgrading.md#the-earlier-firefox-sync-release) | every command it runs, with `grep -qF` in either page |
 
 ## Links
 
@@ -364,7 +363,7 @@ python3 -I tests/check_site_anchors.py
 - `--strict` fails on any warning: a link to a missing page, file or `#anchor`, or a page left out of the `nav` of mkdocs.yml.
 - [check_site_anchors.py](/tests/check_site_anchors.py) checks that every anchor the link checker computes with GitHub's rules is an id of the built page.
 
-A new page goes into the `nav` too, in the place it has in [the index](../README.md). Pushes to the default branch publish the site on GitHub Pages, at <https://porelli.github.io/firefox-sync-dev/>; other branches only build it.
+A new page goes into the `nav` too, in the place it has in [the index](../README.md). Pushes to the default branch publish the site on GitHub Pages, at <https://porelli.github.io/firefox-sync/> for this repository; other branches only build it. mkdocs.yml has the public site and repository; docs.yml gives the build those of the repository it runs in (`FFS_SITE_URL`, `FFS_REPO_URL`, `FFS_REPO_NAME`: `https://<owner>.github.io/<repo>/`), so a fork or a development repository publishes and links its own.
 
 ## The screenshot demo
 

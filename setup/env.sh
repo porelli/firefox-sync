@@ -101,11 +101,6 @@ RENAMED_SETTINGS=(
     SYNC_POSTGRES_PASSWORD=POSTGRES_PASSWORD
     SYNC_POSTGRES_HOST=POSTGRES_SERVER
     SYNC_POSTGRES_PORT=POSTGRES_SERVER_PORT
-    SYNC_POSTGRES_APP_USER=POSTGRES_SYNC_USER
-    SYNC_POSTGRES_APP_PASSWORD=POSTGRES_SYNC_PASSWORD
-    SYNC_POSTGRES_IMAGE=POSTGRES_IMAGE
-    SYNC_DB_TLS_VERIFY=MARIADB_TLS_VERIFY
-    SYNC_DB_CONTAINERS=DB_CONTAINERS
     SYNC_MAX_USERS=MAX_USERS
     SYNC_EXPORT_PORT=CONTAINER_EXPORT_PORT
     SYNC_PUBLIC_URL=SYNCSTORAGE_DOMAIN
@@ -324,33 +319,25 @@ compose_files() {
     [ "${3}" = yes ] && files="${files}:compose/podman.yml"
     printf '%s\n' "${files}"
 }
-# COMPOSE_FILE with the files of before compose/ (docs/upgrading.md#files-that-moved) in their
-# new names, the others as they are (a directory before a name kept); nothing printed when none
-# is there. "" (no COMPOSE_FILE: docker-compose.yml, Sync on MariaDB) is docker-compose.yml.
-# docker-compose.yml + docker-compose.sync-mysql.yml -> compose/sync.yml:compose/sync-mysql.yml,
-# docker-compose.sync-postgres.yml (and its name before, docker-compose.postgres.yml) ->
-# compose/sync.yml:compose/sync-postgres.yml, docker-compose.fxa.yml (+ docker-compose.fxa-mariadb.yml)
-# -> compose/fxa.yml:compose/fxa-mysql.yml (fxa-mariadb.yml), docker-compose.podman.yml -> compose/podman.yml
+# COMPOSE_FILE with the files of the earlier release (docs/upgrading.md#files-that-moved), from
+# before compose/, in their new names, the others as they are (a directory before a name kept);
+# nothing printed when none is there. "" (no COMPOSE_FILE: docker-compose.yml, Sync on MariaDB)
+# is docker-compose.yml. docker-compose.yml -> compose/sync.yml:compose/sync-mariadb.yml,
+# docker-compose.postgres.yml -> compose/sync.yml:compose/sync-postgres.yml,
+# docker-compose.podman.yml -> compose/podman.yml
 compose_files_moved() {
-    local value=${1:-docker-compose.yml} part dir sync_db=mariadb fxa_db=mysql new="" moved=no
+    local value=${1:-docker-compose.yml} part dir sync_db=mariadb new="" moved=no
     local parts=()
     IFS=: read -r -a parts <<< "${value}"
     for part in "${parts[@]}"; do
-        case "${part##*/}" in
-            docker-compose.sync-mysql.yml) sync_db=mysql ;;
-            docker-compose.sync-postgres.yml|docker-compose.postgres.yml) sync_db=postgres ;;
-            docker-compose.fxa-mariadb.yml) fxa_db=mariadb ;;
-        esac
+        case "${part##*/}" in docker-compose.postgres.yml) sync_db=postgres ;; esac
     done
     for part in "${parts[@]}"; do
         dir=${part%"${part##*/}"}
         case "${part##*/}" in
-            docker-compose.yml|docker-compose.sync-postgres.yml|docker-compose.postgres.yml)
+            docker-compose.yml|docker-compose.postgres.yml)
                 part="${dir}compose/sync.yml:${dir}compose/sync-${sync_db}.yml" ;;
-            docker-compose.fxa.yml) part="${dir}compose/fxa.yml:${dir}compose/fxa-${fxa_db}.yml" ;;
             docker-compose.podman.yml) part="${dir}compose/podman.yml" ;;
-            # in the one of compose/sync.yml or compose/fxa.yml
-            docker-compose.sync-mysql.yml|docker-compose.fxa-mariadb.yml) moved=yes; continue ;;
             *) new=${new:+${new}:}${part}; continue ;;
         esac
         moved=yes

@@ -48,7 +48,7 @@ Setting up:
 Running it:
 
 - [backups.md](backups.md): what to keep, the backup service, copying off, restoring
-- [upgrading.md](upgrading.md): new images, older firefox-sync releases, renamed settings, database majors
+- [upgrading.md](upgrading.md): new images, the earlier firefox-sync release (and Watchtower on its images), renamed settings, database majors. What changed in each release: [CHANGELOG.md](/CHANGELOG.md)
 - [migrating.md](migrating.md): from another Sync server, or from docker compose to Kubernetes
 - [troubleshooting.md](troubleshooting.md): symptoms and fixes, by area
 

@@ -1,6 +1,6 @@
 # Migrating
 
-How to move to firefox-sync from another self-hosted Firefox Sync setup, and how to move a firefox-sync install from docker compose to Kubernetes. To upgrade firefox-sync itself, including from an older release, see [Upgrading](upgrading.md).
+How to move to firefox-sync from another self-hosted Firefox Sync setup, and how to move a firefox-sync install from docker compose to Kubernetes. To upgrade firefox-sync itself, including from the earlier release, see [Upgrading](upgrading.md).
 
 Each section says on its `Tested:` line whether and how it was tested. The database moves are tested by [`tests/migrate.sh`](/tests/migrate.sh) `<scenario>`: an account of upstream's mock accounts server writes its data through the old stack, the commands of this page move it as written here, and the same account (same uid and keys) reads it back through firefox-sync, on the new node, with `SYNC_MAX_USERS` and the admin UI counting it. The old stacks run in containers: their own compose files where they publish images, otherwise the same database server, names and schema.
 
@@ -10,7 +10,7 @@ Keep the old server until every device syncs with the new one.
 
 | You run | Sync data | Accounts | Section |
 |---|---|---|---|
-| an older release of firefox-sync | upgrade in place | - | [Older firefox-sync releases](upgrading.md#older-firefox-sync-releases) |
+| the earlier release of firefox-sync | upgrade in place | - | [The earlier firefox-sync release](upgrading.md#the-earlier-firefox-sync-release) |
 | firefox-sync with docker compose or the Quadlets, to Kubernetes | dump and restore | Mozilla's | [From docker compose to Kubernetes](#from-docker-compose-to-kubernetes) |
 | Mozilla's syncstorage-rs compose files | start fresh, or move the database | Mozilla's | [syncstorage-rs](#mozillas-syncstorage-rs-compose-files) |
 | dan-r/syncstorage-rs-docker, MASH | start fresh, or move the database | Mozilla's | [dan-r](#dan-rsyncstorage-rs-docker-and-mash) |
@@ -114,7 +114,7 @@ The same images and databases, moved to the [Helm chart](install/helm.md) with a
 
 With the self-hosted accounts, they move in the same steps: see [With the self-hosted accounts](#with-the-self-hosted-accounts) below for what each step adds.
 
-1. On the compose host, with this release: an older one first needs [Older firefox-sync releases](upgrading.md#older-firefox-sync-releases), so that `.env` has the `SYNC_` names. Stop the Sync server and the admin UI, so that nothing changes after the dump, and make one with the [backup service](backups.md#the-backup-service). If it is off, turn it on for this: `COMPOSE_PROFILES=...,backup` and `docker compose up -d backup`.
+1. On the compose host, with this release: the earlier one first needs [The earlier firefox-sync release](upgrading.md#the-earlier-firefox-sync-release), so that `.env` has the `SYNC_` names. Stop the Sync server and the admin UI, so that nothing changes after the dump, and make one with the [backup service](backups.md#the-backup-service). If it is off, turn it on for this: `COMPOSE_PROFILES=...,backup` and `docker compose up -d backup`.
 
     ```bash
     docker compose stop syncstorage ffs-admin

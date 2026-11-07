@@ -1,6 +1,6 @@
 # Upgrading
 
-How to upgrade a running install: new images of the Sync server, the admin UI and the self-hosted accounts, with docker compose, the Quadlets or the Helm chart. It also covers upgrading from an older firefox-sync release, the renamed settings, and moving a database to a newer major. Make a backup first: see [Backups](backups.md).
+How to upgrade a running install: new images of the Sync server, the admin UI and the self-hosted accounts, with docker compose, the Quadlets or the Helm chart. It also covers upgrading from the earlier firefox-sync release (and Watchtower on its images), the renamed settings, and moving a database to a newer major. Make a backup first: see [Backups](backups.md).
 
 ## How the images move
 
@@ -27,7 +27,7 @@ docker compose up -d
 
 The migrations and the init container run before the Sync server starts. Firefox needs nothing. The admin UI's image is pulled and replaced by the same commands.
 
-With Quadlets, see [Quadlets](#quadlets). With the Helm chart, see [Helm](#helm). From an older firefox-sync release, see [Older firefox-sync releases](#older-firefox-sync-releases).
+With Quadlets, see [Quadlets](#quadlets). With the Helm chart, see [Helm](#helm). From the earlier firefox-sync release, see [The earlier firefox-sync release](#the-earlier-firefox-sync-release).
 
 ## Self-hosted accounts
 
@@ -95,8 +95,8 @@ Don't stay too far behind: Firefox refuses to sign in to accounts servers that a
 Which units `--upgrade` renders: the units installed in `~/.config/containers/systemd/` when they are this install's, without asking.
 
 - Units rendered from this checkout (they mount its `config/backup/`): rendered again.
-- Units of an earlier release, which name no checkout (the releases before the backups, firefox-sync's `main` branch): rendered again when they have the `SYNC_MASTER_SECRET` of your `.env`, so were rendered from it. It says so.
-- Units of another checkout, or of an earlier release with another `SYNC_MASTER_SECRET`: left as they are. It says what it found. If they are this install's, `./prepare_environment.sh --render-units` renders them from this `.env` (the units of before kept as above).
+- Units of the earlier release, which name no checkout ([With Quadlets](#with-quadlets)): rendered again when they have the `SYNC_MASTER_SECRET` of your `.env`, so were rendered from it. It says so.
+- Units of another checkout, or of the earlier release with another `SYNC_MASTER_SECRET`: left as they are. It says what it found. If they are this install's, `./prepare_environment.sh --render-units` renders them from this `.env` (the units of before kept as above).
 
 To go back: the old files and images, the newest `.env.before-upgrade-<time>` as `.env`, the files of `quadlets.before-<time>/` back into `~/.config/containers/systemd/` (`firefox-sync-backup.timer` into `~/.config/systemd/user/`) with the `firefox-sync-*.env` files of the new units removed there when the units of before have none, `systemctl --user daemon-reload`, and the backup of step 1: see [Rollback](#rollback).
 
@@ -149,9 +149,25 @@ What else to watch:
 
 `helm uninstall ffs` removes the pods and Services and keeps the data: the Secret, the backups' PVC, the databases' PVCs (`data-ffs-firefox-sync-*`, `data-mariadb-ffs-firefox-sync-fxa-db-0`; Kubernetes never deletes a StatefulSet's), and the accounts' keys and avatars (`ffs-firefox-sync-fxa-keys`, `ffs-firefox-sync-fxa-profile-images`). A new install with the same release name finds them, and the Sync data in them, if it has the same values: save them with `helm get values ffs -o yaml > my-values.yaml` before the uninstall. To remove it all for good: `kubectl delete secret,pvc -l app.kubernetes.io/instance=ffs`.
 
-## Older firefox-sync releases
+## The earlier firefox-sync release
 
-The same stack: upgrade in place, nothing to export. The volumes (`<directory>_tokenserver-db`, `<directory>_syncstorage-db`) keep their names as long as you run compose from the same directory.
+From the release porelli/firefox-sync published before this one: commit [ca9101d](https://github.com/porelli/firefox-sync/tree/ca9101d2c53769424d5b17b50f65a6899f2755c6) (October 2026), with its `docker-compose.yml`, `docker-compose.postgres.yml` or its Quadlets, the images `syncstorage-rs-mysql-latest`, `syncstorage-rs-postgres-latest` and their init images, an `.env` with `MAX_USERS`, `SYNCSTORAGE_DOMAIN` and the other names of [Renamed settings](#renamed-settings), and no admin UI. What changed since: [CHANGELOG.md](/CHANGELOG.md).
+
+The same stack: upgrade in place, nothing to export. The volumes (`<directory>_tokenserver-db`, `<directory>_syncstorage-db`, `<directory>_postgres-db`) keep their names as long as you run compose from the same directory. Installs older than that release (an `.env` without `MAX_USERS`, or with one `MARIADB_USER` for both databases) are not covered here: set this release up next to them and move the databases as in [Moving the database](migrating.md#moving-the-database).
+
+### Watchtower and podman auto-update
+
+This release publishes its images under the same tags as the earlier one. If Watchtower, a `docker compose pull` on a timer or `podman auto-update` (the earlier Quadlets have `AutoUpdate=registry`) follows them, the new images run with your files and `.env` of before, before you upgrade anything. That is safe, and changes nothing you set:
+
+- Watchtower and `podman auto-update` replace the running Sync server only. The new one starts with the configuration of before and runs the new syncstorage-rs migrations itself. The init container and the migrations container are not running, so they are left as they are until the next `docker compose up -d` (or the next start of the units).
+- `docker compose pull && docker compose up -d` with the files of before also runs the new init container. It reads the settings of before (`MAX_USERS`, `SYNCSTORAGE_DOMAIN` and the database names) and keeps what they did: the same user limit, set again at every start, the same node. Invite-only Sync stays off. It also creates the tables and procedures this release uses, which the earlier init container leaves alone.
+- The data stays where it is, and Firefox needs nothing.
+- None of the new features is on: no admin UI, no backups, no reverse proxy configuration. They come with the upgrade of the files below.
+- One difference: the new init container stops on a `MAX_USERS` it cannot read (empty, or not a number), and the Sync server then does not start; the earlier one let nobody new in. `MAX_USERS` also takes `unlimited` now. See [SYNC_MAX_USERS](limits.md#sync_max_users).
+
+To choose when the images change instead, pin their tags in `.env` (`SYNCSTORAGE_IMAGE_TAG` and `SYNCSTORAGE_INIT_IMAGE_TAG`, for example `0.24.0-20261102T154558`, the last images of the earlier release), or leave the containers out of Watchtower. Then upgrade the files as below.
+
+Tested: `tests/migrate.sh watchtower` (`watchtower-postgres` on PostgreSQL) runs the earlier release as its setup writes it, with its images served by a registry of the test. It then publishes this release's images under the same tags, and runs Watchtower (`--run-once`, its defaults). After that it runs `docker compose pull && docker compose up -d` with the files of before, and `MAX_USERS=3`. Each time the accounts, their data and the user limit are as before. `tests/migrate.sh firefox-sync-public-quadlets` does the same with the earlier Quadlets and `podman auto-update`.
 
 ### Files that moved
 
@@ -160,10 +176,7 @@ The compose files are now in `compose/`: one for the Sync server, one per databa
 | Before (`COMPOSE_FILE`) | Now |
 |---|---|
 | none, or `docker-compose.yml` | `compose/sync.yml:compose/sync-mariadb.yml` |
-| `docker-compose.yml:docker-compose.sync-mysql.yml` | `compose/sync.yml:compose/sync-mysql.yml` |
-| `docker-compose.sync-postgres.yml` (before it, `docker-compose.postgres.yml`) | `compose/sync.yml:compose/sync-postgres.yml` |
-| `:docker-compose.fxa.yml` | `:compose/fxa.yml:compose/fxa-mysql.yml` |
-| `:docker-compose.fxa.yml:docker-compose.fxa-mariadb.yml` | `:compose/fxa.yml:compose/fxa-mariadb.yml` |
+| `docker-compose.postgres.yml` | `compose/sync.yml:compose/sync-postgres.yml` |
 | `-f docker-compose.podman.yml` | `:compose/podman.yml` |
 
 Run the one command, in the checkout:
@@ -176,35 +189,32 @@ It writes the new names in `COMPOSE_FILE` (your own files stay in it, after them
 
 Without it:
 
-- `COMPOSE_FILE` with the old names: `docker compose` stops at once, the old file not found (`no such file or directory`). Nothing starts or changes until you run `--upgrade`.
+- `COMPOSE_FILE=docker-compose.postgres.yml`: `docker compose` stops at once, the old file not found (`no such file or directory`). Nothing starts or changes until you run `--upgrade`.
 - No `COMPOSE_FILE` (Sync on MariaDB): `docker-compose.yml` is still there and runs the files of `compose/`, as the same project (with the compose of the [requirements](install/compose.md#requirements)). `--upgrade` writes `COMPOSE_FILE` there too, unless you have a `docker-compose.override.yml`, which compose reads only without `COMPOSE_FILE`.
 - Your own scripts and units with `-f`: change the names, and add `--env-file .env` (compose looks for `.env` in the directory of the first file; without it, it stops: `required variable SYNC_MASTER_SECRET is missing a value`). An exported `COMPOSE_FILE` or `COMPOSE_PROJECT_NAME` (your shell, a unit's `Environment=`) wins over `.env`: `--upgrade` says so, change it there too.
 - Your own compose files in `COMPOSE_FILE`: their relative paths are now relative to `compose/` (`./config` becomes `../config`).
 
-The release that added `db/` moved other files. The image names and the names of the installed Quadlet units did not change.
+Other files that moved. The image names and the names of the installed Quadlet units did not change.
 
-- `config/database/` is gone. `sync-mariadb.sql` became `db/mysql/sync.sql`, `sync-postgres.sql` `db/postgres/sync.sql`, and `fxa-mysql.sql`, `fxa-mariadb.sql` and `admin-user.sh` went to [db/mysql/](/db/mysql). They are now the [setup migrations](databases.md#setup-migrations) of [db/mysql/setup/](/db/mysql/setup) and [db/postgres/setup/](/db/postgres/setup). With your own database server, `prepare_environment.sh` reads them from there. If you fill in the SQL by hand, take it from the new paths ([Create the databases and users](databases.md#create-the-databases-and-users)).
 - `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/` are now `db/mysql/init/` and `db/postgres/init/`. This only matters if you build the init images yourself (`docker build db/mysql/init`).
-- `config/quadlet/mysql/` is now `config/quadlet/sync-mysql/` (`SYNC_DB=mysql`), where `prepare_environment.sh` looks for it. The units keep their names, but the database units now mount `db/mysql/admin-user.sh`. Render them again before the next start (`--upgrade` does, [Quadlets](#quadlets)): the old units point at `config/database/admin-user.sh`, which `git pull` removes.
+- `PODMAN.md` is now [Podman](install/podman.md).
 - nginx: the Sync server's host needs `client_max_body_size 10m;` (nginx refuses more than 1 MB by default). Your `config/nginx/syncstorage-rs.conf` (written once by `prepare_environment.sh`) and your own proxy keep their setting. Add it to the `server` block of your Sync host, see [Request size](reverse-proxy.md#request-size).
-- The nginx examples `config/nginx/syncstorage-rs-example.conf` and `fxa-example.conf` are gone: `prepare_environment.sh` (and `--upgrade`, `--render-proxy`) now writes the configuration of the reverse proxy into `proxy/`, for nginx, Caddy and Traefik, with every rule of [Reverse proxy](reverse-proxy.md). Your `config/nginx/syncstorage-rs.conf` and `fxa.conf`, unused by the stack, are moved into `proxy/old/` (as `<name>-<UTC time>`) by the setup and `--upgrade`, which say so: their host names and ports are those of the setup that wrote them. Use `proxy/nginx.conf`, and take the old files out of your nginx if you copied them there.
-- `--upgrade` checks the ports of this host the stack publishes: one that something else listens on now (not this stack's own containers) moves to the next free port, said, and `proxy/` is written again with it: put the new file into your proxy ([Ports in use](reverse-proxy.md#ports-in-use)). It also warns when `FXA_OAUTH_SERVER_URL` points at `fxa-auth` on another port than 9000 ([Sign-in keys: connection refused](troubleshooting.md#sign-in-keys-connection-refused)).
-- Not a git clone: after copying the new files, delete the old `config/database/`, `config/quadlet/mysql/`, `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/`.
+- The nginx example `config/nginx/syncstorage-rs-example.conf` is gone: `prepare_environment.sh` (and `--upgrade`, `--render-proxy`) now writes the configuration of the reverse proxy into `proxy/`, for nginx, Caddy and Traefik, with every rule of [Reverse proxy](reverse-proxy.md). Your `config/nginx/syncstorage-rs.conf`, unused by the stack, is moved into `proxy/old/` (as `syncstorage-rs.conf-<UTC time>`) by `--upgrade`, which says so: its host name and port are those of the setup that wrote it. Use `proxy/nginx.conf`, and take the old file out of your nginx if you copied it there.
+- The systemd example `config/systemd/syncstorage-rs-example.service` stays; your `config/systemd/syncstorage-rs.service` runs `docker compose up` in the checkout and needs nothing.
+- `--upgrade` checks the ports of this host the stack publishes: one that something else listens on now (not this stack's own containers) moves to the next free port, said, and `proxy/` is written again with it: put the new file into your proxy ([Ports in use](reverse-proxy.md#ports-in-use)).
+- Not a git clone: after copying the new files, delete the old `docker-compose.postgres.yml`, `docker-compose.podman.yml`, `PODMAN.md`, `syncstorage-rs-init/` and `syncstorage-rs-init-postgres/`.
 
 ### Your own database server: the setup migrations
 
-The SQL of your own server is now the numbered [setup migrations](databases.md#setup-migrations), recorded on the server as they run. Nothing to do for an install from before them: at its first start of this release `db-bootstrap` (`fxa-db-bootstrap`, both new in this release) finds the users, grants and databases of `database-setup.sql` there, and records every file as `baseline`. New: if a user or grant of the Sync server or the accounts is missing there, that start stops, naming it, and the Sync server (the accounts) stays down until you run `database-setup.sql` (`database-setup-fxa.sql`): run it before the first start of this release if you are not sure, or check first with `docker compose run --rm --no-deps db-bootstrap sync` (the accounts: `fxa-db-bootstrap fxa`), which changes no user or grant without a bootstrap account (it records what it finds). What only the admin UI's own users and database lack (`ADMIN_DB_PASSWORD` set, the admin UI's part of `database-setup.sql` never run) is a warning: Sync and the accounts start as before, the admin UI shows it. `--upgrade` writes `database-setup.sql` (`database-setup-fxa.sql`) again and keeps the one of before as `database-setup.sql.before-upgrade-<UTC time>`, readable by you only. With the stack's own database containers the init container records them (`containers`). The admin UI shows the version of each server ([Setup migrations](admin/monitoring.md#setup-migrations)).
+The earlier release had no setting for it: with `MARIADB_*_SERVER` (or `POSTGRES_SERVER`) pointing at your server, its database containers ran anyway, unused. To stop them, set `SYNC_DB_CONTAINERS=0` after the upgrade ([Your own server](databases.md#your-own-server)). The SQL of your own server is now the numbered [setup migrations](databases.md#setup-migrations), recorded on the server as they run. At the first start with `SYNC_DB_CONTAINERS=0`, `db-bootstrap` finds the users, grants and databases you made by hand there, and records every file as `baseline`. If a user or grant of the Sync server is missing there, that start stops, naming it, and the Sync server stays down until you run `database-setup.sql` (`./prepare_environment.sh --upgrade` writes it with `SYNC_DB_CONTAINERS=0`): run it before that start if you are not sure, or check first with `docker compose run --rm --no-deps db-bootstrap sync`, which changes no user or grant without a bootstrap account (it records what it finds). What only the admin UI's own users and database lack (`ADMIN_DB_PASSWORD` set, the admin UI's part of `database-setup.sql` never run) is a warning: Sync starts as before, the admin UI shows it. With the stack's own database containers the init container records them (`containers`). The admin UI shows the version of each server ([Setup migrations](admin/monitoring.md#setup-migrations)).
 
 ### The database majors of an install from before
 
-The database images now follow each database's long-term tag, and an install from before runs an older major. `./prepare_environment.sh --upgrade` (compose and Quadlets) writes the pins that keep it where it is, and says so. The pins are in [Database majors](#database-majors).
+The earlier release ran `mariadb:lts`, which upgraded the data of the Sync databases whenever a pull brought a new major, and `postgres:18`. The database images now follow each database's long-term tag, but refuse data of another major. `./prepare_environment.sh --upgrade` (compose and Quadlets) writes the pins that keep the install where it is, and says so: `SYNC_MARIADB_IMAGE` with the major the data holds (for example `mariadb:12`, read from the volume or the running server), `SYNC_POSTGRES_IMAGE=postgres:18`. The pins are in [Database majors](#database-majors).
 
-**If you update the files without it**:
+**If you update the files without it**, the MariaDB containers do not start rather than upgrade the data on a new major: `docker compose logs` shows [db/mysql/keep-major.sh](/db/mysql/keep-major.sh)'s `this database is MariaDB 11, the image is MariaDB 12`. Run `--upgrade` then.
 
-- the MariaDB and MySQL containers (the Sync databases, and the accounts' `fxa-db`) do not start rather than upgrade the data: `docker compose logs` shows [db/mysql/keep-major.sh](/db/mysql/keep-major.sh)'s `this database is MySQL 8, the image is MySQL 9` (or `MariaDB 11`, `MariaDB 12`). Run `--upgrade` then.
-- The Sync databases on the MariaDB containers ran `mariadb:lts` before, which upgraded their data whenever a pull brought a new major. `--upgrade` now writes `SYNC_MARIADB_IMAGE` with the major their data holds (for example `mariadb:12`, read from their volume or the running server), and they stay there.
-
-Moving to the newer major later is up to you, with a backup first: [MariaDB](#mariadb), [MySQL 8 to 9](#mysql-8-to-9), [PostgreSQL](#postgresql).
+Moving to the newer major later is up to you, with a backup first: [MariaDB](#mariadb), [PostgreSQL](#postgresql).
 
 ### With docker compose
 
@@ -213,44 +223,35 @@ Moving to the newer major later is up to you, with a backup first: [MariaDB](#ma
 1. Run `./prepare_environment.sh --upgrade`. It changes only what this release needs, keeps every value already there, and leaves the old file as `.env.before-upgrade-<UTC time>` (readable by you only, as `.env`):
     - it renames the settings your `.env` has under their old names ([Renamed settings](#renamed-settings));
     - it writes the files of `compose/` in `COMPOSE_FILE`, and `COMPOSE_PROJECT_NAME` ([Files that moved](#files-that-moved));
-    - it sets `ADMIN_DB_PASSWORD`, the password of the admin UI's database users: at the next start the event log and the audit trail move out of the Sync server's reach ([The admin UI's own database](#the-admin-uis-own-database));
+    - it sets `ADMIN_DB_PASSWORD`, the password of the admin UI's database users ([The admin UI's own database](#the-admin-uis-own-database));
     - with the PostgreSQL container, it sets `SYNC_POSTGRES_APP_USER` and `SYNC_POSTGRES_APP_PASSWORD`, a role of the Sync server's own that is no superuser;
-    - it writes the database majors the install runs ([Database majors](#database-majors));
-    - it comments out `FXA_PAIRING_IMAGE` when it is the value the setup of before wrote: the pairing server follows `FXA_IMAGE` now ([Pairing server image](#pairing-server-image)).
+    - it writes the database majors the install runs ([The database majors of an install from before](#the-database-majors-of-an-install-from-before));
+    - it writes the configuration of the reverse proxy into `proxy/` ([Files that moved](#files-that-moved)).
 
-    Don't skip it: without it the admin UI keeps the event log in the tokenserver database, which the Sync server's user can rewrite, and its setup check fails. With your own database server, run the `database-setup.sql` it writes there first. Run it before the next step: a line of `.env-example` added under its new name before the rename would hide your value under the old one (compose reads the new name first).
-1. Add the lines of [.env-example](/.env-example) that your `.env` lacks, with their default values, and change none of yours:
-    - releases from before December 2024 have no `SYNC_TOKENSERVER_DB_HOST`, `_PORT`, `_NAME` (and the same for `SYNC_STORAGE_DB_`), `IMAGE_REPOSITORY`, `SYNC_IMAGE*`, `SYNC_INIT_IMAGE*`, `FXA_EMAIL_DOMAIN` and `FXA_OAUTH_SERVER_URL`: copy them from `.env-example`;
-    - the first release (July 2024) had one `MARIADB_USER` and `MARIADB_PASSWORD` for both databases, and no `SYNC_MAX_USERS`: set `SYNC_TOKENSERVER_DB_USER` and `SYNC_STORAGE_DB_USER` to that user, `SYNC_TOKENSERVER_DB_PASSWORD` and `SYNC_STORAGE_DB_PASSWORD` to that password, and `SYNC_MAX_USERS` to at least the number of accounts.
-1. Run `docker compose pull && docker compose up -d`. `SYNC_MAX_USERS=N` works as before (set at every start); `SYNC_MAX_USERS=initial:N` lets the admin UI manage it ([Limits](limits.md#sync_max_users)).
+    With your own database server and `SYNC_DB_CONTAINERS=0`, run the `database-setup.sql` it writes there first. Run it before the next step: a line of `.env-example` added under its new name before the rename would hide your value under the old one (compose reads the new name first).
+1. Run `docker compose pull && docker compose up -d`. `SYNC_MAX_USERS=N` works as `MAX_USERS=N` did (set at every start); `SYNC_MAX_USERS=initial:N` lets the admin UI manage it ([Limits](limits.md#sync_max_users)).
 
-Firefox needs nothing.
+Firefox needs nothing. The settings this release added have their defaults in the compose files: add those you want from [.env-example](/.env-example), for example the [admin UI](admin/README.md) (`COMPOSE_PROFILES=admin` and `ADMIN_PASSWORD`) or the [backups](backups.md#the-backup-service).
 
 ### With Quadlets
 
-For installs since November 2025: the steps of [Quadlets](#quadlets). `--upgrade` renames the old setting names in `.env`, adds what this release needs and the lines of `.env-example` your `.env` lacks (the step 4 of compose, done for you), and renders the units from that `.env`, with the passwords they had.
+The steps of [Quadlets](#quadlets), with the units of the earlier release: it has no admin UI and no backups, so stop them with
+
+```bash
+systemctl --user stop firefox-sync-syncstorage.service firefox-sync-syncstorage-migrate.service firefox-sync-tokenserver-db-init.service firefox-sync-tokenserver-db.service firefox-sync-syncstorage-db.service
+```
+
+and start them again with `systemctl --user start firefox-sync-syncstorage.service`. The units of that release name no checkout: `--upgrade` renders them again when they have the `SYNC_MASTER_SECRET` of your `.env`, and says so. It renames the old setting names in `.env`, adds what this release needs and the lines of `.env-example` your `.env` lacks, and renders the units from that `.env`, with the passwords they had (now in the units' environment files).
 
 ### Rollback
 
-Put back the old files and images, with the `.env.before-upgrade-<time>` of the upgrade as `.env` (Quadlets: and the units of `quadlets.before-<time>/`, see [Quadlets](#quadlets)) and the backup of the volumes of step 1. An older release reads only the old setting names: pin `SYNCSTORAGE_IMAGE_TAG` and `SYNCSTORAGE_INIT_IMAGE_TAG` there to the old tags, and `ADMIN_IMAGE` to the admin UI of then. The migrations of the newer syncstorage-rs cannot be undone, nor the move of the event log, so roll back everything together, never one image alone:
-
-- An older admin UI (from before `ADMIN_DB_PASSWORD`) creates its tables again, empty, in the tokenserver database, and records there, within the Sync server's reach. The event log and the audit trail since the upgrade stay in `ffs_admin`, which it does not read. Going forward again later, the newer admin UI does not copy those tables a second time: its setup check names them. Drop them as the tokenserver user once you have looked at them.
-- An older init image with the newer admin UI: on MariaDB and MySQL the admin UI's reader `ffs_admin_sync` changes the tokenserver database only through the init container's procedures (`ffs_set_max_users`, `ffs_delete_user_row`, `ffs_drop_admin_tables`), which an older init image does not create. On the databases of before (the backup), the max users edits, the resets that free a slot and the deleted accounts then fail with a missing procedure. Pin the init image back only together with the admin UI (`ADMIN_IMAGE`), or keep the init image of this release as long as its admin UI runs.
-
-### Pairing server image
-
-The pairing server's image now follows the accounts' `FXA_IMAGE`: `<FXA_IMAGE>:fxa-channelserver-latest`, so that a mirror or another registry in `FXA_IMAGE` moves it too. The setup of before wrote it out as `FXA_PAIRING_IMAGE=<FXA_IMAGE>:fxa-channelserver-latest`, which kept it where it was when `FXA_IMAGE` changed. `FXA_PAIRING_IMAGE` stays: a full image reference that wins, for your own image or Mozilla's.
-
-`./prepare_environment.sh --upgrade`:
-
-- `FXA_PAIRING_IMAGE` with the value the setup wrote, `<FXA_IMAGE>:fxa-channelserver-latest` (the image it follows anyway): commented out. The same image as before.
-- Any other value (Mozilla's `docker.io/mozilla/channelserver`, another repository, a pinned tag): kept, and it says so. To follow `FXA_IMAGE`, comment it out; to pin a tag only, `FXA_PAIRING_VERSION`.
-
-Without `--upgrade` nothing changes: the `FXA_PAIRING_IMAGE` of your `.env` wins as before. With Mozilla's accounts image (`FXA_IMAGE=docker.io/mozilla/fxa-mono`), which has no pairing server, and `FXA_PAIRING_IMAGE` removed, set it again or set `FXA_PAIRING_REPOSITORY=ghcr.io/porelli/firefox-sync`: `prepare_environment.sh` warns when the pairing profile is on. Helm: `fxa.pairing.image` empty is now `<fxa.image.repository>:<fxa.pairing.tag>` (the accounts' repository, before `image.repository`'s); the chart refuses to render with Mozilla's `fxa-mono` repository there and no `fxa.pairing.image` or `fxa.pairing.repository`.
+Put back the old files and images, with the `.env.before-upgrade-<time>` of the upgrade as `.env` (Quadlets: and the units of `quadlets.before-<time>/`, see [Quadlets](#quadlets)) and the backup of the volumes of step 1. The earlier release reads only the old setting names, and its images moved on: pin `SYNCSTORAGE_IMAGE_TAG` and `SYNCSTORAGE_INIT_IMAGE_TAG` in that `.env` to its last images, `0.24.0-20261102T154558`. The migrations of the newer syncstorage-rs cannot be undone, so roll back everything together, with the backup, never one image alone.
 
 ### The admin UI's own database
 
-An install from before `ADMIN_DB_PASSWORD` (its `.env` has none) keeps working as it did: the admin UI connects as the Sync users and keeps its tables in the tokenserver database. Its setup check of the event log fails and says how to move it, and its log says so at every start. Why the move matters: [The admin UI's own database](reference/database-users.md#the-admin-uis-own-database).
+The admin UI is new for an install of the earlier release: `--upgrade` gives it its own users and database (`ADMIN_DB_PASSWORD`), out of the Sync server's reach, before its first start. Why that matters: [The admin UI's own database](reference/database-users.md#the-admin-uis-own-database).
+
+Without `--upgrade` (its `.env` has no `ADMIN_DB_PASSWORD`) the admin UI still starts: it connects as the Sync users and keeps its tables in the tokenserver database. Its setup check of the event log fails and says how to move it, and its log says so at every start. To move it later:
 
 1. Run `./prepare_environment.sh --upgrade`. It adds `ADMIN_DB_PASSWORD` (32 letters and digits), `ADMIN_DB_NAME`, `ADMIN_DB_USER`, `ADMIN_DB_SYNC_USER`, and with the PostgreSQL container `SYNC_POSTGRES_APP_USER` and `SYNC_POSTGRES_APP_PASSWORD`. By hand: `ADMIN_DB_PASSWORD=$(tr -dc A-Za-z0-9 < /dev/urandom | head -c 32)` in `.env`, the same for `SYNC_POSTGRES_APP_PASSWORD`, with `SYNC_POSTGRES_APP_USER=syncserver_app`.
 1. Your own server only: run the new `database-setup.sql` there (`--upgrade` writes it again; its statements can run again), or the admin UI's statements of the SQL with that password. With `SYNC_DB_BOOTSTRAP_USER` the stack does it at the next start ([Let the stack apply them](databases.md#let-the-stack-apply-them)).
@@ -265,19 +266,19 @@ At that start:
 When something is missing:
 
 - If the admin UI cannot read the old tables (a grant missing on your own server), it copies nothing and leaves them where they are. The setup check says why, nothing is lost, and the next start tries again.
-- If it copied them but cannot drop them (no `EXECUTE`, an init image from before), they stay in the tokenserver database, within the Sync server's reach, until you drop them as the tokenserver user: `DROP TABLE ffs_events, ffs_metrics, ffs_gauges, ffs_account_notes, ffs_schema_levels, ffs_jobs, ffs_backups;`. The setup check says so too.
+- If it copied them but cannot drop them (no `EXECUTE`), they stay in the tokenserver database, within the Sync server's reach, until you drop them as the tokenserver user: `DROP TABLE ffs_events, ffs_metrics, ffs_gauges, ffs_account_notes, ffs_schema_levels, ffs_jobs, ffs_backups;`. The setup check says so too.
 - If `ffs_admin_ui` cannot create its tables in `ffs_admin` (its grant missing), the admin UI does not start and says why. The old tables stay untouched.
 
-Your own backup jobs that record their runs now write into `ffs_admin` as `ffs_admin_ui` ([Your own database server](backups.md#your-own-database-server)).
+Your own backup jobs that record their runs write into `ffs_admin` as `ffs_admin_ui` ([Your own database server](backups.md#your-own-database-server)).
 
 ### Tested
 
-- docker compose: `tests/migrate.sh firefox-sync-2024-12` (4705bda, images 0.18.2) and `firefox-sync-2024-07` (the first release, 7f52fa0, image 0.17.1). The old release's files and `.env`, an account syncs, then the new files over them, `./prepare_environment.sh --upgrade`, the missing lines of `.env-example` added as above, `docker compose pull && docker compose up -d`: the same volumes, the same accounts on the same node with their data, and `SYNC_MAX_USERS` and the admin UI count them.
-- The Quadlets: `UPGRADE_FROM=<checkout of the release before> tests/podman.sh` (cb8e519, MariaDB containers) runs the steps of [Quadlets](#quadlets) except the pull: every password and secret of the old `.env` stays (under its new name), the units of before are kept, a second `--upgrade` changes nothing, and the stack starts with the passwords of before, with no `SET PASSWORD`. The admin UI's audit event of before moves into `ffs_admin`. `tests/podman.sh` also renders a running install again with a setting and an image changed (`--render-units`), and stops and starts it.
-- The files moved to `compose/`: `tests/podman.sh` (compose on the Podman socket) and `tests/e2e.sh` have `--upgrade` write `COMPOSE_FILE` from each old layout (none, `docker-compose.sync-mysql.yml`, `docker-compose.postgres.yml`) and `COMPOSE_PROJECT_NAME`, and start the stack with it; without `COMPOSE_FILE`, `docker-compose.yml` finds the running MariaDB stack. `tests/migrate.sh firefox-sync-2024-12` keeps the same volumes. `UPGRADE_FROM=<checkout of the release before> tests/e2e.sh` runs that release's compose files, then this tree's on the same volumes.
-- The admin UI's own database: `tests/e2e.sh` with `UPGRADE_FROM` (MariaDB, MySQL and PostgreSQL), and `tests/podman.sh` with `prepare_environment.sh --upgrade`.
-- The old setting names: `tests/podman.sh` starts its compose phase from an `.env` with only the old names and has `--upgrade` rename them; `tests/e2e.sh` starts its install from before with only the old names; `tests/migrate.sh firefox-sync-2024-12` upgrades a real `.env` of then.
-- The Quadlets on your own database server: `EXTERNAL_DB=1 tests/podman.sh` (MariaDB `lts`; MySQL `lts` with `SYNC_DB=mysql`, PostgreSQL `latest` with `SYNC_DB=postgres`), the server outside the units, its databases and users made by `database-setup.sql`: the Sync server and the admin UI on it, a backup recorded there, `--upgrade` writing `database-setup.sql` again, a setting rendered again and every unit started again.
+- docker compose: `tests/migrate.sh firefox-sync-public` (MariaDB) and `firefox-sync-public-postgres`. The earlier release's files, set up by its own `prepare_environment.sh` with its images (`0.24.0-20261102T154558`), two accounts sync and a third is refused at `MAX_USERS=2`. Then the new files over them as `git pull` leaves them, `./prepare_environment.sh --upgrade`, `docker compose pull && docker compose up -d`, the admin UI on: the same volumes, the same accounts on the same node with their data, the database majors pinned, `config/nginx/syncstorage-rs.conf` moved into `proxy/old/`, and `SYNC_MAX_USERS` and the admin UI count the accounts.
+- The Quadlets: `tests/migrate.sh firefox-sync-public-quadlets`. The earlier release's units, set up by its `prepare_environment.sh`, `podman auto-update` with the new images, then the steps of [With Quadlets](#with-quadlets): the units of before found and rendered again with every secret, the same accounts and data, the user limit.
+- Watchtower and `podman auto-update` on the files of before: [Watchtower and podman auto-update](#watchtower-and-podman-auto-update).
+- The old setting names: `tests/podman.sh` starts its compose phase from an `.env` with only the old names and has `--upgrade` rename them; `tests/e2e.sh` starts its install from before with only the old names.
+- The files moved to `compose/`: `tests/podman.sh` (compose on the Podman socket) and `tests/e2e.sh` have `--upgrade` write `COMPOSE_FILE` from each layout of the earlier release (none, `docker-compose.postgres.yml`) and `COMPOSE_PROJECT_NAME`, and start the stack with it; without `COMPOSE_FILE`, `docker-compose.yml` finds the running MariaDB stack.
+- The admin UI's own database: `tests/e2e.sh` (MariaDB, MySQL and PostgreSQL) and `tests/podman.sh` start the admin UI without `ADMIN_DB_PASSWORD`, then run `--upgrade`.
 - Not tested: the backup and the rollback.
 
 ## Renamed settings
@@ -289,10 +290,6 @@ The settings of the Sync server in `.env` now have the `SYNC_` prefix, like the 
 | `MARIADB_TOKENSERVER_DATABASE`, `_USER`, `_PASSWORD`, `_SERVER`, `_SERVER_PORT` | `SYNC_TOKENSERVER_DB_NAME`, `_USER`, `_PASSWORD`, `_HOST`, `_PORT` |
 | `MARIADB_SYNCSTORAGE_DATABASE`, `_USER`, `_PASSWORD`, `_SERVER`, `_SERVER_PORT` | `SYNC_STORAGE_DB_NAME`, `_USER`, `_PASSWORD`, `_HOST`, `_PORT` |
 | `POSTGRES_DATABASE`, `_USER`, `_PASSWORD`, `_SERVER`, `_SERVER_PORT` | `SYNC_POSTGRES_NAME`, `_USER`, `_PASSWORD`, `_HOST`, `_PORT` |
-| `POSTGRES_SYNC_USER`, `POSTGRES_SYNC_PASSWORD` | `SYNC_POSTGRES_APP_USER`, `SYNC_POSTGRES_APP_PASSWORD` |
-| `POSTGRES_IMAGE` | `SYNC_POSTGRES_IMAGE` |
-| `MARIADB_TLS_VERIFY` | `SYNC_DB_TLS_VERIFY` |
-| `DB_CONTAINERS` | `SYNC_DB_CONTAINERS` |
 | `MAX_USERS` | `SYNC_MAX_USERS` |
 | `CONTAINER_EXPORT_PORT` | `SYNC_EXPORT_PORT` |
 | `SYNCSTORAGE_DOMAIN` | `SYNC_PUBLIC_URL` |
@@ -325,7 +322,6 @@ ERROR: SYNC_X and X are both set (in .env or in the environment docker compose r
 - The init container logs a warning that lists them (`docker compose logs tokenserver_db_init`), and the admin UI's setup check "Old setting names (.env, environment)" fails. Compose passes them to it as `FFS_OLD_ENV_NAMES`.
 - The variables inside the containers keep their names: commands such as `docker compose exec tokenserver_db sh -c 'mariadb -u"$MARIADB_USER" ...'`, or those of `sync_role_init` with `$POSTGRES_SYNC_USER`, work as before.
 - Your own scripts that read `.env`, or set its settings in the environment of compose (`MAX_USERS=5 docker compose up -d`), need the new names.
-- The placeholders of `db/mysql/sync.sql` and `db/postgres/sync.sql` (now [db/mysql/setup/sync/](/db/mysql/setup/sync) and [db/postgres/setup/sync/](/db/postgres/setup/sync)), if you fill them in by hand: `@TOKENSERVER_*@` is now `@SYNC_TOKENSERVER_*@`, `@SYNCSTORAGE_*@` is `@SYNC_STORAGE_*@`, and `@POSTGRES_*@` is `@SYNC_POSTGRES_*@` (for example `@SYNC_TOKENSERVER_PASSWORD@`, `@SYNC_POSTGRES_DATABASE@`). The nginx example has `<SYNC_EXPORT_PORT>`.
 - Rolling back to a release from before: it reads only the old names, so put the `.env.before-upgrade-<time>` of that upgrade back.
 
 ## Database majors

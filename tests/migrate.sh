@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests of docs/migrating.md (and of docs/upgrading.md for the older firefox-sync releases): an
+# Tests of docs/migrating.md (and of docs/upgrading.md for firefox-sync's public release): an
 # account's data written through another Sync server, moved the way docs/migrating.md says,
 # then read back through firefox-sync with the same FxA uid and keys (upstream's mock FxA,
 # tests/migrate_client.py).
@@ -21,8 +21,17 @@
 #                            firefox-sync's two
 #   nixos-postgres           NixOS' layout on PostgreSQL 17 -> PostgreSQL
 #   yunohost                 YunoHost's layout: two databases of one owner on PostgreSQL 15 -> PostgreSQL
-#   firefox-sync-2024-12     firefox-sync of December 2024 (4705bda, images 0.18.2), upgraded in place
-#   firefox-sync-2024-07     the first release (7f52fa0, July 2024, image 0.17.1), upgraded in place
+#   firefox-sync-public      firefox-sync's public release (porelli/firefox-sync at ca9101d, its
+#                            images 0.24.0) on MariaDB, upgraded in place as docs/upgrading.md says
+#   firefox-sync-public-postgres  the same on PostgreSQL
+#   watchtower               that release left as it is, the images of this one published under
+#                            its tags: Watchtower recreates its containers, then docker compose
+#                            pull && up -d with its files (docs/upgrading.md#watchtower-and-podman-auto-update)
+#   watchtower-postgres      the same on PostgreSQL
+#   firefox-sync-public-quadlets  that release's Quadlets (needs Podman and a systemd user
+#                            session; the units are global: one at a time on a host): podman
+#                            auto-update with the new images, then the upgrade of
+#                            docs/upgrading.md#quadlets
 #
 # The old stacks run their real compose files (fetched from GitHub at pinned commits, with
 # only what the test needs changed in an override: the mock FxA as accounts server, a node
@@ -41,7 +50,10 @@
 # guide use them). Images pulled for a scenario are removed at the end, except those of
 # KEEP_IMAGES.
 # Environment:
-#   REPOSITORY, TAG  firefox-sync images under test (default ghcr.io/porelli/firefox-sync-dev, latest)
+#   REPOSITORY, TAG  firefox-sync images under test (default ghcr.io/<owner>/<repo> of the repository
+#                    this runs in: GITHUB_REPOSITORY, else the git remote origin, else
+#                    ghcr.io/porelli/firefox-sync; latest)
+#   INIT_TAG         the tag of the init images under test (default TAG; vm.sh: built from this tree)
 #   ADMIN_IMAGE      the admin UI (default ffs-admin:test, built from admin/ when missing)
 #   KEEP             1: leave the stacks running
 #   SLOT             tests/slot.sh: 1, 2...: -s<SLOT> after the projects, PORT 28661 + 1000 * SLOT
@@ -55,8 +67,15 @@ CODE=$(dirname "${TESTS}")
 GUIDE=("${CODE}/docs/migrating.md" "${CODE}/docs/upgrading.md")
 # shellcheck source=tests/slot.sh
 source "${TESTS}/slot.sh"
-REPOSITORY=${REPOSITORY:-ghcr.io/porelli/firefox-sync-dev}
+# the images of the repository this runs in (vm.sh gives those of its remote)
+repository_slug() {
+  [ -n "${GITHUB_REPOSITORY:-}" ] && { echo "${GITHUB_REPOSITORY}"; return; }
+  git -C "${CODE}" remote get-url origin 2> /dev/null | sed -n -e 's#/$##' -e 's#\.git$##' -e 's#^.*github\.com[:/]\([^/]*/[^/]*\)$#\1#p' | grep . && return
+  echo porelli/firefox-sync
+}
+REPOSITORY=${REPOSITORY:-ghcr.io/$(repository_slug | tr '[:upper:]' '[:lower:]')}
 TAG=${TAG:-latest}
+INIT_TAG=${INIT_TAG:-${TAG}}
 ADMIN_IMAGE=${ADMIN_IMAGE:-ffs-admin:test}
 PORT=${PORT:-$((28661 + SLOT_PORTS))}
 TEST_IMAGE=${REPOSITORY}:syncstorage-rs-mysql-${TAG}
@@ -189,8 +208,9 @@ dst_sql() {
   case ${DST_DB} in
     mariadb) dst exec -T tokenserver_db sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" mariadb -u"$MARIADB_USER" "$MARIADB_DATABASE" -sN -e "$0"' "$1" ;;
     mysql) dst exec -T tokenserver_db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -sN -e "$0"' "$1" ;;
-    # as the Sync server's role, the owner of the tables (never the superuser, docs/reference/database-users.md#postgresql)
-    postgres) dst exec -T postgres_db sh -c 'PGPASSWORD="$1" psql -h 127.0.0.1 -U "$2" -d "$POSTGRES_DB" -tA -F "	" -c "$0"' "$1" \
+    # as the Sync server's role, the owner of the tables (never the superuser, docs/reference/database-users.md#postgresql);
+    # the public release has none (POSTGRES_USER owns them)
+    postgres) dst exec -T postgres_db sh -c 'if [ -z "$2" ]; then psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -F "	" -c "$0"; else PGPASSWORD="$1" psql -h 127.0.0.1 -U "$2" -d "$POSTGRES_DB" -tA -F "	" -c "$0"; fi' "$1" \
       "$(grep '^SYNC_POSTGRES_APP_PASSWORD=' "${DST}/.env" | cut -d= -f2)" "$(grep '^SYNC_POSTGRES_APP_USER=' "${DST}/.env" | cut -d= -f2)" ;;
   esac < /dev/null 2> /dev/null
 }
@@ -777,30 +797,39 @@ EOF
   dst_verify
 }
 
-# an older firefox-sync, upgraded in place (the same directory, its .env kept)
-# <commit> <first|dec2024>
-scenario_firefox_sync_old() {
-  local commit=$1 kind=$2
-  # the directory gives the compose project and the volume names, as with a clone
-  DST=${WORK}/${DST_PROJECT}
-  mkdir -p "${DST}"
-  curl -sfL "https://codeload.github.com/porelli/firefox-sync/tar.gz/${commit}" | tar -xz -C "${DST}" --strip-components=1 \
-    || { fail "download of ${commit}"; exit 1; }
-  local old_app old_init=
-  cp "${DST}/.env-example" "${DST}/.env"
-  if [ "${kind}" = first ]; then
-    # its docker-compose.yml names its image (syncstorage-rs-mysql-latest, then 0.17.x)
-    old_app=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-0.17.1
-    need "${old_app}" mariadb:11.4 || exit 1
-    sed -i -e "s|^SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=$(rnd)|" -e "s|^METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=$(rnd)|" \
-        -e "s|^SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=${OLD_DOMAIN}|" -e "s|^CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=127.0.0.1:${PORT}|" \
-        -e "s|^MARIADB_PASSWORD=.*|MARIADB_PASSWORD=$(rnd)|" "${DST}/.env"
-    cat > "${DST}/migrate-test.yml" <<EOF
+# ---------- firefox-sync's public release: ca9101d, the layout of porelli/firefox-sync before this one ----------
+# (its docker-compose.yml, docker-compose.postgres.yml and Quadlets, the settings without the
+# SYNC_ prefix, the images syncstorage-rs-<mysql|postgres>[-init]-latest; no admin UI)
+PUBLIC_COMMIT=ca9101d2c53769424d5b17b50f65a6899f2755c6
+# its images as they were published, by a tag that does not move (latest does: to this release)
+PUBLIC_IMAGES=ghcr.io/porelli/firefox-sync
+PUBLIC_BUILD=0.24.0-20261102T154558
+
+# public_tree <dir>: that release's files, as a clone of it has them; its file list in <dir>/.public-files
+public_tree() {
+  mkdir -p "$1"
+  curl -sfL --retry 3 "https://codeload.github.com/porelli/firefox-sync/tar.gz/${PUBLIC_COMMIT}" -o "${WORK}/public.tar.gz" \
+    || { fail "download of ${PUBLIC_COMMIT}"; exit 1; }
+  tar -xzf "${WORK}/public.tar.gz" -C "$1" --strip-components=1 || { fail "extract ${PUBLIC_COMMIT}"; exit 1; }
+  tar -tzf "${WORK}/public.tar.gz" | sed 's|^[^/]*/||' | grep -v '/$' | grep . > "$1/.public-files"
+}
+
+# public_setup <dir> <mariadb|postgres> <compose|quadlets> <repository> <tag>: its own
+# prepare_environment.sh, answered as a user does (MAX_USERS=2, the old node URL), its images
+# <repository>:syncstorage-rs-*-<tag>, the mock FxA as accounts server (test only)
+public_setup() {
+  local dir=$1 db=$2 how=$3 repo=$4 tag=$5 answers=()
+  sed -i -e "s|^REPOSITORY=.*|REPOSITORY=${repo}|" -e "s|^SYNCSTORAGE_INIT_IMAGE_TAG=.*|SYNCSTORAGE_INIT_IMAGE_TAG=${tag}|" \
+    -e "s|^FXA_OAUTH_SERVER_URL=.*|FXA_OAUTH_SERVER_URL=http://mock_fxa:6000|" "${dir}/.env-example"
+  # domain, directory, port, max users, database; with Podman installed how to deploy; user, image tag
+  answers=("${OLD_DOMAIN#https://}" "" "127.0.0.1:${PORT}" 2 "${db}")
+  command -v podman > /dev/null && answers+=("$([ "${how}" = quadlets ] && echo 1 || echo 2)")
+  answers+=("" "${tag}")
+  (cd "${dir}" && printf '%s\n' "${answers[@]}" | ./prepare_environment.sh) > "${WORK}/public-setup.log" 2>&1
+  check "$?" 0 "its prepare_environment.sh (${db}, ${how})" || { tail -20 "${WORK}/public-setup.log"; exit 1; }
+  [ "${how}" = compose ] || return 0
+  cat > "${dir}/migrate-test.yml" <<EOF
 services:
-  syncstorage:
-    image: ${old_app}
-    environment:
-      SYNC_TOKENSERVER__FXA_OAUTH_SERVER_URL: http://mock_fxa:6000
   mock_fxa:
     image: ${TEST_IMAGE}
     entrypoint: ["sh", "/app/scripts/start_mock_fxa_server.sh"]
@@ -808,100 +837,92 @@ services:
       MOCK_FXA_SERVER_HOST: 0.0.0.0
       MOCK_FXA_SERVER_PORT: 6000
 EOF
+  # (MariaDB: no COMPOSE_FILE, docker-compose.yml; PostgreSQL: COMPOSE_FILE=docker-compose.postgres.yml)
+  if grep -q '^COMPOSE_FILE=' "${dir}/.env"; then
+    sed -i 's|^COMPOSE_FILE=.*|&:migrate-test.yml|' "${dir}/.env"
   else
-    old_app=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-0.18.2
-    old_init=ghcr.io/porelli/firefox-sync:syncstorage-rs-mysql-init-0.18.2
-    need "${old_app}" "${old_init}" || exit 1
-    sed -i -e "s|^MARIADB_TOKENSERVER_PASSWORD=.*|MARIADB_TOKENSERVER_PASSWORD=$(rnd)|" -e "s|^MARIADB_SYNCSTORAGE_PASSWORD=.*|MARIADB_SYNCSTORAGE_PASSWORD=$(rnd)|" \
-        -e "s|^SYNC_MASTER_SECRET=.*|SYNC_MASTER_SECRET=$(rnd)|" -e "s|^METRICS_HASH_SECRET=.*|METRICS_HASH_SECRET=$(rnd)|" \
-        -e "s|^SYNCSTORAGE_DOMAIN=.*|SYNCSTORAGE_DOMAIN=${OLD_DOMAIN}|" -e "s|^CONTAINER_EXPORT_PORT=.*|CONTAINER_EXPORT_PORT=127.0.0.1:${PORT}|" \
-        -e "s|^MAX_USERS=.*|MAX_USERS=2|" -e "s|^SYNCSTORAGE_IMAGE_TAG=.*|SYNCSTORAGE_IMAGE_TAG=0.18.2|" \
-        -e "s|^SYNCSTORAGE_INIT_IMAGE_TAG=.*|SYNCSTORAGE_INIT_IMAGE_TAG=0.18.2|" \
-        -e "s|^FXA_OAUTH_SERVER_URL=.*|FXA_OAUTH_SERVER_URL=http://mock_fxa:6000|" "${DST}/.env"
-    cat > "${DST}/migrate-test.yml" <<EOF
-services:
-  mock_fxa:
-    image: ${TEST_IMAGE}
-    entrypoint: ["sh", "/app/scripts/start_mock_fxa_server.sh"]
-    environment:
-      MOCK_FXA_SERVER_HOST: 0.0.0.0
-      MOCK_FXA_SERVER_PORT: 6000
-EOF
+    printf '# tests/migrate.sh\nCOMPOSE_FILE=docker-compose.yml:migrate-test.yml\n' >> "${dir}/.env"
   fi
-  # (the first .env-example has no newline at its end)
-  sed -i -e '$a\' "${DST}/.env"
-  printf '# tests/migrate.sh\nCOMPOSE_FILE=docker-compose.yml:migrate-test.yml\n' >> "${DST}/.env"
-  echo "== old stack: firefox-sync at ${commit} (${old_app##*:})"
+}
+
+# public_pull <dir>: "git pull" from that release to this tree: its files removed, this tree's
+# in their place; .env and the files the setup wrote (config/nginx/syncstorage-rs.conf...) stay
+public_pull() {
+  local dir=$1 f
+  while IFS= read -r f; do rm -f "${dir}/${f}"; done < "${dir}/.public-files"
+  for f in docker-compose.yml .env-example prepare_environment.sh compose config db setup; do cp -r "${CODE}/${f}" "${dir}/"; done
+  mkdir -p "${dir}/tests/compose" && cp "${TESTS}/compose/migrate.yml" "${dir}/tests/compose/"
+}
+
+# the images under test, under the names .env gives them: <app> <init> of ${REPOSITORY}, the init
+# image INIT_TAG (built from this tree), tagged ${TAG} for compose (whose pull brings the published one)
+init_under_test() { echo "${REPOSITORY}:syncstorage-rs-$1-init-${INIT_TAG}"; }
+
+# old_stack_up: that release's stack, the client's data written through it, MAX_USERS=2 counted
+old_stack_up() {
+  echo "== old stack: firefox-sync ${PUBLIC_COMMIT:0:7} ($1)"
   dst up -d > "${WORK}/src-up.log" 2>&1
   check "$?" 0 "old stack up" || { tail -20 "${WORK}/src-up.log"; exit 1; }
-  local init
-  init=$(dst ps -a -q tokenserver_db_init)
-  timeout 600 docker wait "${init}" > /dev/null
-  check "$(docker inspect -f '{{.State.ExitCode}}' "${init}")" 0 "its init container"
-  for _ in $(seq 1 120); do
-    [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/__heartbeat__")" = 200 ] && break
-    sleep 2
-  done
+  check "$(wait_init)" 0 "its init container"
+  check "$(hb)" 200 "its Sync server answers"
   src_write "${DST_PROJECT}_default" http://syncstorage:8000
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" new carol refused
+  check "$?" 0 "MAX_USERS=2 on the old stack: a third account is refused"
+}
+
+# firefox-sync of ca9101d upgraded in place as docs/upgrading.md#the-earlier-firefox-sync-release says (the
+# same directory and volumes, its .env kept). <mariadb|postgres>
+scenario_firefox_sync_public() {
+  local db=$1 backend=mysql
+  [ "${db}" = postgres ] && backend=postgres
+  # the directory gives the compose project and the volume names, as with a clone
+  DST=${WORK}/${DST_PROJECT}
+  public_tree "${DST}"
+  need "${PUBLIC_IMAGES}:syncstorage-rs-${backend}-${PUBLIC_BUILD}" "${PUBLIC_IMAGES}:syncstorage-rs-${backend}-init-${PUBLIC_BUILD}" || exit 1
+  public_setup "${DST}" "${db}" compose "${PUBLIC_IMAGES}" "${PUBLIC_BUILD}"
+  DST_DB=${db}
+  old_stack_up "${db}"
   local volumes_before
   volumes_before=$(docker volume ls -q --filter "label=com.docker.compose.project=${DST_PROJECT}" | sort | paste -sd' ')
   echo "  volumes: ${volumes_before}"
 
-  echo "== upgrade in place (docs/upgrading.md#older-firefox-sync-releases, older firefox-sync releases)"
-  # "Get the new files": this tree over the old one, the .env kept
-  local f
-  # (the compose files of before compose/ gone, as git pull removes them, docs/upgrading.md#files-that-moved;
-  # syncstorage-rs-init*: the init folders of the old release, now db/)
-  rm -f "${DST}"/docker-compose*.yml
-  for f in docker-compose.yml .env-example; do
-    cp -P "${CODE}/${f}" "${DST}/${f}"
-  done
-  rm -rf "${DST}/compose" "${DST}/config" "${DST}/db" "${DST}/syncstorage-rs-init" "${DST}/syncstorage-rs-init-postgres"
-  cp -r "${CODE}/compose" "${CODE}/config" "${CODE}/db" "${DST}/"
-  mkdir -p "${DST}/tests/compose" && cp "${TESTS}/compose/migrate.yml" "${DST}/tests/compose/"
-  # "./prepare_environment.sh --upgrade": the old names of the settings renamed (the values
-  # as they are), the passwords of the admin UI's database users. Before the lines of
-  # .env-example: added first, their new names would hide the values under the old ones
+  echo "== upgrade in place (docs/upgrading.md#the-earlier-firefox-sync-release)"
+  public_pull "${DST}"
   local renamed
   renamed=$(grep -cE "^($(IFS='|'; echo "${RENAMED_SETTINGS[*]#*=}"))=" "${DST}/.env")
-  rm -rf "${DST}/setup" && cp -r "${CODE}/prepare_environment.sh" "${CODE}/setup" "${DST}/"
   (cd "${DST}" && ./prepare_environment.sh --upgrade) > "${WORK}/upgrade.log" 2>&1
   check "$? $(grep -cE '^ADMIN_DB_PASSWORD=[A-Za-z0-9]{32}$' "${DST}/.env")" "0 1" "./prepare_environment.sh --upgrade sets ADMIN_DB_PASSWORD" || cat "${WORK}/upgrade.log"
   check "$(grep -cE "^($(IFS='|'; echo "${RENAMED_SETTINGS[*]#*=}"))=" "${DST}/.env") $(grep -c '^  [A-Z_]* -> [A-Z_]*$' "${WORK}/upgrade.log")" "0 ${renamed}" \
-    "./prepare_environment.sh --upgrade renames the ${renamed} old setting names of that .env" || cat "${WORK}/upgrade.log"
+    "--upgrade renames the ${renamed} old setting names of that .env" || cat "${WORK}/upgrade.log"
   # COMPOSE_FILE with the files of compose/, the test's own kept; the project's name next to it,
   # the directory's (compose/ first, compose would name it "compose": other volumes)
   check "$(sed -n 's/^COMPOSE_FILE=//p' "${DST}/.env") $(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "${DST}/.env") $(grep -c '^COMPOSE_FILE: the compose files moved to compose/' "${WORK}/upgrade.log")" \
-    "compose/sync.yml:compose/sync-mariadb.yml:migrate-test.yml ${DST_PROJECT} 1" "./prepare_environment.sh --upgrade: COMPOSE_FILE with the files of compose/, the project's name, and says so"
-  check "$(cd "${DST}" && docker compose config --format json | jq -r '.volumes | to_entries[] | .value.name' | grep -E 'tokenserver-db|syncstorage-db' | sort | paste -sd' ')" \
-    "$(echo "${volumes_before}" | tr ' ' '\n' | grep -E 'tokenserver-db|syncstorage-db' | paste -sd' ')" "the Sync volumes of compose/, named as before (the project's name)"
-  # "Add the lines of .env-example that your .env lacks, with their default values"
-  local key added=0
-  while IFS= read -r line; do
-    key=${line%%=*}
-    grep -q "^${key}=" "${DST}/.env" || { echo "${line}" >> "${DST}/.env"; added=$((added + 1)); }
-  done < <(grep -E '^[A-Z_]+=' "${CODE}/.env-example")
-  echo "  ${added} lines added from .env-example"
-  if [ "${kind}" = first ]; then
-    # the first release: one user and password for both databases, no MAX_USERS
-    local user pass
-    user=$(sed -n 's/^MARIADB_USER=//p' "${DST}/.env") pass=$(sed -n 's/^MARIADB_PASSWORD=//p' "${DST}/.env")
-    sed -i -e "s|^SYNC_TOKENSERVER_DB_USER=.*|SYNC_TOKENSERVER_DB_USER=${user}|" -e "s|^SYNC_STORAGE_DB_USER=.*|SYNC_STORAGE_DB_USER=${user}|" \
-        -e "s|^SYNC_TOKENSERVER_DB_PASSWORD=.*|SYNC_TOKENSERVER_DB_PASSWORD=${pass}|" -e "s|^SYNC_STORAGE_DB_PASSWORD=.*|SYNC_STORAGE_DB_PASSWORD=${pass}|" \
-        -e "s|^SYNC_MAX_USERS=.*|SYNC_MAX_USERS=2|" "${DST}/.env"
+    "compose/sync.yml:compose/sync-${db}.yml:migrate-test.yml ${DST_PROJECT} 1" "--upgrade: COMPOSE_FILE with the files of compose/, the project's name, and says so"
+  check "$(cd "${DST}" && docker compose config --format json | jq -r '.volumes | to_entries[] | .value.name' | grep -E 'tokenserver-db|syncstorage-db|postgres-db' | sort | paste -sd' ')" \
+    "$(echo "${volumes_before}" | tr ' ' '\n' | grep -E 'tokenserver-db|syncstorage-db|postgres-db' | paste -sd' ')" "the Sync volumes of compose/, named as before (the project's name)"
+  # the database majors: MariaDB on the major of its data (it ran mariadb:lts), PostgreSQL on 18
+  if [ "${db}" = mariadb ]; then
+    local major
+    major=$(dst exec -T tokenserver_db mariadb --version < /dev/null 2> /dev/null | sed -nE 's/.* ([0-9]+)\.[0-9]+\.[0-9]+-MariaDB.*/\1/p')
+    check "$(sed -n 's/^SYNC_MARIADB_IMAGE=//p' "${DST}/.env")" "mariadb:${major}" "--upgrade pins MariaDB to the major of the data (${major})"
+  else
+    check "$(sed -n 's/^SYNC_POSTGRES_IMAGE=//p' "${DST}/.env") $(grep -c '^SYNC_POSTGRES_APP_PASSWORD=[A-Za-z0-9]\{32\}$' "${DST}/.env")" "postgres:18 1" \
+      "--upgrade pins PostgreSQL 18 and gives the Sync server a role of its own"
   fi
-  # the images under test instead of the published ones, the admin UI, the mock FxA
+  # the nginx file the setup of then wrote: moved aside, the configuration of the proxy in proxy/
+  check "$(ls "${DST}"/proxy/old/syncstorage-rs.conf-* 2> /dev/null | wc -l) $([ -f "${DST}/proxy/nginx.conf" ] && echo nginx)" "1 nginx" \
+    "--upgrade moves config/nginx/syncstorage-rs.conf into proxy/old/, writes proxy/"
+  # the admin UI, which that release did not have (docs/admin/README.md); the images under test,
+  # the mock FxA and the test's own files
   sed -i -e "s|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=${REPOSITORY}|" -e "s|^SYNC_IMAGE_TAG=.*|SYNC_IMAGE_TAG=${TAG}|" \
-      -e "s|^SYNC_INIT_IMAGE_TAG=.*|SYNC_INIT_IMAGE_TAG=${TAG}|" \
-      -e "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(rnd)|" -e "s|^ADMIN_EXPORT_PORT=.*|ADMIN_EXPORT_PORT=127.0.0.1:$((PORT + 20))|" \
-      -e "s|^FXA_SMTP_HOST=.*|FXA_SMTP_HOST=|" -e "/^COMPOSE_FILE=/d" -e "/^COMPOSE_PROJECT_NAME=/d" -e "/^# tests\/migrate.sh/d" "${DST}/.env"
-  sed -i "/^FXA_OAUTH_SERVER_URL=/d" "${DST}/.env"
-  echo "COMPOSE_PROFILES=admin" >> "${DST}/.env"
-  # (COMPOSE_PROJECT_NAME: the same, the directory's)
-  dst_test_env compose/sync.yml:compose/sync-mariadb.yml
-  DST_DB=mariadb
+      -e "s|^SYNC_INIT_IMAGE_TAG=.*|SYNC_INIT_IMAGE_TAG=${TAG}|" -e "/^COMPOSE_FILE=/d" -e "/^COMPOSE_PROJECT_NAME=/d" \
+      -e "/^# tests\/migrate.sh/d" -e "/^FXA_OAUTH_SERVER_URL=/d" "${DST}/.env"
+  rm -f "${DST}/migrate-test.yml"
+  printf 'COMPOSE_PROFILES=admin\nADMIN_PASSWORD=%s\nADMIN_EXPORT_PORT=127.0.0.1:%s\n' "$(rnd)" "$((PORT + 20))" >> "${DST}/.env"
+  dst_test_env "compose/sync.yml:compose/sync-${db}.yml"
   # docker compose pull would replace the init image built from this tree with the published one
-  local init_image=${REPOSITORY}:syncstorage-rs-mysql-init-${TAG} init_id
+  local init_image=${REPOSITORY}:syncstorage-rs-${backend}-init-${TAG} init_id
+  [ "${INIT_TAG}" = "${TAG}" ] || docker tag "$(init_under_test "${backend}")" "${init_image}"
   init_id=$(docker image inspect -f '{{.Id}}' "${init_image}" 2> /dev/null)
   cd "${DST}" || exit 1
   guide "docker compose pull && docker compose up -d" > "${WORK}/up.log" 2>&1
@@ -913,10 +934,196 @@ EOF
   cd - > /dev/null || exit 1
   check "$(wait_init)" 0 "init container exit code"
   check "$(state syncstorage_migrate ExitCode)" 0 "migrations of the newer syncstorage-rs"
-  check "$(docker volume ls -q --filter "label=com.docker.compose.project=${DST_PROJECT}" | grep -E 'tokenserver-db|syncstorage-db' | sort | paste -sd' ')" \
-    "$(echo "${volumes_before}" | tr ' ' '\n' | grep -E 'tokenserver-db|syncstorage-db' | paste -sd' ')" "the same volumes"
+  check "$(docker volume ls -q --filter "label=com.docker.compose.project=${DST_PROJECT}" | grep -E 'tokenserver-db|syncstorage-db|postgres-db' | sort | paste -sd' ')" \
+    "$(echo "${volumes_before}" | tr ' ' '\n' | grep -E 'tokenserver-db|syncstorage-db|postgres-db' | paste -sd' ')" "the same volumes"
   dst_verify "${OLD_DOMAIN}"
-  [ -n "${old_init}" ] && PULLED+=("${old_init}")
+}
+
+# a local registry with that release's images under its tags (latest): what its hosts pull from.
+# <backend>; REG is its address
+registry_up() {
+  REG=127.0.0.1:$((PORT + 30))
+  need docker.io/library/registry:2 || exit 1
+  printf 'docker rm -f mig-registry%s\n' "${SLOT_SUFFIX}" >> "${SRC}/.teardown"
+  docker rm -f "mig-registry${SLOT_SUFFIX}" > /dev/null 2>&1
+  docker run -d --name "mig-registry${SLOT_SUFFIX}" -p "${REG}:5000" docker.io/library/registry:2 > /dev/null || { fail "registry"; exit 1; }
+  for _ in $(seq 1 20); do curl -sf "http://${REG}/v2/" > /dev/null && break; sleep 1; done
+  local t
+  need "${PUBLIC_IMAGES}:syncstorage-rs-$1-${PUBLIC_BUILD}" "${PUBLIC_IMAGES}:syncstorage-rs-$1-init-${PUBLIC_BUILD}" || exit 1
+  for t in "" -init; do
+    registry_push "${PUBLIC_IMAGES}:syncstorage-rs-$1${t}-${PUBLIC_BUILD}" "syncstorage-rs-$1${t}-latest"
+  done
+}
+# registry_push <image> <tag>: <image> published as REG/firefox-sync:<tag>, the host keeping what
+# it had under that name (it has the image of before until something pulls)
+registry_push() {
+  local before
+  before=$(docker image inspect -f '{{.Id}}' "${REG}/firefox-sync:$2" 2> /dev/null)
+  docker tag "$1" "${REG}/firefox-sync:$2" && docker push -q "${REG}/firefox-sync:$2" > /dev/null || { fail "push $2"; exit 1; }
+  [ -z "${before}" ] || docker tag "${before}" "${REG}/firefox-sync:$2"
+}
+image_of() { docker inspect -f '{{.Image}}' "$(dst ps -a -q "$1")" 2> /dev/null; }
+
+# that release's stack, untouched, when the images of this release are published under its tags:
+# Watchtower recreates the running containers with them (the same configuration, the files and
+# .env of before), then `docker compose pull && docker compose up -d` (a cron, or after it)
+# brings the init container and the migrations too (docs/upgrading.md#watchtower-and-podman-auto-update). <mariadb|postgres>
+scenario_watchtower() {
+  local db=$1 backend=mysql
+  [ "${db}" = postgres ] && backend=postgres
+  DST=${WORK}/${DST_PROJECT}
+  registry_up "${backend}"
+  public_tree "${DST}"
+  public_setup "${DST}" "${db}" compose "${REG}/firefox-sync" latest
+  DST_DB=${db}
+  old_stack_up "${db}"
+  local users_before old_app new_app names
+  users_before=$(dst_sql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")
+  old_app=$(image_of syncstorage)
+
+  echo "== the images of this release under the same tags, Watchtower"
+  registry_push "${REPOSITORY}:syncstorage-rs-${backend}-${TAG}" "syncstorage-rs-${backend}-latest"
+  registry_push "$(init_under_test "${backend}")" "syncstorage-rs-${backend}-init-latest"
+  need docker.io/containrrr/watchtower:latest || exit 1
+  # (Watchtower's client is older than the API versions Docker 29 still accepts: the oldest it does)
+  names=$(dst ps -a --format '{{.Name}}' | grep -v mock_fxa | paste -sd' ')
+  # shellcheck disable=SC2086 # (the container names, one word each)
+  docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -e DOCKER_API_VERSION="$(docker version -f '{{.Server.MinAPIVersion}}')" \
+    docker.io/containrrr/watchtower:latest --run-once ${names} > "${WORK}/watchtower.log" 2>&1
+  check "$? $(grep -c 'Session done.*Failed=0' "${WORK}/watchtower.log")" "0 1" "watchtower --run-once" || cat "${WORK}/watchtower.log"
+  new_app=$(docker image inspect -f '{{.Id}}' "${REG}/firefox-sync:syncstorage-rs-${backend}-latest")
+  check "$([ "${new_app}" != "${old_app}" ] && [ "$(image_of syncstorage)" = "${new_app}" ] && echo new) $(state syncstorage Running)" "new true" \
+    "Watchtower recreated the Sync server with the new image (and the configuration of before)"
+  check "$(hb)" 200 "the new Sync server answers, with the old compose file and .env"
+  check "$(dst_sql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")" "${users_before}" "the accounts as they were"
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" check
+  check "$?" 0 "the client reads its data back through the new Sync server"
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" new carol refused
+  check "$?" 0 "MAX_USERS=2 still counts: a third account is refused"
+
+  echo "== docker compose pull && docker compose up -d, with the files and .env of before"
+  cd "${DST}" || exit 1
+  guide "docker compose pull && docker compose up -d" > "${WORK}/up.log" 2>&1
+  check "$?" 0 "docker compose pull && docker compose up -d (the files of before)" || tail -20 "${WORK}/up.log"
+  cd - > /dev/null || exit 1
+  check "$(wait_init) $(image_of tokenserver_db_init | grep -c "$(docker image inspect -f '{{.Id}}' "${REG}/firefox-sync:syncstorage-rs-${backend}-init-latest")")" "0 1" \
+    "the new init container ran with the old setting names, exit code 0"
+  check "$(state syncstorage_migrate ExitCode)" 0 "the new migrations"
+  check "$(dst logs tokenserver_db_init 2>&1 | grep -c 'Current users: 2$') $(dst_sql "SELECT config_value FROM config WHERE config_key = 'max_users'")" "1 2" \
+    "the init container counts the 2 accounts, max users 2 (MAX_USERS of before)"
+  check "$(dst_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" off "invite-only Sync off, as before (no SYNC_ALLOWED_ACCOUNTS)"
+  check "$(hb)" 200 "/__heartbeat__"
+  check "$(dst_sql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")" "${users_before}" "the accounts as they were"
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" check
+  check "$?" 0 "the client reads its data back"
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" new carol refused
+  check "$?" 0 "MAX_USERS=2: a third account is refused"
+  sed -i 's/^MAX_USERS=.*/MAX_USERS=3/' "${DST}/.env"
+  dst up -d > /dev/null 2>&1
+  check "$(wait_init)" 0 "init container exit code (MAX_USERS=3)"
+  client "${DST_PROJECT}_default" http://syncstorage:8000 "${OLD_DOMAIN}" new carol ok
+  check "$?" 0 "MAX_USERS=3 in the .env of before: the third account is let in"
+  check "$(dst logs syncstorage 2>&1 | grep -ciE 'panicked|"status":5[0-9][0-9]')" 0 "no panics or 5xx in the Sync server's logs"
+}
+
+# that release's Quadlets (Podman, systemd --user; MariaDB, as it had them): podman auto-update
+# (AutoUpdate=registry, its timer) when the images of this release are published under its tags,
+# then the upgrade of docs/upgrading.md#quadlets: the units stopped, the new files, --upgrade,
+# the images pulled, started (docs/upgrading.md#with-quadlets)
+scenario_public_quadlets() {
+  local qd=${HOME}/.config/containers/systemd ud=${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user
+  local client_image=${PUBLIC_IMAGES}:syncstorage-rs-mysql-${PUBLIC_BUILD}
+  command -v podman > /dev/null && systemctl --user show-environment > /dev/null 2>&1 || { fail "needs podman and a systemd user session"; exit 1; }
+  ls "${qd}"/firefox-sync-* > /dev/null 2>&1 && { fail "Quadlet units of firefox-sync installed in ${qd} already: not here"; exit 1; }
+  DST=${WORK}/${DST_PROJECT}
+  registry_up mysql
+  # the registry over plain HTTP, for Podman too (the test's own file, removed at the end)
+  mkdir -p "${HOME}/.config/containers/registries.conf.d"
+  printf '[[registry]]\nlocation = "%s"\ninsecure = true\n' "${REG}" > "${HOME}/.config/containers/registries.conf.d/ffs-migrate${SLOT_SUFFIX}.conf"
+  cat >> "${SRC}/.teardown" <<TEARDOWN
+systemctl --user stop firefox-sync-syncstorage.service firefox-sync-tokenserver-db-init.service firefox-sync-syncstorage-migrate.service firefox-sync-db-bootstrap.service firefox-sync-tokenserver-db.service firefox-sync-syncstorage-db.service firefox-sync-backup.timer
+systemctl --user stop firefox-sync-network-network.service firefox-sync-syncstorage-db-volume.service firefox-sync-tokenserver-db-volume.service firefox-sync-backups-volume.service
+podman rm -f mig-mock-fxa${SLOT_SUFFIX}
+rm -f "${qd}"/firefox-sync-* "${ud}"/firefox-sync-backup.timer
+systemctl --user daemon-reload
+podman rm -f -a --filter name=firefox-sync
+podman volume rm firefox-sync-syncstorage-db firefox-sync-tokenserver-db firefox-sync-backups
+podman network rm firefox-sync
+podman rmi \$(podman images --format '{{.Repository}}:{{.Tag}}' | grep '^${REG}/') ${client_image}
+systemctl --user reset-failed
+rm -f "${HOME}/.config/containers/registries.conf.d/ffs-migrate${SLOT_SUFFIX}.conf"
+TEARDOWN
+  public_tree "${DST}"
+  public_setup "${DST}" mariadb quadlets "${REG}/firefox-sync" latest
+  podman image exists "${client_image}" || podman pull -q "${client_image}" > /dev/null || { fail "podman pull ${client_image}"; exit 1; }
+  qclient() { podman run --rm --network firefox-sync --user root --entrypoint sh -v "${TESTS}:/tests:ro" -v "${STATE}:/state" \
+    -e SYNC_SERVER_URL=http://firefox-sync-syncstorage:8000 -e SYNC_PUBLIC_URL="${OLD_DOMAIN}" -e PYTHONPATH=/app:/app/tools:/tests \
+    -e PYTHONDONTWRITEBYTECODE=1 "${client_image}" -c "cd /app && python3 /tests/migrate_client.py $*" < /dev/null; }
+  qsql() { podman exec firefox-sync-tokenserver-db sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" mariadb -u"$MARIADB_USER" "$MARIADB_DATABASE" -sN -e "$0"' "$1" < /dev/null 2> /dev/null; }
+  qimage() { podman inspect -f '{{.Image}}' "$1" 2> /dev/null; }
+
+  echo "== old stack: firefox-sync ${PUBLIC_COMMIT:0:7} (Quadlets)"
+  # (restart: a network unit left active by an earlier run would not create its network again)
+  systemctl --user restart firefox-sync-network-network.service
+  # the mock FxA on the units' network, as FXA_OAUTH_SERVER_URL says (test only)
+  podman run -d --name "mig-mock-fxa${SLOT_SUFFIX}" --network firefox-sync --network-alias mock_fxa --entrypoint sh \
+    -e MOCK_FXA_SERVER_HOST=0.0.0.0 -e MOCK_FXA_SERVER_PORT=6000 "${client_image}" /app/scripts/start_mock_fxa_server.sh > /dev/null
+  timeout 900 systemctl --user start firefox-sync-syncstorage.service
+  check "$?" 0 "its units started (systemctl --user start firefox-sync-syncstorage.service)"
+  check "$(hb)" 200 "its Sync server answers"
+  echo "== writing through the old server"
+  qclient write
+  check "$?" 0 "alice and bob synced to the old server" || exit 1
+  qclient new carol refused
+  check "$?" 0 "MAX_USERS=2 on the old stack: a third account is refused"
+  local users_before old_app secret
+  users_before=$(qsql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")
+  old_app=$(qimage firefox-sync-syncstorage)
+  secret=$(sed -n 's/^SYNC_MASTER_SECRET=//p' "${DST}/.env")
+
+  echo "== the images of this release under the same tags, podman auto-update"
+  registry_push "${REPOSITORY}:syncstorage-rs-mysql-${TAG}" syncstorage-rs-mysql-latest
+  registry_push "$(init_under_test mysql)" syncstorage-rs-mysql-init-latest
+  podman auto-update > "${WORK}/auto-update.log" 2>&1
+  check "$? $(grep -cE 'firefox-sync-syncstorage\.service .* true$' "${WORK}/auto-update.log")" "0 1" "podman auto-update replaced the Sync server" || cat "${WORK}/auto-update.log"
+  check "$([ "$(qimage firefox-sync-syncstorage)" != "${old_app}" ] && echo new)" new "the Sync server runs the new image, with the units of before"
+  check "$(hb)" 200 "the new Sync server answers"
+  check "$(qsql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")" "${users_before}" "the accounts as they were"
+  qclient check
+  check "$?" 0 "the client reads its data back through the new Sync server"
+  qclient new carol refused
+  check "$?" 0 "MAX_USERS=2 still counts: a third account is refused"
+
+  echo "== the upgrade of docs/upgrading.md#quadlets"
+  cd "${DST}" || exit 1
+  guide "systemctl --user stop firefox-sync-syncstorage.service firefox-sync-syncstorage-migrate.service firefox-sync-tokenserver-db-init.service firefox-sync-tokenserver-db.service firefox-sync-syncstorage-db.service" > /dev/null 2>&1
+  check "$?" 0 "the units of that release stopped, as docs/upgrading.md#quadlets says"
+  public_pull "${DST}"
+  ./prepare_environment.sh --upgrade < /dev/null > "${WORK}/upgrade.log" 2>&1
+  check "$? $(grep -c 'are of an earlier release of firefox-sync' "${WORK}/upgrade.log") $(grep -c '^Rendering the Quadlet units from' "${WORK}/upgrade.log")" "0 1 1" \
+    "--upgrade finds the units of that release (with its SYNC_MASTER_SECRET) and renders them again" || cat "${WORK}/upgrade.log"
+  check "$(grep -cE "^($(IFS='|'; echo "${RENAMED_SETTINGS[*]#*=}"))=" .env) $(sed -n 's/^SYNC_MASTER_SECRET=//p' "${qd}/firefox-sync-syncstorage.env" | grep -cxF "${secret}") $(grep -cE '^ADMIN_DB_PASSWORD=[A-Za-z0-9]{32}$' .env) $(ls quadlets.before-*/firefox-sync-syncstorage.container 2> /dev/null | wc -l)" \
+    "0 1 1 1" "--upgrade: the new setting names, the secrets kept (in the units' environment files), ADMIN_DB_PASSWORD, the units of before kept" || { cat "${WORK}/upgrade.log"; ls -la; }
+  local major
+  major=$(podman exec firefox-sync-tokenserver-db mariadb --version 2> /dev/null | sed -nE 's/.* ([0-9]+)\.[0-9]+\.[0-9]+-MariaDB.*/\1/p')
+  [ -n "${major}" ] || major=$(podman run --rm --entrypoint mariadb docker.io/library/mariadb:lts --version | sed -nE 's/.* ([0-9]+)\.[0-9]+\.[0-9]+-MariaDB.*/\1/p')
+  check "$(sed -n 's/^SYNC_MARIADB_IMAGE=//p' .env) $(sed -n 's/^Image=//p' "${qd}/firefox-sync-tokenserver-db.container")" "mariadb:${major} docker.io/library/mariadb:${major}" \
+    "--upgrade pins MariaDB to the major of the data (${major}), in the units too"
+  guide "grep -h '^Image=' ~/.config/containers/systemd/firefox-sync-*.container | cut -d= -f2 | sort -u | xargs -n1 podman pull" > "${WORK}/pull.log" 2>&1
+  check "$?" 0 "the images of the units pulled" || tail -5 "${WORK}/pull.log"
+  local since
+  since=$(date '+%Y-%m-%d %H:%M:%S')
+  timeout 900 systemctl --user start firefox-sync-syncstorage.service
+  check "$?" 0 "systemctl --user start firefox-sync-syncstorage.service"
+  cd - > /dev/null || exit 1
+  check "$(systemctl --user is-active firefox-sync-syncstorage-migrate.service firefox-sync-tokenserver-db-init.service | paste -sd' ')" "active active" "the migrations and the init container of this release ran"
+  check "$(journalctl --user -u firefox-sync-tokenserver-db-init.service --since "${since}" --no-pager 2> /dev/null | grep -q 'Current users: 2$' && echo 2)" 2 "init container: Current users: 2"
+  check "$(hb)" 200 "the Sync server answers, upgraded"
+  check "$(qsql "SELECT uid, email, nodeid, generation, keys_changed_at FROM users ORDER BY uid")" "${users_before}" "the accounts as they were, on the same volumes"
+  qclient check
+  check "$?" 0 "the client reads its data back"
+  qclient new carol refused
+  check "$?" 0 "SYNC_MAX_USERS=2 (MAX_USERS of before): a third account is refused"
 }
 
 # ---------- run ----------
@@ -938,8 +1145,11 @@ case ${SCENARIO} in
   nixos-mysql) scenario_nixos mysql ;;
   nixos-postgres) scenario_nixos postgres ;;
   yunohost) scenario_yunohost ;;
-  firefox-sync-2024-12) scenario_firefox_sync_old 4705bda dec2024 ;;
-  firefox-sync-2024-07) scenario_firefox_sync_old 7f52fa0 first ;;
+  firefox-sync-public) scenario_firefox_sync_public mariadb ;;
+  firefox-sync-public-postgres) scenario_firefox_sync_public postgres ;;
+  watchtower) scenario_watchtower mariadb ;;
+  watchtower-postgres) scenario_watchtower postgres ;;
+  firefox-sync-public-quadlets) scenario_public_quadlets ;;
   *) echo "unknown scenario ${SCENARIO}"; exit 2 ;;
 esac
 [ ${FAILED} = 0 ] && echo "RESULT ${SCENARIO}: all checks passed" || echo "RESULT ${SCENARIO}: some checks FAILED"

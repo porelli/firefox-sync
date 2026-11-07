@@ -600,28 +600,12 @@ proxy_admin_allow=everyone|not a list of addresses or CIDRs"; do
 done
 
 echo "== the pairing server's image: it follows FXA_IMAGE, FXA_PAIRING_IMAGE a full override"
-# an .env of before: FXA_PAIRING_IMAGE written by its setup, <FXA_IMAGE>:fxa-channelserver-latest
-# (a mirror here), none of the new lines; --upgrade comments it out (the image it follows anyway),
-# and again changes nothing; any other value is kept, and said so
+# an .env with FXA_IMAGE and FXA_PAIRING_IMAGE (<FXA_PAIRING_IMAGE> empty: not set)
 old_pairing_env() { # <FXA_IMAGE> <FXA_PAIRING_IMAGE>
     sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|keepme|' -e 's|<REPLACE_WITH_YOUR_DOMAIN>|sync.example.org|' \
         -e '/^# FXA_PAIRING_REPOSITORY=/d' -e '/^# FXA_PAIRING_VERSION=/d' \
         -e "s|^FXA_IMAGE=.*|FXA_IMAGE=${1}|" -e "s|^# FXA_PAIRING_IMAGE=.*|FXA_PAIRING_IMAGE=${2}|" "${W}/.env-example" > "${W}/.env"
 }
-reset_checkout new
-old_pairing_env registry.example.org:5000/ffs registry.example.org:5000/ffs:fxa-channelserver-latest
-run_setup docker "${WORK}/upgrade-pairing.log" --upgrade < /dev/null
-check "$? $(grep -c '^FXA_PAIRING_IMAGE=' "${W}/.env") $(grep -cx '# FXA_PAIRING_IMAGE=registry.example.org:5000/ffs:fxa-channelserver-latest' "${W}/.env") $(grep -c '^FXA_PAIRING_IMAGE: commented out, the pairing server follows FXA_IMAGE now (the same image, registry.example.org:5000/ffs:fxa-channelserver-latest)$' "${WORK}/upgrade-pairing.log")" \
-    "0 0 1 1" "--upgrade: FXA_PAIRING_IMAGE of the setup of before (<FXA_IMAGE>:fxa-channelserver-latest) commented out"
-run_setup docker "${WORK}/upgrade-pairing-again.log" --upgrade < /dev/null
-check "$? $(grep -c 'FXA_PAIRING_IMAGE' "${WORK}/upgrade-pairing-again.log") $(grep -c '^Nothing to add' "${WORK}/upgrade-pairing-again.log")" "0 0 1" "--upgrade again: nothing changes"
-for own in docker.io/mozilla/channelserver:latest ghcr.io/porelli/firefox-sync:fxa-channelserver-latest registry.example.org:5000/ffs:fxa-channelserver-v1; do
-    reset_checkout new
-    old_pairing_env registry.example.org:5000/ffs "${own}"
-    run_setup docker "${WORK}/upgrade-pairing-own.log" --upgrade < /dev/null
-    check "$? $(ev FXA_PAIRING_IMAGE) $(grep -c "^NOTE: FXA_PAIRING_IMAGE=${own}: kept, your own image" "${WORK}/upgrade-pairing-own.log")" "0 ${own} 1" \
-        "--upgrade: FXA_PAIRING_IMAGE=${own} with FXA_IMAGE=registry.example.org:5000/ffs: kept, said so"
-done
 # Mozilla's accounts image (no pairing server there) with the pairing profile and no FXA_PAIRING_IMAGE: warned of
 reset_checkout new
 old_pairing_env docker.io/mozilla/fxa-mono ""

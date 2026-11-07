@@ -41,7 +41,7 @@ upgrade_ports() {
 }
 
 # ./prepare_environment.sh --upgrade: the .env of an install that runs (docker compose), given
-# the settings of this release that need a value of their own (docs/upgrading.md#older-firefox-sync-releases), nothing else
+# the settings of this release that need a value of their own (docs/upgrading.md#the-earlier-firefox-sync-release), nothing else
 # changed (and proxy/, the configuration of the reverse proxy, written again from it): the admin UI's database users (ADMIN_DB_PASSWORD; the event log moves out of the
 # Sync server's reach at the next start), the Sync server's own role in the PostgreSQL
 # container (SYNC_POSTGRES_APP_USER, SYNC_POSTGRES_APP_PASSWORD), in COMPOSE_FILE the new names
@@ -49,9 +49,7 @@ upgrade_ports() {
 # MariaDB FXA_MARIADB_IMAGE=mariadb:11, the major they run (the compose default is now
 # mariadb:lts, 12: written out, they stay on 11; a move is up to the admin, docs/upgrading.md#mariadb), on MySQL
 # FXA_MYSQL_IMAGE=mysql:8 and FXA_MYSQL_ARGS with mysql_native_password, Sync on MySQL
-# SYNC_MYSQL_IMAGE=mysql:8 (the default is now mysql:lts, 9; docs/upgrading.md#mysql-8-to-9), and FXA_PAIRING_IMAGE
-# commented out when it is the value the setup of before wrote (the pairing server follows
-# FXA_IMAGE now, docs/upgrading.md#pairing-server-image). A value already set is kept; the
+# SYNC_MYSQL_IMAGE=mysql:8 (the default is now mysql:lts, 9; docs/upgrading.md#mysql-8-to-9). A value already set is kept; the
 # old file is kept as .env.before-upgrade-<UTC time>. With your own database server database-setup.sql
 # (and database-setup-fxa.sql) is written again (the one of before kept as
 # database-setup.sql.before-upgrade-<UTC time>), to run there first, or the stack applies the
@@ -305,24 +303,6 @@ upgrade_env() {
         set_value SYNC_MYSQL_IMAGE mysql:8
         echo "SYNC_MYSQL_IMAGE=mysql:8: the Sync databases stay on MySQL 8. To move them to MySQL lts, 9"
         echo "  (a backup first, there is no way back): docs/upgrading.md#mysql-8-to-9"
-    fi
-    # the pairing server's image follows the accounts' FXA_IMAGE now (FXA_PAIRING_REPOSITORY,
-    # FXA_PAIRING_VERSION), FXA_PAIRING_IMAGE is a full override. The value the setup of before
-    # wrote, <FXA_IMAGE>:fxa-channelserver-latest, the image it follows anyway: commented out;
-    # any other value is your own image: kept (docs/upgrading.md#pairing-server-image)
-    local pairing_image pairing_repository pairing_version pairing_follows
-    pairing_image=$(env_plain FXA_PAIRING_IMAGE)
-    pairing_repository=$(env_value FXA_PAIRING_REPOSITORY)
-    pairing_repository=${pairing_repository:-$(env_value FXA_IMAGE)}
-    pairing_version=$(env_value FXA_PAIRING_VERSION)
-    pairing_follows=${pairing_repository:-ghcr.io/porelli/firefox-sync}:${pairing_version:-fxa-channelserver-latest}
-    if [ -n "${pairing_image}" ] && [ "${pairing_image}" = "${pairing_follows}" ]; then
-        apply_sed "${env_file}" "s|^\(${ENV_LEAD}FXA_PAIRING_IMAGE=\)|# \1|"
-        changed+=(FXA_PAIRING_IMAGE)
-        echo "FXA_PAIRING_IMAGE: commented out, the pairing server follows FXA_IMAGE now (the same image, ${pairing_follows})"
-    elif [ -n "${pairing_image}" ]; then
-        echo "NOTE: FXA_PAIRING_IMAGE=${pairing_image}: kept, your own image for the pairing server (it wins over"
-        echo "  FXA_IMAGE, which it follows otherwise: ${pairing_follows}; docs/upgrading.md#pairing-server-image)"
     fi
     # the Quadlets have no defaults of their own: every setting of .env-example in .env, as a
     # new setup writes it. A secret only when it is not there at all, the accounts' only

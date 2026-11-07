@@ -50,12 +50,12 @@ The stack's own database containers. For a server you run yourself, see also [Yo
 | `SYNC_DB` | `database.backend` | `mariadb` | the Sync database containers: `mariadb` or `mysql` ([MySQL instead of MariaDB](../databases.md#mysql-instead-of-mariadb)). PostgreSQL: `compose/sync-postgres.yml` in `COMPOSE_FILE` (Helm: `postgres`) | |
 | `SYNC_MARIADB_IMAGE` | `database.image.mariadb` | unset: `mariadb:lts` (Helm `docker.io/library/mariadb:lts`) | with `SYNC_DB=mariadb`, the MariaDB image of the Sync databases and of their backups. Pins: [Database majors](../upgrading.md#database-majors) | |
 | `SYNC_MYSQL_IMAGE` | `database.image.mysql` | unset: `mysql:lts` (Helm `docker.io/library/mysql:lts`) | with `SYNC_DB=mysql`, the MySQL image of the Sync databases and of their backups. Pins: [Database majors](../upgrading.md#database-majors) | |
-| `SYNC_POSTGRES_IMAGE` | `database.image.postgres` | unset: `postgres:latest`; `prepare_environment.sh` writes the major it finds | the PostgreSQL image of the Sync database and of its backups, compose's and the Quadlets'. Pin the major: [PostgreSQL](../upgrading.md#postgresql) | `POSTGRES_IMAGE` |
+| `SYNC_POSTGRES_IMAGE` | `database.image.postgres` | unset: `postgres:latest`; `prepare_environment.sh` writes the major it finds | the PostgreSQL image of the Sync database and of its backups, compose's and the Quadlets'. Pin the major: [PostgreSQL](../upgrading.md#postgresql) | |
 | `SYNC_TOKENSERVER_DB_PASSWORD` | Secret: `TOKENSERVER_DB_PASSWORD` | generated | the tokenserver user's password (MariaDB, MySQL) | `MARIADB_TOKENSERVER_PASSWORD` |
 | `SYNC_STORAGE_DB_PASSWORD` | Secret: `STORAGE_DB_PASSWORD` | generated | the storage user's password (MariaDB, MySQL) | `MARIADB_SYNCSTORAGE_PASSWORD` |
 | `SYNC_POSTGRES_PASSWORD` | Secret: `POSTGRES_PASSWORD` | generated | the password of `SYNC_POSTGRES_USER`: the container's superuser; on your own server, the owner of the database | `POSTGRES_PASSWORD` |
-| `SYNC_POSTGRES_APP_USER` | `database.postgresSyncUser` | empty (`prepare_environment.sh`: `syncserver_app`; Helm `syncserver_app`) | the Sync server's own role in the PostgreSQL container, no superuser. Empty (an install from before, or your own server): the Sync server connects as `SYNC_POSTGRES_USER` | `POSTGRES_SYNC_USER` |
-| `SYNC_POSTGRES_APP_PASSWORD` | Secret: `POSTGRES_SYNC_PASSWORD` | generated | its password | `POSTGRES_SYNC_PASSWORD` |
+| `SYNC_POSTGRES_APP_USER` | `database.postgresSyncUser` | empty (`prepare_environment.sh`: `syncserver_app`; Helm `syncserver_app`) | the Sync server's own role in the PostgreSQL container, no superuser. Empty (an install from before, or your own server): the Sync server connects as `SYNC_POSTGRES_USER` | |
+| `SYNC_POSTGRES_APP_PASSWORD` | Secret: `POSTGRES_SYNC_PASSWORD` | generated | its password | |
 | `ADMIN_DB_NAME` | `database.admin.name` | `ffs_admin` | the admin UI's own database, on the tokenserver's server | |
 | `ADMIN_DB_USER` | `database.admin.user` | `ffs_admin_ui` | the admin UI's user of that database, and only of it | |
 | `ADMIN_DB_SYNC_USER` | `database.admin.syncUser` | `ffs_admin_sync` | the admin UI's reader of the Sync data, with nothing on `ffs_admin` | |
@@ -69,8 +69,8 @@ How to set it up: [Your own database server](../databases.md#your-own-server). T
 
 | `.env` | Helm | Default | Meaning | Old name |
 |---|---|---|---|---|
-| `SYNC_DB_CONTAINERS` | `database.bundled` | `1` (Helm `true`) | `0` (Helm `false`): no Sync database containers, use your own server | `DB_CONTAINERS` |
-| `SYNC_DB_TLS_VERIFY` | `database.external.tlsVerify` | `true` (Helm `false`) | whether the init container's client (and the chart's backups) checks the server's certificate. `false` for your own MySQL, whose certificate is self-signed. The Sync server itself connects without TLS | `MARIADB_TLS_VERIFY` |
+| `SYNC_DB_CONTAINERS` | `database.bundled` | `1` (Helm `true`) | `0` (Helm `false`): no Sync database containers, use your own server | |
+| `SYNC_DB_TLS_VERIFY` | `database.external.tlsVerify` | `true` (Helm `false`) | whether the init container's client (and the chart's backups) checks the server's certificate. `false` for your own MySQL, whose certificate is self-signed. The Sync server itself connects without TLS | |
 | `SYNC_DB_BOOTSTRAP_USER` | `database.external.bootstrap.user` | empty | an account that can create users, as which the stack applies the [setup migrations](../databases.md#setup-migrations) your server lacks itself at every start; empty: it only checks them. See [Let the stack apply them](../databases.md#let-the-stack-apply-them) | |
 | `SYNC_DB_BOOTSTRAP_PASSWORD` | Secret: `SYNC_DB_BOOTSTRAP_PASSWORD` | empty | its password | |
 | `SYNC_TOKENSERVER_DB_HOST` | `database.external.host` | `tokenserver_db` | the tokenserver's server: a host name or IPv4 address the containers reach (Helm: required) | `MARIADB_TOKENSERVER_SERVER` |
@@ -207,7 +207,7 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `FXA_PAIRING_URL` | `fxa.pairing.url` | unset: Mozilla's channel server | your own pairing server for the QR code, for example `wss://pairing.example.com`, with `pairing` in `COMPOSE_PROFILES` (Helm: `fxa.pairing.enabled`) | |
 | `FXA_PAIRING_REPOSITORY` | `fxa.pairing.repository` | unset: `FXA_IMAGE` (Helm empty: the accounts' repository) | the pairing server's image repository: it follows the accounts' image, a mirror too | |
 | `FXA_PAIRING_VERSION` | `fxa.pairing.tag` | `fxa-channelserver-latest` | its tag, or a pinned one such as `fxa-channelserver-<release>` | |
-| `FXA_PAIRING_IMAGE` | `fxa.pairing.image` | unset: `<FXA_PAIRING_REPOSITORY>:<FXA_PAIRING_VERSION>` | a full image reference that wins over both, for example Mozilla's own `docker.io/mozilla/channelserver:<tag>` (amd64 only), which Mozilla's accounts image (`FXA_IMAGE=docker.io/mozilla/fxa-mono`) needs: it has no pairing server. `--upgrade` comments out the value the setup of before wrote ([Upgrading](../upgrading.md#pairing-server-image)) | |
+| `FXA_PAIRING_IMAGE` | `fxa.pairing.image` | unset: `<FXA_PAIRING_REPOSITORY>:<FXA_PAIRING_VERSION>` | a full image reference that wins over both, for example Mozilla's own `docker.io/mozilla/channelserver:<tag>` (amd64 only), which Mozilla's accounts image (`FXA_IMAGE=docker.io/mozilla/fxa-mono`) needs: it has no pairing server. | |
 | `FXA_PAIRING_TRUSTED_PROXIES` | `fxa.pairing.trustedProxies` | unset: `127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16` | the proxies the pairing server trusts for the client address (not with the Quadlets: they have no pairing server) | |
 | `FXA_LOG_LEVEL` | `fxa.logLevel` | unset: `INFO` | the log level of the auth server: `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE` | |
 | `FXA_CONTENT_EXPORT_PORT` | – (the Service `<release>-firefox-sync-fxa-content`, port 3030) | `127.0.0.1:3030` | where the host publishes the accounts pages | |

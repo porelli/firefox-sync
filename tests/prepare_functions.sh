@@ -269,21 +269,17 @@ echo "== setup/env.sh: the compose files of an install (compose_files, compose_f
 check "$(compose_files mariadb "" no) $(compose_files postgres mysql no) $(compose_files mysql mariadb yes)" \
   "compose/sync.yml:compose/sync-mariadb.yml compose/sync.yml:compose/sync-postgres.yml:compose/fxa.yml:compose/fxa-mysql.yml compose/sync.yml:compose/sync-mysql.yml:compose/fxa.yml:compose/fxa-mariadb.yml:compose/podman.yml" \
   "compose_files: Sync's database, the accounts' and compose/podman.yml"
-# "<COMPOSE_FILE of before> => <now>" (docs/upgrading.md#files-that-moved; nothing: no file of before in it)
+# "<COMPOSE_FILE of the earlier release> => <now>" (docs/upgrading.md#files-that-moved; nothing: no file of before in it)
 MOVED_CASES=(
   ' => compose/sync.yml:compose/sync-mariadb.yml'
   'docker-compose.yml => compose/sync.yml:compose/sync-mariadb.yml'
-  'docker-compose.yml:docker-compose.sync-mysql.yml => compose/sync.yml:compose/sync-mysql.yml'
-  'docker-compose.sync-postgres.yml => compose/sync.yml:compose/sync-postgres.yml'
   'docker-compose.postgres.yml => compose/sync.yml:compose/sync-postgres.yml'
-  'docker-compose.yml:docker-compose.fxa.yml => compose/sync.yml:compose/sync-mariadb.yml:compose/fxa.yml:compose/fxa-mysql.yml'
-  'docker-compose.yml:docker-compose.fxa.yml:docker-compose.fxa-mariadb.yml => compose/sync.yml:compose/sync-mariadb.yml:compose/fxa.yml:compose/fxa-mariadb.yml'
-  'docker-compose.yml:docker-compose.sync-mysql.yml:docker-compose.fxa.yml => compose/sync.yml:compose/sync-mysql.yml:compose/fxa.yml:compose/fxa-mysql.yml'
-  'docker-compose.sync-postgres.yml:docker-compose.fxa.yml:docker-compose.fxa-mariadb.yml => compose/sync.yml:compose/sync-postgres.yml:compose/fxa.yml:compose/fxa-mariadb.yml'
   'docker-compose.yml:docker-compose.podman.yml => compose/sync.yml:compose/sync-mariadb.yml:compose/podman.yml'
-  'docker-compose.yml:docker-compose.podman.yml:docker-compose.sync-mysql.yml => compose/sync.yml:compose/sync-mysql.yml:compose/podman.yml'
   './docker-compose.yml:my-override.yml => ./compose/sync.yml:./compose/sync-mariadb.yml:my-override.yml'
-  '/opt/ffs/docker-compose.sync-postgres.yml:/opt/ffs/docker-compose.fxa.yml => /opt/ffs/compose/sync.yml:/opt/ffs/compose/sync-postgres.yml:/opt/ffs/compose/fxa.yml:/opt/ffs/compose/fxa-mysql.yml'
+  '/opt/ffs/docker-compose.postgres.yml:/opt/ffs/docker-compose.podman.yml => /opt/ffs/compose/sync.yml:/opt/ffs/compose/sync-postgres.yml:/opt/ffs/compose/podman.yml'
+  'docker-compose.postgres.yml:mine.yml => compose/sync.yml:compose/sync-postgres.yml:mine.yml'
+  # (the names of before compose/ that the earlier release never had: not files of before)
+  'docker-compose.sync-mysql.yml => '
   'compose/sync.yml:compose/sync-mysql.yml => '
   'compose/sync.yml:compose/sync-postgres.yml:compose/fxa.yml:compose/fxa-mysql.yml:mine.yml => '
 )

@@ -37,7 +37,7 @@ services:
       SYNC_STORAGE_DB_USER: ${SYNC_STORAGE_DB_USER:-${MARIADB_SYNCSTORAGE_USER:-}}
       SYNC_STORAGE_DB_PASSWORD: ${SYNC_STORAGE_DB_PASSWORD:-${MARIADB_SYNCSTORAGE_PASSWORD:-}}
       # false with your own MySQL server: its certificate is self-signed
-      SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+      SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
 
   syncstorage_db:
     # SYNC_MARIADB_IMAGE: mariadb:lts by default, MariaDB's newest long-term major, which
@@ -48,7 +48,7 @@ services:
     image: ${SYNC_MARIADB_IMAGE:-mariadb:lts}
     # 0: your own server (docs/databases.md#your-own-server); compose then skips the dependency on it
     deploy:
-      replicas: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
+      replicas: ${SYNC_DB_CONTAINERS:-1}
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: ${SYNC_STORAGE_DB_NAME:-${MARIADB_SYNCSTORAGE_DATABASE:-}}
@@ -80,7 +80,7 @@ services:
     image: ${SYNC_MARIADB_IMAGE:-mariadb:lts}
     # 0: your own server (docs/databases.md#your-own-server); compose then skips the dependency on it
     deploy:
-      replicas: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
+      replicas: ${SYNC_DB_CONTAINERS:-1}
     environment:
       MARIADB_RANDOM_ROOT_PASSWORD: "true"
       MARIADB_DATABASE: ${SYNC_TOKENSERVER_DB_NAME:-${MARIADB_TOKENSERVER_DATABASE:-}}
@@ -121,7 +121,7 @@ services:
       MARIADB_USER: ${SYNC_TOKENSERVER_DB_USER:-${MARIADB_TOKENSERVER_USER:-}}
       MARIADB_PASSWORD: ${SYNC_TOKENSERVER_DB_PASSWORD:-${MARIADB_TOKENSERVER_PASSWORD:-}}
       # false with your own MySQL server: its certificate is self-signed
-      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
 
   ffs-admin:
     environment:
@@ -146,7 +146,7 @@ services:
     # the client of the Sync databases: their image
     image: ${SYNC_MARIADB_IMAGE:-mariadb:lts}
     environment:
-      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
       TOKENSERVER_DB_TYPE: mysql
       TOKENSERVER_DB_HOST: ${SYNC_TOKENSERVER_DB_HOST:-${MARIADB_TOKENSERVER_SERVER:-}}
       TOKENSERVER_DB_PORT: ${SYNC_TOKENSERVER_DB_PORT:-${MARIADB_TOKENSERVER_SERVER_PORT:-}}

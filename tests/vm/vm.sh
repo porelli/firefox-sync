@@ -87,8 +87,8 @@
 #                   of Homebrew's qemu, or of the Linux packages: AAVMF, OVMF, edk2)
 #
 # Trees of REPO's history in the VM, extracted on demand with `git archive` (no checkout to
-# keep by hand) into ~/.ffs/rev/<commit>: UPGRADE_FROM=<a commit or tag of REPO> (podman.sh's
-# earlier release, e.g. UPGRADE_FROM=cb8e519 vm.sh test podman) is given to the tests as that
+# keep by hand) into ~/.ffs/rev/<commit>: UPGRADE_FROM=<a commit or tag of REPO> (db_setup.sh's
+# earlier release, whose database-setup.sql it runs by hand) is given to the tests as that
 # path (an absolute path is passed as it is); an ssh command running helm.sh or helm-fxa.sh
 # gets PARITY_BASE_CHART, the chart of PARITY_BASE of REPO's tests/helm-fxa.sh (the slots'
 # checkouts have no .git), unless it is set, and REPOSITORY (as for `vm.sh test`; helm.sh's
@@ -1111,9 +1111,9 @@ affected_jobs() { # files...
       config/quadlet/sync-postgres/*) add "SYNC_DB=postgres podman" ;;
       config/quadlet/*|docker-compose.podman.yml|compose/podman.yml) add podman ;;
       tests/healthy.sh) add "${SUITES_ALL[@]}" ;;
-      docker-compose.fxa*.yml|compose/fxa*.yml|config/fxa/*) add e2e-fxa "FXA_DB=mariadb e2e-fxa" podman ;;
-      docker-compose.sync-postgres.yml|docker-compose.postgres.yml|compose/sync-postgres.yml) add e2e-postgres "EXTERNAL_DB=1 e2e-postgres" podman "SYNC_DB=postgres podman" ;;
-      docker-compose.sync-mysql.yml|compose/sync-mysql.yml) add "SYNC_DB=mysql e2e-mysql" podman ;;
+      compose/fxa*.yml|config/fxa/*) add e2e-fxa "FXA_DB=mariadb e2e-fxa" podman ;;
+      compose/sync-postgres.yml) add e2e-postgres "EXTERNAL_DB=1 e2e-postgres" podman "SYNC_DB=postgres podman" ;;
+      compose/sync-mysql.yml) add "SYNC_DB=mysql e2e-mysql" podman ;;
       compose/sync-mariadb.yml) add e2e-mysql "EXTERNAL_DB=1 e2e-mysql" e2e-fxa podman ;;
       tests/e2e.sh|tests/docker-compose.test.yml|tests/compose/sync.yml|tests/test_admin_*.py|tests/test_client_flow.py|tests/test_upstream_patches.py|tests/notify_sink.py|tests/hung_syncserver.sh|tests/fake_dump_1412.sh|tests/dex.yml)
         add e2e-mysql e2e-postgres ;;

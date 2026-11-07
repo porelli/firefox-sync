@@ -17,7 +17,7 @@ x-sync-mysql: &sync-mysql
   image: ${SYNC_MYSQL_IMAGE:-mysql:lts}
   # 0: your own server (docs/databases.md#your-own-server); compose then skips the dependency on it
   deploy:
-    replicas: ${SYNC_DB_CONTAINERS:-${DB_CONTAINERS:-1}}
+    replicas: ${SYNC_DB_CONTAINERS:-1}
   # no binary logging, like the MariaDB containers: no replica reads it, and it would keep
   # 30 days of every change (binlog_expire_logs_seconds). With it on, the init container's
   # max users procedure and trigger would also need log_bin_trust_function_creators (ERROR 1419)
@@ -63,7 +63,7 @@ services:
       SYNC_STORAGE_DB_USER: ${SYNC_STORAGE_DB_USER:-${MARIADB_SYNCSTORAGE_USER:-}}
       SYNC_STORAGE_DB_PASSWORD: ${SYNC_STORAGE_DB_PASSWORD:-${MARIADB_SYNCSTORAGE_PASSWORD:-}}
       # false with your own MySQL server: its certificate is self-signed
-      SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+      SYNC_DB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
 
   syncstorage_db:
     <<: *sync-mysql
@@ -141,7 +141,7 @@ services:
   backup:
     image: ${SYNC_MYSQL_IMAGE:-mysql:lts}
     environment:
-      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-${MARIADB_TLS_VERIFY:-true}}
+      MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
       TOKENSERVER_DB_TYPE: mysql
       TOKENSERVER_DB_HOST: ${SYNC_TOKENSERVER_DB_HOST:-${MARIADB_TOKENSERVER_SERVER:-}}
       TOKENSERVER_DB_PORT: ${SYNC_TOKENSERVER_DB_PORT:-${MARIADB_TOKENSERVER_SERVER_PORT:-}}

@@ -41,10 +41,6 @@
 #                   db/<engine>/setup/sync-bootstrap (docs/databases.md#the-bootstrap-account, nothing more),
 #                   SYNC_DB_BOOTSTRAP_USER in .env: db-bootstrap creates the stack's databases and users
 #                   at every start, and creates the dropped reader again at the next one
-#   UPGRADE_FROM    a checkout of an earlier release (e.g. git worktree add /tmp/ffs-from <tag>):
-#                   the install from before below runs its compose files, its admin UI and its
-#                   init image (built from it), then upgrades to this tree. Default: this tree
-#                   without ADMIN_DB_PASSWORD (and SYNC_POSTGRES_APP_USER), the same layout
 #   PG_MAJOR_MOVE   set to 1 (postgres, not with EXTERNAL_DB) for the move to a newer PostgreSQL major:
 #                   the install runs on the major before that of postgres:latest (SYNC_POSTGRES_IMAGE,
 #                   read at run time), then at the end the steps of docs/upgrading.md#postgresql: a
@@ -202,7 +198,7 @@ fi
 ADMIN_GIVEN=${ADMIN_IMAGE:-}
 export ADMIN_IMAGE=${ADMIN_IMAGE:-ffs-admin:test}
 
-# the compose files of ROOT: this tree, or UPGRADE_FROM for the install from before
+# the compose files of this tree
 ROOT=${CODE}
 # the healthchecks of this tree's stack every second while their containers start (start_interval,
 # within start_period), then as set: what waits for "healthy" (docker compose up for the
@@ -211,28 +207,12 @@ ROOT=${CODE}
   for s in syncstorage ffs-admin backup $([ "${BACKEND}" = postgres ] && echo postgres_db || echo tokenserver_db syncstorage_db); do
     printf '  %s:\n    healthcheck:\n      start_period: 5m\n      start_interval: 1s\n' "${s}"
   done; } > "${WORK}/health-test.yml"
-# compose_files <root>: the -f of the stack's compose files of ROOT, with the test's (COMPOSE_EXTRA:
-# this tree's names). A release from before compose/ (docs/upgrading.md#files-that-moved): its
-# names, docker-compose.yml (+ docker-compose.sync-mysql.yml), docker-compose.sync-postgres.yml
-# (docker-compose.postgres.yml before it) and tests/docker-compose.*-test.yml
+# compose_files <root>: the -f of the stack's compose files of ROOT, with the test's (COMPOSE_EXTRA)
 compose_files() {
-  local root=$1 extra f
-  if [ -e "${root}/compose/sync.yml" ]; then
-    printf -- '-f\n%s\n' "${root}/compose/sync.yml" "${root}/compose/sync-${SYNC_FILE}.yml" "${root}/tests/compose/sync.yml"
-  else
-    case "${SYNC_FILE}" in
-      mariadb) printf -- '-f\n%s\n' "${root}/docker-compose.yml" ;;
-      mysql) printf -- '-f\n%s\n' "${root}/docker-compose.yml" "${root}/docker-compose.sync-mysql.yml" ;;
-      postgres) f=${root}/docker-compose.sync-postgres.yml; [ -e "${f}" ] || f=${root}/docker-compose.postgres.yml; printf -- '-f\n%s\n' "${f}" ;;
-    esac
-    printf -- '-f\n%s\n' "${root}/tests/docker-compose.test.yml"
-  fi
+  local root=$1 extra
+  printf -- '-f\n%s\n' "${root}/compose/sync.yml" "${root}/compose/sync-${SYNC_FILE}.yml" "${root}/tests/compose/sync.yml"
   for extra in "${COMPOSE_EXTRA[@]}"; do
-    f=${extra/#"${CODE}"/${root}}
-    if [ ! -e "${root}/compose/sync.yml" ]; then
-      case "${f}" in */tests/compose/*.yml) f=${f%/compose/*}/docker-compose.${f##*/compose/}; f=${f%.yml}; f=${f/%.external-db/.external-db-test}.yml ;; esac
-    fi
-    printf -- '-f\n%s\n' "${f}"
+    printf -- '-f\n%s\n' "${extra}"
   done
 }
 # dc_args: the arguments of docker compose for the stack (DC_ARGS), dc: docker compose with them
@@ -556,7 +536,7 @@ elif [ -z "${EXTDB}" ]; then
 fi
 dc down -v > /dev/null 2>&1
 
-echo "== starting, as an install from before ADMIN_DB_PASSWORD${UPGRADE_FROM:+ (${UPGRADE_FROM})}, with the old setting names"
+echo "== starting, as an install from before ADMIN_DB_PASSWORD, with the old setting names"
 # the renamed settings set in .env: those of .env-example, and PG_MAJOR_MOVE's pin
 RENAMED_SET=$(grep -cE "${NEW_RE}" "${ENV_FILE}")
 use_old_names
@@ -565,20 +545,6 @@ use_old_names
 set_env ADMIN_DB_PASSWORD ""
 set_env SYNC_POSTGRES_APP_USER ""
 set_env SYNC_POSTGRES_APP_PASSWORD ""
-if [ -n "${UPGRADE_FROM:-}" ]; then
-  # that release itself: its compose files, its admin UI and its init container
-  ROOT=$(cd -- "${UPGRADE_FROM}" && pwd) || exit 1
-  FROM_DIR=${ROOT}
-  ADMIN_NOW=${ADMIN_IMAGE} INIT_NOW=${SYNC_INIT_IMAGE_TAG}
-  export ADMIN_IMAGE=ffs-admin:e2e-from${SLOT_SUFFIX}
-  ADMIN_IMAGE=${ADMIN_IMAGE} COMPOSE_BAKE=false one_at_a_time admin-build docker compose -p ffs-admin-build-from -f "$(ls "${ROOT}/tests/compose/admin-build.yml" "${ROOT}/tests/docker-compose.admin-build.yml" 2> /dev/null | head -n 1)" build -q ||
-    { echo "FAIL: admin UI image built from ${UPGRADE_FROM}/admin"; exit 1; }
-  # (releases before db/: syncstorage-rs-init, syncstorage-rs-init-postgres)
-  init_dir=${ROOT}/db/${BACKEND}/init
-  [ -d "${init_dir}" ] || init_dir=${ROOT}/syncstorage-rs-init$([ "${BACKEND}" = postgres ] && echo -postgres)
-  docker build -q -t "${REPOSITORY}:syncstorage-rs-${BACKEND}-init-e2e-from${SLOT_SUFFIX}" "${init_dir}" > /dev/null || { echo "FAIL: init image of ${UPGRADE_FROM}"; exit 1; }
-  set_env SYNC_INIT_IMAGE_TAG "e2e-from${SLOT_SUFFIX}"
-fi
 dc up -d > /dev/null 2>&1 || { dc logs; exit 1; }
 check "$(wait_init)" 0 "init container exit code"
 check "$(state syncstorage_migrate ExitCode)" 0 "migrate container exit code"
@@ -589,12 +555,10 @@ check "$(hb)" 200 "/__heartbeat__"
 dc logs syncstorage 2>&1 | grep -m1 "Server running"
 check "$(grep -cE "${NEW_RE}" "${ENV_FILE}") $(grep -cE "${OLD_RE}" "${ENV_FILE}")" "0 ${RENAMED_SET}" \
   "the install of before runs with only the old setting names in .env"
-if [ -z "${UPGRADE_FROM:-}" ]; then
-  check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'WARNING: settings under their old names, in .env or in the environment docker compose runs in') $(dc logs tokenserver_db_init 2>&1 | grep -c 'in a later release: .*MARIADB_TOKENSERVER_PASSWORD.* MAX_USERS ')" "1 1" \
-    "the init container warns of the old setting names, and names them"
-  check "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$(dc ps -q ffs-admin)" | grep -c '^FFS_OLD_ENV_NAMES=.*SYNCSTORAGE_DOMAIN ')" 1 \
-    "the admin UI gets the old setting names, for its setup check"
-fi
+check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'WARNING: settings under their old names, in .env or in the environment docker compose runs in') $(dc logs tokenserver_db_init 2>&1 | grep -c 'in a later release: .*MARIADB_TOKENSERVER_PASSWORD.* MAX_USERS ')" "1 1" \
+  "the init container warns of the old setting names, and names them"
+check "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$(dc ps -q ffs-admin)" | grep -c '^FFS_OLD_ENV_NAMES=.*SYNCSTORAGE_DOMAIN ')" 1 \
+  "the admin UI gets the old setting names, for its setup check"
 
 echo "== the event log of before, then the upgrade: ADMIN_DB_PASSWORD set"
 check "$(admin_healthy)" healthy "admin UI up, without ADMIN_DB_PASSWORD"
@@ -603,19 +567,12 @@ check "$(admin_healthy)" healthy "admin UI up, without ADMIN_DB_PASSWORD"
 curl -s -o /dev/null --data-urlencode "password=$(grep '^ADMIN_PASSWORD=' "${ENV_FILE}" | cut -d= -f2)" "http://127.0.0.1:$((PORT + 20))/login"
 for _ in $(seq 1 30); do [ "$(sql "SELECT COUNT(*) FROM ffs_events;" 2> /dev/null)" -gt 0 ] 2> /dev/null && break; sleep 1; done
 check "$([ "$(sql "SELECT COUNT(*) FROM ffs_events;")" -gt 0 ] && echo yes)" yes "the admin UI records its events in the tokenserver database"
-[ -n "${UPGRADE_FROM:-}" ] ||
-  check "$(dc logs ffs-admin 2>&1 | grep -c 'ADMIN_DB_PASSWORD is not set')" 1 "the admin UI says the event log is within the Sync server's reach"
+check "$(dc logs ffs-admin 2>&1 | grep -c 'ADMIN_DB_PASSWORD is not set')" 1 "the admin UI says the event log is within the Sync server's reach"
 # what an admin did before the upgrade, a note, a backup run: the audit trail must survive it
 sql "INSERT INTO ffs_events (at, kind, detail) VALUES ($(date +%s)000, 'admin', 'ffs-e2e: before the upgrade by admin (password)');" > /dev/null
 sql "INSERT INTO ffs_account_notes (uid, note, updated_at, updated_by) VALUES ('ffs-e2e-upgrade', 'kept across the upgrade', 1, 'admin (password)');" > /dev/null
 sql "INSERT INTO ffs_backups (scope, started, finished, ok, bytes, location) VALUES ('sync', $(date +%s)000, $(date +%s)000, 1, 1, 'ffs-e2e: before the upgrade');" > /dev/null
 OLD_EVENTS=$(sql "SELECT COUNT(*) FROM ffs_events;")
-if [ -n "${UPGRADE_FROM:-}" ]; then
-  # this tree from here on; with PostgreSQL through the upgraded stack
-  ROOT=${CODE}
-  export ADMIN_IMAGE=${ADMIN_NOW}
-  set_env SYNC_INIT_IMAGE_TAG "${INIT_NOW}"
-fi
 echo "== the lines of .env-example added before --upgrade: both names, the migrations refuse to start"
 # (docs/upgrading.md#when-both-names-are-set: --upgrade first) the new names with their placeholders and defaults would
 # win over the values of the old ones: a new server on empty databases, or none at all
@@ -639,11 +596,13 @@ echo "== ./prepare_environment.sh --upgrade renames the old setting names"
 UP=${WORK}/upgrade
 # SYNC_DB=mysql on mysql:8: as an install from before SYNC_MYSQL_IMAGE, which --upgrade pins
 [ "${SYNC_DB}" = mysql ] && [ -n "${MYSQL_PINNED}" ] && sed -i '/^SYNC_MYSQL_IMAGE=/d' "${ENV_FILE}"
-# COMPOSE_FILE as an install from before compose/ has it (docs/upgrading.md#files-that-moved):
-# none for MariaDB (docker-compose.yml); the test's -f go first
+# COMPOSE_FILE as an install of the earlier release, from before compose/, has it
+# (docs/upgrading.md#files-that-moved): none for MariaDB (docker-compose.yml),
+# docker-compose.postgres.yml; MySQL came with compose/ (its names, the project's name with
+# them); the test's -f go first
 case "${SYNC_FILE}" in
-  mysql) echo "COMPOSE_FILE=docker-compose.yml:docker-compose.sync-mysql.yml" >> "${ENV_FILE}" ;;
-  postgres) echo "COMPOSE_FILE=docker-compose.sync-postgres.yml" >> "${ENV_FILE}" ;;
+  mysql) printf 'COMPOSE_FILE=compose/sync.yml:compose/sync-mysql.yml\nCOMPOSE_PROJECT_NAME=%s\n' "${PROJECT}" >> "${ENV_FILE}" ;;
+  postgres) echo "COMPOSE_FILE=docker-compose.postgres.yml" >> "${ENV_FILE}" ;;
 esac
 mkdir -p "${UP}" && cp -r "${CODE}/prepare_environment.sh" "${CODE}/setup" "${CODE}/.env-example" "${CODE}/db" "${UP}/" && cp "${ENV_FILE}" "${UP}/.env"
 # (the compose project of this test, as a user running docker compose -p would set it)
@@ -660,7 +619,7 @@ if [ -n "${EXTDB}" ]; then
   fi
 fi
 check "$(grep -cx "COMPOSE_FILE=compose/sync.yml:compose/sync-${SYNC_FILE}.yml" "${UP}/.env") $(grep -cx "COMPOSE_PROJECT_NAME=${PROJECT}" "${UP}/.env") $(grep -c '^COMPOSE_FILE: the compose files moved to compose/' "${WORK}/upgrade.log")" \
-  "1 1 1" "--upgrade: COMPOSE_FILE with the files of compose/ (sync-${SYNC_FILE}.yml), the project's name next to it, and says so"
+  "1 1 $([ "${SYNC_FILE}" = mysql ] && echo 0 || echo 1)" "--upgrade: COMPOSE_FILE with the files of compose/ (sync-${SYNC_FILE}.yml), the project's name next to it, and says so when they moved"
 # the Sync MariaDB containers of an install from before SYNC_MARIADB_IMAGE (mariadb:lts): pinned
 # to the major their data holds, which they keep running
 if [ "${BACKEND}" = mysql ] && [ "${SYNC_DB}" = mariadb ] && [ -z "${EXTDB}" ]; then
@@ -680,10 +639,10 @@ done
 check "$(grep -cE "${OLD_RE}" "${UP}/.env") ${moved} $(grep -c '^  [A-Z_]* -> [A-Z_]*$' "${WORK}/upgrade.log") $(cmp -s "${ENV_FILE}" "$(ls -1 "${UP}"/.env.before-upgrade-* | tail -n 1)" && echo kept)" \
   "0 all $(grep -cE "${OLD_RE}" "${ENV_FILE}") kept" "--upgrade: no old name left, every value under its new name, each rename said, the old .env kept"
 cp "${UP}/.env" "${ENV_FILE}"
-# the old names gone from this shell too (REPOSITORY and POSTGRES_IMAGE are the test's own,
-# kept but not exported, tests/slot.sh)
+# the old names gone from this shell too (REPOSITORY is the test's own, kept but not
+# exported, tests/slot.sh)
 for pair in "${RENAMED_SETTINGS[@]}"; do
-  case "${pair#*=}" in REPOSITORY|POSTGRES_IMAGE) export -n "${pair#*=}" ;; *) unset "${pair#*=}" ;; esac
+  case "${pair#*=}" in REPOSITORY) export -n "${pair#*=}" ;; *) unset "${pair#*=}" ;; esac
 done
 OLD_NAMES=
 load_env "${ENV_FILE}"
@@ -708,7 +667,6 @@ dc restart ffs-admin > /dev/null 2>&1
 check "$(admin_healthy)" healthy "admin UI restarted"
 check "$(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE detail = 'ffs-e2e: before the upgrade by admin (password)' OR detail LIKE 'Moved the admin UI%';")" 2 "moved once"
 check "$(hb)" 200 "/__heartbeat__ after the upgrade"
-# (this tree's compose files from here on, also with UPGRADE_FROM)
 check "$(docker inspect -f '{{.HostConfig.CapDrop}}' "$(dc ps -q syncstorage)") $(docker inspect -f '{{.HostConfig.CapDrop}}' "$(dc ps -a -q syncstorage_migrate)")" \
   "[CAP_NET_RAW] [CAP_NET_RAW]" "the Sync server and its migrations without raw sockets (cap_drop)"
 if [ "${BACKEND}" = postgres ] && [ -z "${EXTERNAL_DB:-}" ]; then
@@ -1852,29 +1810,6 @@ echo "== every container that keeps running healthy, the one-shot ones exited 0"
 # (your own server: no restore above, the admin UI is still removed)
 [ -z "${EXTDB}" ] || dc up -d > /dev/null 2>&1
 check "$(compose_healthy 300 dc)" "all healthy" "every long-running container healthy (docker compose ps), the one-shot ones exited 0"
-
-if [ -n "${UPGRADE_FROM:-}" ] && [ "${SYNC_FILE}" = mariadb ] && [ -z "${EXTDB}" ]; then
-  echo "== an install of ${UPGRADE_FROM} without COMPOSE_FILE (docker-compose.yml), the files of this tree over it: nothing recreated"
-  dc stop > /dev/null 2>&1
-  # its project: the directory's name, as with a clone (no COMPOSE_PROJECT_NAME)
-  SH=${WORK}/${PROJECT}-shim && mkdir -p "${SH}" && cp -r "${FROM_DIR}/." "${SH}/"
-  grep -vE '^(COMPOSE_FILE|COMPOSE_PROJECT_NAME)=' "${ENV_FILE}" > "${SH}/.env"
-  # your own override, which compose reads only without COMPOSE_FILE: still read through the shim
-  printf 'services:\n  syncstorage:\n    environment:\n      FFS_OVERRIDE: "1"\n' > "${SH}/docker-compose.override.yml"
-  shim_dc() { (cd "${SH}" && env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME docker compose "$@"); }
-  shim_ids() { docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$(basename "${SH}")" | LC_ALL=C sort | paste -sd' '; }
-  shim_dc up -d > "${WORK}/shim-before.log" 2>&1
-  check "$? $(shim_dc ps -q syncstorage | wc -l | tr -d ' ')" "0 1" "the install of before up, docker-compose.yml without COMPOSE_FILE" || tail -20 "${WORK}/shim-before.log"
-  ids_before=$(shim_ids)
-  # git pull: the old compose files gone, those of this tree there
-  # (git pull removes the overlays of before, not your docker-compose.override.yml)
-  rm -f "${SH}"/docker-compose.{sync-mysql,sync-postgres,postgres,podman,fxa,fxa-mariadb}.yml && rm -rf "${SH}/compose" "${SH}/db" "${SH}/config"
-  cp -r "${CODE}/docker-compose.yml" "${CODE}/compose" "${CODE}/db" "${CODE}/config" "${SH}/"
-  shim_dc up -d > "${WORK}/shim-after.log" 2>&1
-  check "$? $(grep -ciE 'recreat' "${WORK}/shim-after.log") $([ "$(shim_ids)" = "${ids_before}" ] && echo same) $(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$(shim_dc ps -q syncstorage)" | grep -c '^FFS_OVERRIDE=1$')" \
-    "0 0 same 1" "docker compose up -d with the files of this tree: no container recreated (the same ids), the override still applies" || cat "${WORK}/shim-after.log"
-  shim_dc down -v > /dev/null 2>&1
-fi
 
 RESULT=${BACKEND}$([ "${SYNC_DB}" = mysql ] && echo " (MySQL, ${MYSQL_TESTED})")$([ -n "${PG_FROM}" ] && echo " (PostgreSQL ${PG_FROM} to ${PG_TO})")
 [ ${FAILED} = 0 ] && echo "RESULT ${RESULT}: all checks passed" || echo "RESULT ${RESULT}: some checks FAILED"
