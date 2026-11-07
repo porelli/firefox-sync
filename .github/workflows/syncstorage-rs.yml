@@ -53,6 +53,8 @@ on:
       - 'tests/test_release.py'
       # the local VM's script (docs/development/testing.md#local-vm): CI does not run it
       - 'tests/vm/**'
+    # a push that runs the workflow runs only the test jobs its changes need: job changes,
+    # .github/scripts/affected.sh (docs/development/testing.md#which-tests-a-push-runs)
 
 # one run at a time per branch: a branch never cancels or waits for main's runs. A newer push to
 # a branch cancels its older run; main's runs (and tags') always finish
@@ -124,6 +126,65 @@ jobs:
         id: build_date
         run: echo "build_date=$(date +'%Y%m%dT%H%M%S')" >> ${GITHUB_OUTPUT}
 
+  ## The test jobs this push needs ##
+  # what changed since the commit before the push (when this workflow's run of it passed), or
+  # else since the merge base with main, mapped to the test jobs by .github/scripts/affected.sh:
+  # compose (test), podman (test-podman), fxa (test-fxa). Every job on main, on the schedule, by
+  # hand, and when unsure; and the test jobs also run when an image is built (its inputs changed)
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # the runs of the commit before the push
+      actions: read
+    outputs:
+      compose: ${{ steps.affected.outputs.compose }}
+      podman: ${{ steps.affected.outputs.podman }}
+      fxa: ${{ steps.affected.outputs.fxa }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # the commit before the push and main's
+          fetch-depth: 0
+
+      - name: Unit tests of the mapping
+        run: bash tests/test_affected.sh
+
+      - name: The test jobs of the changed files
+        id: affected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          MAIN: ${{ env.REPOSITORY_MAIN_BRANCH }}
+        run: |
+          every() { echo "Every test job: $1"; printf 'compose=true\npodman=true\nfxa=true\n' >> "${GITHUB_OUTPUT}"; exit 0; }
+          [ "${EVENT}" = push ] || every "a ${EVENT} run"
+          [ "${GITHUB_REF}" != "refs/heads/${MAIN}" ] || every "the default branch"
+          base=""
+          # (none, or all zeros: a new branch)
+          if [ -n "${BEFORE//0/}" ]; then
+            # its run cancelled by this push, failed or never started (paths-ignore): it tested
+            # nothing, so compare with main's instead
+            passed=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/syncstorage-rs.yml/runs?head_sha=${BEFORE}&status=success&per_page=1" --jq .total_count 2> /dev/null) || passed=0
+            if [ "${passed:-0}" -gt 0 ] && { git cat-file -e "${BEFORE}^{commit}" 2> /dev/null || git fetch -q --no-tags origin "${BEFORE}"; }; then
+              base=${BEFORE}
+              echo "Changes since ${BEFORE}, the commit before the push (its run passed)"
+            else
+              echo "The commit before the push, ${BEFORE}, has no passed run of this workflow (or could not be fetched)"
+            fi
+          fi
+          if [ -z "${base}" ]; then
+            base=$(git merge-base HEAD "origin/${MAIN}" 2> /dev/null) || every "no merge base with ${MAIN}"
+            echo "Changes since ${base}, the merge base with ${MAIN}"
+          fi
+          # a move's both paths (--no-renames): the old one's tests too
+          files=$(git diff --no-renames --name-only "${base}" HEAD) || every "git diff ${base} failed"
+          out=$(printf '%s\n' "${files}" | .github/scripts/affected.sh) || every "affected.sh failed"
+          printf '%s\n' "${out}" | tee -a "${GITHUB_OUTPUT}"
+
   # Remove old build cache ##
   cleanup-registry:
     runs-on: ubuntu-latest
@@ -150,6 +211,18 @@ jobs:
     permissions:
       contents: read
       packages: write
+
+    # true for each image built rather than reused: its inputs changed, every test job runs
+    # (one name per image, as the outputs of a matrix are the last leg's that sets them)
+    outputs:
+      built_mysql_app_amd64: ${{ steps.built.outputs.mysql_app_amd64 }}
+      built_mysql_app_arm64: ${{ steps.built.outputs.mysql_app_arm64 }}
+      built_mysql_init_amd64: ${{ steps.built.outputs.mysql_init_amd64 }}
+      built_mysql_init_arm64: ${{ steps.built.outputs.mysql_init_arm64 }}
+      built_postgres_app_amd64: ${{ steps.built.outputs.postgres_app_amd64 }}
+      built_postgres_app_arm64: ${{ steps.built.outputs.postgres_app_arm64 }}
+      built_postgres_init_amd64: ${{ steps.built.outputs.postgres_init_amd64 }}
+      built_postgres_init_arm64: ${{ steps.built.outputs.postgres_init_arm64 }}
 
     strategy:
       matrix:
@@ -417,6 +490,11 @@ jobs:
           # main's on main; a branch's own for an app image (none for an init image)
           cache-to: ${{ steps.reuse.outputs.cache_to }}
 
+      - name: The image was built
+        id: built
+        if: steps.build.outcome == 'success'
+        run: echo "${{ matrix.database_backend }}_${{ matrix.image_type }}_${{ matrix.docker_architecture }}=true" >> "${GITHUB_OUTPUT}"
+
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
@@ -436,6 +514,9 @@ jobs:
     needs:
       - prepare-env
       - build-and-push-containers
+      - changes
+    # the push changed what tests/e2e.sh uses (job changes), or an image was built; skipped otherwise
+    if: needs.changes.outputs.compose == 'true' || contains(toJSON(needs.build-and-push-containers.outputs), 'true')
 
     permissions:
       contents: read
@@ -504,6 +585,9 @@ jobs:
     needs:
       - prepare-env
       - build-and-push-containers
+      - changes
+    # the push changed what tests/podman.sh uses (job changes), or an image was built; skipped otherwise
+    if: needs.changes.outputs.podman == 'true' || contains(toJSON(needs.build-and-push-containers.outputs), 'true')
 
     permissions:
       contents: read
@@ -594,6 +678,9 @@ jobs:
     needs:
       - prepare-env
       - build-and-push-containers
+      - changes
+    # the push changed what tests/e2e-fxa.sh uses (job changes), or an image was built; skipped otherwise
+    if: needs.changes.outputs.fxa == 'true' || contains(toJSON(needs.build-and-push-containers.outputs), 'true')
 
     permissions:
       contents: read
@@ -671,7 +758,8 @@ jobs:
       - test
       - test-podman
     # the multi-arch tags from the default branch only: other branches build and test (an
-    # unmerged pin in upstream-patches.yml never reaches them)
+    # unmerged pin in upstream-patches.yml never reaches them). On main every test job runs
+    # (job changes), and each of these must pass: a skipped one skips the publishing too
     if: github.ref == 'refs/heads/main'
 
     permissions:
