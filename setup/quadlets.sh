@@ -21,8 +21,8 @@ units_of_here() {
     dir=$(units_dir)
     [ -n "${dir}" ] && [ "$(canonical_dir "${dir}")" = "$(canonical_dir "${SCRIPT_DIR}")" ]
 }
-# units of this project that name no checkout: those of an earlier release, before the
-# units mounted files of it (the releases before the backups, firefox-sync's main branch).
+# units of this project that name no checkout: those of the earlier release (porelli/firefox-sync
+# at ca9101d), from before the units mounted files of the checkout.
 # Ours: the Sync server's unit runs the container firefox-sync-syncstorage of a syncstorage-rs image
 units_without_dir() {
     local unit=${QUADLET_DIR}/firefox-sync-syncstorage.container
@@ -337,8 +337,11 @@ render_units() {
         return 0
     fi
     # the units of before and their environment files (the secrets: this user only), all of them
-    # (nothing is written when that copy fails)
-    if ls "${QUADLET_DIR}"/firefox-sync-* "${SYSTEMD_USER_DIR}"/firefox-sync-*.timer > /dev/null 2>&1; then
+    # (nothing is written when that copy fails). Any of them is enough: the units of the earlier
+    # release have no timer (ls of the two would fail on the missing one)
+    local before
+    before=$(ls -d "${QUADLET_DIR}"/firefox-sync-* "${SYSTEMD_USER_DIR}"/firefox-sync-*.timer 2> /dev/null)
+    if [ -n "${before}" ]; then
         backup=$(backup_name "${SCRIPT_DIR}/quadlets.before")
         if ! (umask 077; mkdir "${backup}" && for file in "${QUADLET_DIR}"/firefox-sync-* "${SYSTEMD_USER_DIR}"/firefox-sync-*.timer; do
                 [ -e "${file}" ] || continue; cp "${file}" "${backup}/" || exit 1; done); then
