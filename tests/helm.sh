@@ -1410,7 +1410,7 @@ admin_toggle() {
     fi
     if [[ $(date +%s) -ge ${deadline} ]]; then
       kill "${pf}"
-      # (the published images before APP_BUILD_REVISION 2 say TBD: REPOSITORY=ghcr.io/porelli/firefox-sync-dev)
+      # (images published before APP_BUILD_REVISION 2 say TBD there)
       fail "overview without the Sync server's version or alice: $(grep -oE '<td>Sync server</td>.{0,200}' <<< "${page}")"
     fi
     sleep 5

@@ -3,9 +3,11 @@
 # docs/hooks/repo_links.py bridges the differences. See docs/development/testing.md#docs-site.
 site_name: firefox-sync
 site_description: Self-host Firefox Sync, and optionally the Mozilla accounts, with Docker, Podman or Kubernetes.
-site_url: https://porelli.github.io/firefox-sync-dev/
-repo_url: https://github.com/porelli/firefox-sync-dev
-repo_name: porelli/firefox-sync-dev
+# The public site and repository; a build elsewhere (a fork, the development repository) sets
+# its own in the environment: docs.yml derives them from the repository it runs in
+site_url: !ENV [FFS_SITE_URL, "https://porelli.github.io/firefox-sync/"]
+repo_url: !ENV [FFS_REPO_URL, "https://github.com/porelli/firefox-sync"]
+repo_name: !ENV [FFS_REPO_NAME, "porelli/firefox-sync"]
 edit_uri: edit/main/docs/
 docs_dir: docs
 

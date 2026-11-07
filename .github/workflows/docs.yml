@@ -78,6 +78,11 @@ jobs:
     env:
       # the Material team's notice about MkDocs 2.0, printed on every build
       NO_MKDOCS_2_WARNING: "1"
+      # the site and repository of mkdocs.yml: those of the repository this runs in (a fork, the
+      # development repository), not the defaults of mkdocs.yml (the public one)
+      FFS_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      FFS_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+      FFS_REPO_NAME: ${{ github.repository }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7

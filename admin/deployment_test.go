@@ -206,8 +206,8 @@ func TestDeploymentChartAddress(t *testing.T) {
 	for _, c := range []struct{ env, version, want string }{
 		{"", "", "helm upgrade t oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync -n ffs --reuse-values --set backup.enabled=true"},
 		{"", "0.1.0", "helm upgrade t oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version 0.1.0 -n ffs --reuse-values --set backup.enabled=true"},
-		{"oci://ghcr.io/porelli/firefox-sync-dev/charts/firefox-sync", "0.1.0-dev.1",
-			"helm upgrade t oci://ghcr.io/porelli/firefox-sync-dev/charts/firefox-sync --version 0.1.0-dev.1 -n ffs --reuse-values --set backup.enabled=true"},
+		{"oci://ghcr.io/example/firefox-sync-fork/charts/firefox-sync", "0.1.0-dev.1",
+			"helm upgrade t oci://ghcr.io/example/firefox-sync-fork/charts/firefox-sync --version 0.1.0-dev.1 -n ffs --reuse-values --set backup.enabled=true"},
 	} {
 		t.Setenv("ADMIN_K8S_CHART", c.env)
 		t.Setenv("ADMIN_K8S_CHART_VERSION", c.version)
