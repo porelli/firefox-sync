@@ -287,5 +287,29 @@ class Weekly(unittest.TestCase):
         self.assertIn("waiting for this week's scheduled run of fxa.yml", release.weekly_target(gh, self.NOW)[1])
 
 
+class WaitForCI(unittest.TestCase):
+    class GH:
+        def __init__(self, runs):
+            self.runs = runs
+
+        def runs_of(self, sha):
+            return self.runs
+
+    def run_(self, event="push", branch="main", conclusion="success", path=".github/workflows/docs.yml"):
+        return {"id": 1, "name": path, "path": path, "event": event, "head_branch": branch,
+                "status": "completed", "conclusion": conclusion, "created_at": "2026-11-09T06:15:00Z"}
+
+    def test_push_or_dispatch_on_main(self):
+        self.assertIsNone(release.wait_for_ci(self.GH([self.run_()]), "a" * 40, 0, 60))
+        # a merge of the dependencies workflow: main's CI started by hand (workflow_dispatch)
+        self.assertIsNone(release.wait_for_ci(self.GH([self.run_(event="workflow_dispatch")]), "a" * 40, 0, 60))
+
+    def test_no_run_on_main_or_failed(self):
+        why = release.wait_for_ci(self.GH([self.run_(branch="dependabot/x")]), "a" * 40, 0, 60)
+        self.assertIn("no CI run of", why)
+        why = release.wait_for_ci(self.GH([self.run_(conclusion="failure")]), "a" * 40, 0, 60)
+        self.assertIn("did not pass", why)
+
+
 if __name__ == "__main__":
     unittest.main()

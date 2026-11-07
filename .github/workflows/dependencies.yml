@@ -1,0 +1,97 @@
+name: dependencies
+# The gate of Dependabot's pull requests (.github/dependabot.yml): a semver minor or patch
+# update is squash-merged once every CI run of its head commit passed; a major one, one whose
+# type is unknown, and one that moves an action pinned by commit stay open for a human.
+# .github/scripts/dependencies.py decides, waits and starts the runs; see
+# docs/development/dependencies.md.
+#
+# - The gate merges itself (gh pr merge after the wait): no branch protection, no required
+#   check, no native auto-merge. A workflow a push of the PR's files starts but that has no
+#   run of its head commit (a rebase: that push changed other files) is started by hand on the
+#   branch, and waited for too.
+# - A merge with GITHUB_TOKEN starts no push workflow on main: after the merge the gate starts
+#   by hand (workflow_dispatch) on main every workflow a push of those files would have
+#   started, and those runs publish as a push to main does.
+# - Dependabot's runs get a read-only GITHUB_TOKEN unless a job's permissions raise it: this
+#   job's do (merge, delete the branch, start runs).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# the newest head of a pull request only: a rebase cancels the wait for the older one
+concurrency:
+  group: dependencies-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  gate:
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    # the CI of an update of the admin UI takes hours (the accounts tests)
+    timeout-minutes: 340
+    permissions:
+      # the squash merge and the deletion of the branch
+      contents: write
+      pull-requests: write
+      # the runs of the head commit, and starting them (workflow_dispatch) there and on main
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+      BRANCH: ${{ github.event.pull_request.head.ref }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # the head commit, and the default branch to compare with
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Unit tests of the gate
+        run: python3 -I tests/test_dependencies.py
+
+      # the update type (the highest of a group); none when a commit is not Dependabot's
+      - name: Dependabot's metadata
+        id: metadata
+        continue-on-error: true
+        uses: dependabot/fetch-metadata@v3
+
+      - name: Merge, or leave for a human
+        id: decide
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          python3 -I .github/scripts/dependencies.py decide --update-type "${UPDATE_TYPE}" \
+            --base "origin/${DEFAULT_BRANCH}" --head "${HEAD}" | tee -a "${GITHUB_OUTPUT}"
+          why=$(sed -n 's/^why=//p' "${GITHUB_OUTPUT}" | tail -n 1)
+          echo "::notice title=dependencies::#${PR}: ${why}"
+          echo "#${PR}: ${why}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Wait for the CI of the head commit
+        if: steps.decide.outputs.merge == 'true'
+        run: |
+          python3 -I .github/scripts/dependencies.py wait --base "origin/${DEFAULT_BRANCH}" \
+            --head "${HEAD}" --branch "${BRANCH}"
+
+      - name: Squash-merge
+        if: steps.decide.outputs.merge == 'true'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body=$(printf 'Merged by the dependencies workflow once CI passed: %s\n\nChangelog: none (dependency update)\nDocs: none (dependency update)\n' "${RUN}")
+          gh pr merge "${PR}" --repo "${GITHUB_REPOSITORY}" --squash --match-head-commit "${HEAD}" \
+            --subject "${TITLE}" --body "${body}"
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" || echo "branch ${BRANCH} already deleted"
+          echo "Merged: $(gh pr view "${PR}" --repo "${GITHUB_REPOSITORY}" --json mergeCommit --jq .mergeCommit.oid)" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Main's CI for the merge
+        if: steps.decide.outputs.merge == 'true'
+        run: |
+          python3 -I .github/scripts/dependencies.py dispatch --base "origin/${DEFAULT_BRANCH}" \
+            --head "${HEAD}" --ref "${DEFAULT_BRANCH}" 2>&1 | tee -a "${GITHUB_STEP_SUMMARY}"

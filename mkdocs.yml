@@ -113,3 +113,4 @@ nav:
       - Testing: development/testing.md
       - Upstream patches: development/upstream-patches.md
       - Releasing: development/releasing.md
+      - Dependency updates: development/dependencies.md

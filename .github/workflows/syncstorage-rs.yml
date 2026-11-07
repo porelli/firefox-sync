@@ -51,6 +51,11 @@ on:
       - '.github/workflows/release.yml'
       - '.github/scripts/release.py'
       - 'tests/test_release.py'
+      # Dependabot's configuration and the gate of its pull requests (dependencies.yml): no image
+      - '.github/dependabot.yml'
+      - '.github/workflows/dependencies.yml'
+      - '.github/scripts/dependencies.py'
+      - 'tests/test_dependencies.py'
       # the local VM's script (docs/development/testing.md#local-vm): CI does not run it
       - 'tests/vm/**'
     # a push that runs the workflow runs only the test jobs its changes need: job changes,

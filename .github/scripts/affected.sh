@@ -27,11 +27,14 @@ while IFS= read -r path || [ -n "${path}" ]; do
     # backups.md and upgrading.md tests/e2e.sh and tests/podman.sh, migrating.md tests/podman.sh
     docs/backups.md | docs/upgrading.md) jobs="compose podman" ;;
     docs/migrating.md) jobs="podman" ;;
-    # the other docs, the docs site and the releases (the paths-ignore of the workflow; a push
-    # with only these runs no workflow at all): no test of this workflow reads them
+    # the other docs, the docs site, the releases, Dependabot's configuration and gate (the
+    # paths-ignore of the workflow; a push with only these runs it not at all): no test of
+    # this workflow reads them
     *README.md | docs/* | mkdocs.yml | CHANGELOG.md | LICENSE | .gitignore \
       | .github/workflows/docs.yml | .github/workflows/release.yml | .github/scripts/release.py \
-      | tests/check_*.py | tests/test_check_*.py | tests/test_release.py | tests/vm/*) jobs="" ;;
+      | tests/check_*.py | tests/test_check_*.py | tests/test_release.py | tests/vm/* \
+      | .github/dependabot.yml | .github/workflows/dependencies.yml | .github/scripts/dependencies.py \
+      | tests/test_dependencies.py) jobs="" ;;
     # other workflows' tests, and the local-only ones: helm.yml (the chart), fxa.yml (the
     # accounts upgrade), docs.yml (the setup's output, its migrations, the proxy's
     # configuration), admin.yml; tests/migrate.sh runs in the local VM only. The unit tests

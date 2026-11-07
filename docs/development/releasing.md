@@ -8,14 +8,14 @@ A release is a GitHub release with a calendar version, `vYYYY.MM.DD`, and `.2`, 
 
 [release.yml](/.github/workflows/release.yml) cuts one, with [release.py](/.github/scripts/release.py), in two cases:
 
-- **A tag we push.** Tag a commit of the default branch that was the head of a push (it has its CI runs) and push the tag:
+- **A tag we push.** Tag a commit of the default branch that was the head of a push (it has its CI runs), or a merge of a dependency update (the gate started its CI by hand, [Dependency updates](dependencies.md#what-is-merged-without-a-human)), and push the tag:
 
   ```bash
   git tag v2026.11.09 <commit>
   git push <remote> v2026.11.09
   ```
 
-  The workflow refuses a commit that is not on the default branch, waits for every CI run of that commit, and releases once all of them passed; one that failed, or no run of a push to the default branch, fails it with the reason.
+  The workflow refuses a commit that is not on the default branch, waits for every CI run of that commit, and releases once all of them passed; one that failed, or no run of the default branch (a push, or a manual run), fails it with the reason.
 
 - **After the weekly runs.** Once the scheduled runs of syncstorage-rs.yml and fxa.yml both completed, there is a release only if something is new since the previous release: the syncstorage-rs, accounts (mozilla/fxa) or pairing server version of the published images, or the [upstream patches](upstream-patches.md) applied to them (the `org.firefox-sync.upstream-patches` label), or entries under Unreleased in CHANGELOG.md. Otherwise the run says why there is none (`nothing new since v2026.11.02: ...`). The tag goes on the commit the weekly runs built. The first run without any release of this kind before releases.
 

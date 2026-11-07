@@ -15,7 +15,8 @@ name: docs
 #
 # The docs site (mkdocs.yml): built with --strict on every push, so a broken link, a missing
 # #anchor or a page left out of the nav fails here; published on GitHub Pages from main only.
-# See docs/development/testing.md#docs-site.
+# See docs/development/testing.md#docs-site. A manual run on main publishes as a push does: the
+# dependencies workflow starts it so after merging an update (docs/development/dependencies.md).
 on:
   workflow_dispatch:
   push:
@@ -41,6 +42,9 @@ jobs:
       # the release decision and CHANGELOG.md's rewriting (docs/development/releasing.md#releases)
       - name: Self-test of the release script
         run: python3 -I tests/test_release.py
+      # the gate of Dependabot's pull requests (docs/development/dependencies.md)
+      - name: Self-test of the dependencies gate
+        run: python3 -I tests/test_dependencies.py
       - name: Docs coverage
         run: python3 -I tests/check_docs_coverage.py
       # the questions of prepare_environment.sh write what the setup before them wrote, for the
@@ -99,12 +103,12 @@ jobs:
       - name: The anchors of GitHub are ids of the site
         run: python3 -I tests/check_site_anchors.py
       - name: Upload
-        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: actions/upload-pages-artifact@v5
         with:
           path: site
   deploy:
-    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     needs: [links, site]
     runs-on: ubuntu-latest
     permissions:

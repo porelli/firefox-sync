@@ -537,7 +537,8 @@ def default_branch():
 
 def wait_for_ci(gh, sha, own_run, timeout, interval=120):
     """Waits until every workflow run of the commit but this one completed: ok if each passed
-    and one was a push to the default branch (its CI), else the reason."""
+    and one was a push to the default branch, or a manual run on it (its CI: the dependencies
+    workflow starts main's CI so after it merged, docs/development/dependencies.md), else the reason."""
     deadline = time.time() + timeout
     while True:
         runs = [r for r in gh.runs_of(sha) if str(r.get("id")) != str(own_run)
@@ -555,7 +556,8 @@ def wait_for_ci(gh, sha, own_run, timeout, interval=120):
     failed = [r for r in latest.values() if r.get("conclusion") not in ("success", "skipped", "neutral")]
     if failed:
         return f"CI of {sha[:12]} did not pass: " + ", ".join(f"{r['name']} ({r['conclusion']})" for r in failed)
-    if not any(r.get("event") == "push" and r.get("head_branch") == default_branch() for r in latest.values()):
+    if not any(r.get("event") in ("push", "workflow_dispatch") and r.get("head_branch") == default_branch()
+               for r in latest.values()):
         return (f"no CI run of {sha[:12]} on {default_branch()}: tag a commit that was the head of a push"
                 f" to {default_branch()}")
     return None

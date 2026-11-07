@@ -90,6 +90,7 @@ expect "${NONE}" config/quadlet/README.md
 expect "${NONE}" docs/development/testing.md
 expect "${NONE}" docs/databases.md
 expect "${NONE}" CHANGELOG.md
+expect "${NONE}" .github/dependabot.yml .github/workflows/dependencies.yml .github/scripts/dependencies.py tests/test_dependencies.py
 expect "${NONE}" charts/firefox-sync/values.yaml
 expect "${NONE}" tests/helm.sh
 expect "${NONE}" tests/helm/lib.sh
