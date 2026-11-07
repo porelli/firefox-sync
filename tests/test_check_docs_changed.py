@@ -16,6 +16,9 @@ changed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(changed)
 
 
+CHANGELOG = "# Changelog\n\n## Unreleased\n\n### Added\n\n### Fixed\n"
+
+
 class Rules(unittest.TestCase):
     def test_features(self):
         for f in (".env-example", "charts/firefox-sync/values.yaml", "admin/templates/overview.html", "admin/web.go",
@@ -40,6 +43,18 @@ class Rules(unittest.TestCase):
         self.assertEqual(changed.review(["admin/web.go"], "Docs: none ( )\n"), ["admin/web.go"])
         self.assertEqual(changed.review(["admin/web.go"], "see Docs: none (x) below\n"), ["admin/web.go"])
         self.assertEqual(changed.review(["tests/x.py"], ""), [])
+
+    def test_review_changelog(self):
+        entry = CHANGELOG.replace("### Fixed\n", "### Fixed\n\n- The keep-alive.\n")
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "", CHANGELOG, CHANGELOG), ["admin/web.go"])
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "", CHANGELOG, entry), [])
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "", None, entry), [])
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "", None, None), ["admin/web.go"])
+        # an entry already there before the branch is not the branch's
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "", entry, entry), ["admin/web.go"])
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "x\nChangelog: none (a refactor)\n", None, None), [])
+        self.assertEqual(changed.review_changelog(["admin/web.go"], "Changelog: none\n", None, None), ["admin/web.go"])
+        self.assertEqual(changed.review_changelog(["tests/x.py"], "", None, None), [])
 
 
 def git(root, *args):
@@ -71,7 +86,7 @@ class Branch(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         git(self.root, "init", "-q", "-b", "main")
-        commit(self.root, {"admin/web.go": "package main\n", "docs/a.txt": "# A\n"}, "init")
+        commit(self.root, {"admin/web.go": "package main\n", "docs/a.txt": "# A\n", "CHANGELOG.md": CHANGELOG}, "init")
         git(self.root, "checkout", "-q", "-b", "topic")
 
     def tearDown(self):
@@ -86,11 +101,32 @@ class Branch(unittest.TestCase):
 
     def test_docs_in_another_commit(self):
         commit(self.root, {"admin/web.go": "package main // x\n"}, "feat: x")
-        commit(self.root, {"docs/a.txt": "# A\nmore\n"}, "docs: x")
+        commit(self.root, {"docs/a.txt": "# A\nmore\n", "CHANGELOG.md": CHANGELOG + "\n- x\n"}, "docs: x")
         self.assertEqual(run(self.root), (0, ""))
 
     def test_docs_none(self):
-        commit(self.root, {"compose/sync.yml": "x: 1\n"}, "fix: x\n\nDocs: none (an internal rename)")
+        commit(self.root, {"compose/sync.yml": "x: 1\n"},
+               "fix: x\n\nDocs: none (an internal rename)\nChangelog: none (an internal rename)")
+        self.assertEqual(run(self.root), (0, ""))
+
+    def test_changelog(self):
+        # docs, but no entry: the changelog's warning alone
+        commit(self.root, {"admin/web.go": "package main // x\n", "docs/a.txt": "# A\nmore\n"}, "feat: x")
+        code, out = run(self.root, actions=True)
+        self.assertTrue(out.startswith("::warning title=Changelog not updated::1 feature file(s)"), out)
+        self.assertNotIn("Docs not updated", out)
+        # an entry under Unreleased
+        commit(self.root, {"CHANGELOG.md": CHANGELOG.replace("### Added\n", "### Added\n\n- A QR code.\n")}, "docs: x")
+        self.assertEqual(run(self.root), (0, ""))
+
+    def test_changelog_released_section_does_not_count(self):
+        commit(self.root, {"admin/web.go": "package main // x\n", "docs/a.txt": "# A\nmore\n",
+                           "CHANGELOG.md": CHANGELOG + "\n## v2026.11.02 — 2026-11-02\n\n- x\n"}, "feat: x")
+        self.assertIn("Changelog: none (<reason>)", run(self.root)[1])
+
+    def test_changelog_none(self):
+        commit(self.root, {"admin/web.go": "package main // x\n", "docs/a.txt": "# A\nmore\n"},
+               "refactor: x\n\nChangelog: none (nothing anybody sees)")
         self.assertEqual(run(self.root), (0, ""))
 
     def test_push_range(self):

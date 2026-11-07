@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Warn when a branch changes a feature and no docs.
+"""Warn when a branch changes a feature and no docs, or adds no CHANGELOG.md entry.
 
 Usage: python3 -I tests/check_docs_changed.py [--base REF] [--root DIR]
 
@@ -11,11 +11,18 @@ warning, unless a commit of BASE..HEAD has a line
 
     Docs: none (<reason>)
 
-In GitHub Actions the warning is a ::warning annotation. Always exits 0: it is a reminder,
+The same change with no new entry under "## Unreleased" in CHANGELOG.md (an entry HEAD's
+Unreleased has and BASE's has not, as .github/scripts/release.py reads them) gets a warning of
+its own, unless a commit has a line
+
+    Changelog: none (<reason>)
+
+In GitHub Actions the warnings are ::warning annotations. Always exits 0: it is a reminder,
 not a gate (docs/development/testing.md#docs-with-the-features). Stdlib only.
 """
 
 import argparse
+import importlib.util
 import os
 import re
 import subprocess
@@ -33,6 +40,20 @@ FEATURES = (
     re.compile(r"^setup/"),
 )
 NO_DOCS = re.compile(r"^Docs: none \(\s*[^\s)].*\)\s*$", re.M)
+NO_CHANGELOG = re.compile(r"^Changelog: none \(\s*[^\s)].*\)\s*$", re.M)
+CHANGELOG = "CHANGELOG.md"
+
+
+def _release_module():
+    """.github/scripts/release.py, whose reading of CHANGELOG.md this check shares."""
+    path = Path(__file__).resolve().parent.parent / ".github/scripts/release.py"
+    spec = importlib.util.spec_from_file_location("release", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+release = _release_module()
 
 
 def is_feature(path):
@@ -65,10 +86,25 @@ def review(files, messages):
     return [f for f in files if is_feature(f)]
 
 
-def warn(message):
+def review_changelog(files, messages, base_changelog, head_changelog):
+    """The feature files that need a CHANGELOG.md entry: [] when Unreleased got one or a commit
+    says Changelog: none."""
+    if NO_CHANGELOG.search(messages) or release.added_entries(base_changelog, head_changelog):
+        return []
+    return [f for f in files if is_feature(f)]
+
+
+def show(root, ref, path):
+    try:
+        return git(root, "show", f"{ref}:{path}")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def warn(message, title="Docs not updated"):
     if os.environ.get("GITHUB_ACTIONS") == "true":
         text = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::warning title=Docs not updated::{text}")
+        print(f"::warning title={title}::{text}")
     else:
         print(f"warning: {message}")
 
@@ -95,6 +131,8 @@ def main(argv=None):
             return 0
         files = [f for f in git(args.root, "diff", "--name-only", f"{base}...HEAD").splitlines() if f]
         messages = git(args.root, "log", "--format=%B", f"{base}..HEAD")
+        merge_base = git(args.root, "merge-base", base, "HEAD").strip()
+        changelogs = show(args.root, merge_base, CHANGELOG), show(args.root, "HEAD", CHANGELOG)
     except subprocess.CalledProcessError as e:
         warn(f"git failed, the docs check of this branch did not run: {(e.stderr or '').strip()}")
         return 0
@@ -104,7 +142,13 @@ def main(argv=None):
              + ", ".join(missing)
              + ". Update the page that documents them, or add a line 'Docs: none (<reason>)' to a commit message"
              + " (docs/development/testing.md#docs-with-the-features).")
-    else:
+    unlogged = review_changelog(files, messages, *changelogs)
+    if unlogged:
+        warn(f"{len(unlogged)} feature file(s) changed since {base[:12]} without a new entry under"
+             + f" '## Unreleased' in {CHANGELOG}: " + ", ".join(unlogged)
+             + f". Add one (what changes for those who run it), or a line 'Changelog: none (<reason>)'"
+             + " to a commit message (docs/development/releasing.md#the-changelog).", "Changelog not updated")
+    if not missing and not unlogged:
         print(f"docs: {len(files)} file(s) changed since {base[:12]}, nothing to say", file=sys.stderr)
     return 0
 
