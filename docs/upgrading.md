@@ -12,7 +12,7 @@ By default every image follows a moving tag, and a new upstream release is publi
 | the admin UI | `ADMIN_IMAGE` | `<IMAGE_REPOSITORY>:admin-latest` |
 | the self-hosted accounts | `FXA_VERSION` | `fxa-mono-latest` |
 
-To decide when to upgrade instead, pin a tag in `.env` (Helm: in your values), and change it to upgrade. Which tags exist: [Images](reference/images.md). The database images move differently: see [Database majors](#database-majors).
+To decide when to upgrade instead, pin a tag in `.env` (Helm: in your values), and change it to upgrade. Which tags exist: [Images](reference/images.md). What changed between two releases of this repository: [CHANGELOG.md](/CHANGELOG.md), and the GitHub releases (`vYYYY.MM.DD`), each with the upstream versions and the image tags and digests it corresponds to ([Releases](development/releasing.md#releases)). The database images move differently: see [Database majors](#database-majors).
 
 The database migrations run before each service starts and cannot be undone. Going back to an older release means restoring a backup.
 

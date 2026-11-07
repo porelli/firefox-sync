@@ -71,7 +71,7 @@ For contributors:
 
 - [development/testing.md](development/testing.md): the tests and how to run them
 - [development/upstream-patches.md](development/upstream-patches.md): applying upstream pull requests before their release
-- [development/releasing.md](development/releasing.md): publishing the images and the chart
+- [development/releasing.md](development/releasing.md): the releases and CHANGELOG.md, publishing the images and the chart
 
 ## Getting help
 

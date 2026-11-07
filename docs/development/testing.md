@@ -19,6 +19,7 @@ On a branch, syncstorage-rs.yml tests the images of the branch's inputs: an imag
 | [tests/helm.sh](/tests/helm.sh) `<lint\|parity\|e2e>` | the Helm chart, see [Helm chart](#helm-chart) | CI: helm.yml | `EXTERNAL_DB`, `DB_BOOTSTRAP`, `SKIP_BUILD`, `REPOSITORY`, `TAG` |
 | [tests/migrate.sh](/tests/migrate.sh) `<scenario>` | the moves of [Migrating](../migrating.md) from other Sync servers (Mozilla's compose files, dan-r, jeena, NixOS, YunoHost) and the upgrades of older firefox-sync releases ([Upgrading](../upgrading.md#older-firefox-sync-releases)), read back with [migrate_client.py](/tests/migrate_client.py) | local only | the scenario; `PORT` |
 | [tests/test_upstream_patches.py](/tests/test_upstream_patches.py) | the decisions of `.github/scripts/upstream-patches.py` on fixtures, no network | CI: the jobs that pick the release | none |
+| [tests/test_release.py](/tests/test_release.py) | [release.py](/.github/scripts/release.py), no network: when a release is cut (nothing new, a new syncstorage-rs, FxA or pairing server, other upstream patches, Unreleased entries, a tag), its tag, title and notes, the moving of Unreleased in CHANGELOG.md (empty subsections dropped, idempotent, later entries kept), see [Releases](releasing.md#releases) | CI: docs.yml and release.yml, every push | none |
 | [tests/test_syncstorage_rs_build.py](/tests/test_syncstorage_rs_build.py) | the cache mounts `.github/scripts/syncstorage-rs-build.py` drops from upstream's Dockerfile, on fixtures | CI: syncstorage-rs.yml `prepare-env` | none |
 | [tests/prepare_functions.sh](/tests/prepare_functions.sh) | the functions of `prepare_environment.sh` ([setup/](/setup)) that need no container, on tables, per file: `.env` read as compose reads it (compared with `docker compose config` when there is one), written through a symlink, no value on `sed`'s command line, the compose files of an install (env.sh); the addresses of `SYNC_EXPORT_PORT`, the limits, names and hosts, `FXA_OAUTH_SERVER_URL` at `fxa-auth:9000` (validate.sh); the ports of this host in use and the next free one, from what `ss` prints (ports.sh); the names one certificate covers (proxy.sh); `database-setup.sql` (databases.sh); the accounts images with a fix of [upstream-patches.yml](/upstream-patches.yml) (images.sh); the checkout of the units (quadlets.sh); `--upgrade` of an `.env` from before (upgrade.sh); `setup/` loaded from the script's real path | `tests/podman.sh` runs it first; anywhere, also macOS's bash 3.2 | `COMPOSE` |
 | [tests/setup_output.sh](/tests/setup_output.sh) `[case...]` | the questions of `prepare_environment.sh` ([setup/questions.sh](/setup/questions.sh)): the same files for the same choices as the setup before they were reworked (`BASE`, fetched when missing), its answers on stdin in their old order, the new one's by name ([Answers by name](../install/compose.md#answers-by-name)), for a matrix of answer sets (accounts, databases, your own servers and their bootstrap, the admin UI, Quadlets, compose on the Podman socket, a setup again over an install): `.env`, the systemd and SQL examples, the Quadlet units and their environment files, the random values masked (and the setup of before's nginx examples against the new `proxy/nginx.conf`: the same host names and upstreams; `proxy/` is the new one's only); then the interactive flow on stdin with `<` and a part changed in the review, the generated secrets said at the end, the public URLs, the admin UI's sign-in, the bundled Caddy (compose, Quadlets), the labels for Traefik, `--render-proxy` and `--upgrade` of `proxy/` that the old setup could not write, the ports of this host in use (an `ss` stub: the next free port, said; this stack's own containers' ports free, set up again and `--upgrade`), `FXA_OAUTH_SERVER_URL` at `fxa-auth` on another port warned of, one certificate for all (a wildcard; nginx's include; a host it does not cover warned of) and the nginx examples of an earlier setup moved into `proxy/old/`; on a terminal ([tests/setup_tty.py](/tests/setup_tty.py), a pty) the menus, the answers edited in place and the review. The setup runs with the programs it may use only (`SETUP_TOOLS`: no interpreter, no tool it did not use before), and its code is checked for others. No container runtime: stubs, a temporary `HOME` | CI: docs.yml, every push | `BASE` |
@@ -322,9 +323,9 @@ python3 -I tests/test_check_docs_coverage.py
 
 ### Docs with the features
 
-A change to a feature should come with its docs. [tests/check_docs_changed.py](/tests/check_docs_changed.py) warns when a branch changes a feature but no file under `docs/` and no `README.md`. The features are `.env-example`, the chart's `values.yaml`, `admin/templates/`, `admin/*.go` (but the tests), `db/`, `compose/`, `config/quadlet/` and `setup/`.
+A change to a feature should come with its docs and its entry in [CHANGELOG.md](/CHANGELOG.md). [tests/check_docs_changed.py](/tests/check_docs_changed.py) warns when a branch changes a feature but no file under `docs/` and no `README.md`, and, a warning of its own, when it adds no entry under `## Unreleased` in CHANGELOG.md ([The changelog](releasing.md#the-changelog)). The features are `.env-example`, the chart's `values.yaml`, `admin/templates/`, `admin/*.go` (but the tests), `db/`, `compose/`, `config/quadlet/` and `setup/`.
 
-On a push to another branch than the default one, docs.yml compares the push with the commit before it (with main for a new branch). The warning is an annotation of the run: it never fails it. By hand, it compares with the merge base of main:
+On a push to another branch than the default one, docs.yml compares the push with the commit before it (with main for a new branch). The warnings are annotations of the run: they never fail it. By hand, it compares with the merge base of main:
 
 ```bash
 python3 -I tests/check_docs_changed.py
@@ -332,11 +333,14 @@ python3 -I tests/check_docs_changed.py --base HEAD~3
 python3 -I tests/test_check_docs_changed.py
 ```
 
-When a change needs no docs (a refactor, a fix that changes nothing anybody sees), say so in a commit message of the push, on a line of its own, with the reason:
+When a change needs no docs (a refactor, a fix that changes nothing anybody sees), say so in a commit message of the push, on a line of its own, with the reason; the same for no changelog entry:
 
 ```text
 Docs: none (a log line reworded)
+Changelog: none (a log line reworded)
 ```
+
+An entry counts when HEAD's Unreleased has it and the base's has not, as [release.py](/.github/scripts/release.py) reads the file (a list item; HTML comments are not entries), so an entry in a released section does not.
 
 ## Docs site
 
