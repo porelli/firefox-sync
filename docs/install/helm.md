@@ -49,9 +49,11 @@ Every pod has `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation: false
 1. Install the chart:
 
    ```bash
-   helm install ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version 0.1.0 \
+   helm install ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version <chart version> \
      -f my-values.yaml --wait --timeout 10m
    ```
+
+   `<chart version>`: the newest, which `helm show chart oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync` prints (`version:`).
 
    `ffs` is the release name: the objects are called `ffs-firefox-sync-*`, as in the commands of this page. For a namespace of its own, add `-n <namespace> --create-namespace`, and `-n <namespace>` to every `kubectl` command.
 

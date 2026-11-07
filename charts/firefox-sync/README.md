@@ -9,9 +9,11 @@ The full guide: [Install with Helm](https://github.com/porelli/firefox-sync/blob
 Kubernetes 1.27 or later, Helm 4 (tested; Helm 3.16 or later is known to work, not tested in CI).
 
 ```bash
-helm install ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version 0.1.0 \
+helm install ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version <chart version> \
   -f my-values.yaml --wait --timeout 10m
 ```
+
+`<chart version>`: the newest, which `helm show chart oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync` prints (`version:`).
 
 ```yaml
 syncDomain: https://sync.example.com

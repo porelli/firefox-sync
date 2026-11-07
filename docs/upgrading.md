@@ -135,7 +135,7 @@ helm upgrade ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --versio
 - Without your values file at hand, use `--reset-then-reuse-values` instead of `-f my-values.yaml` (Helm 3.14 or later): the new version's defaults, then the values you gave at the last install or upgrade.
 - Never use `--reuse-values` to move to another chart version. It takes the old version's defaults with your values, so a value the new version added or changed is missing or old: a render that fails, or a setting that is silently off. See [helm upgrade](https://helm.sh/docs/helm/helm_upgrade/).
 - Always give `--version`: without it Helm takes the newest chart.
-- To change a setting in the version that runs, as the admin UI's commands do: `--reuse-values --version <the release's chart version>` (`helm list` shows it, `firefox-sync-<version>`). For example `helm upgrade ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version 0.1.0 --reuse-values --set backup.enabled=true`.
+- To change a setting in the version that runs, as the admin UI's commands do: `--reuse-values --version <the release's chart version>` (`helm list` shows it, `firefox-sync-<version>`). For example `helm upgrade ffs oci://ghcr.io/porelli/firefox-sync/charts/firefox-sync --version 0.2.0 --reuse-values --set backup.enabled=true`.
 
 The Sync server stops, then starts again with its migrations and init container first (`strategy: Recreate`): a minute without Sync, which Firefox retries. The generated secrets are read back. Never change `SYNC_MASTER_SECRET` or `METRICS_HASH_SECRET` in your `existingSecret` (every Firefox would have to sign in again), nor a database password the server already has.
 
