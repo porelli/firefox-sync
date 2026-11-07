@@ -20,15 +20,15 @@ Not updated by Dependabot, on purpose: few pins, the newest versions, and a brea
 
 ### Security updates
 
-Dependabot alerts and Dependabot security updates are on (*Settings*, *Advanced Security*). A security update is a pull request of its own and goes through the same gate: merged when it is a minor or patch update, left open when it is a major one.
+Dependabot alerts and Dependabot security updates are on (*Settings*, *Advanced Security*). A security update is a pull request of its own and goes through the same gate: merged once CI passed, as a version update.
 
 ## What is merged without a human
 
 [dependencies.yml](/.github/workflows/dependencies.yml) is the gate. It runs on every Dependabot pull request against the default branch, each time the pull request is opened, reopened or updated. [.github/scripts/dependencies.py](/.github/scripts/dependencies.py) decides, waits and starts the runs. Its self-test is [tests/test_dependencies.py](/tests/test_dependencies.py), run by the gate and by docs.yml on every push.
 
 1. **The update type**, from [dependabot/fetch-metadata](https://github.com/dependabot/fetch-metadata) (for a group, the highest of its updates):
-   - semver minor or patch: merged once CI passed;
-   - major, or unknown: left open for a human, with the reason in the run's summary. Unknown means fetch-metadata has none, for example when a commit on the branch is not Dependabot's;
+   - semver major, minor or patch: merged once CI passed. A major update is merged too: what decides is CI, every test job a push of its files starts. Each major update is a pull request of its own, so a failure points at that update;
+   - unknown: left open for a human, with the reason in the run's summary. Unknown means fetch-metadata has none, for example when a commit on the branch is not Dependabot's;
    - an update that moves an action pinned by commit (a `uses: ...@<40 hex>` line added) is left open too, whatever its type. That pin is there for security, so a human checks the new commit.
 1. **The wait.** It waits until every workflow run of the pull request's head commit has completed. Every workflow that a push of the pull request's files starts must have a run of that commit. When Dependabot rebases a branch, its push changes other files than the update. A workflow that then has no run of the head commit after three minutes is started by hand (`workflow_dispatch`) on the branch, and the gate waits for it too. One failed or cancelled run fails the gate, and nothing is merged. It gives up after about five hours.
 1. **The merge.** A squash merge: the subject is the pull request's title, and the body links the gate's run and says `Changelog: none (dependency update)` and `Docs: none (dependency update)`. The merge only goes through if the head commit is still the one that was tested (`--match-head-commit`). Then the gate deletes the branch.
@@ -42,9 +42,11 @@ There is no branch protection and no required check, and the repository's auto-m
 - The update breaks something: fix it on the branch, or in a commit to main, then comment `@dependabot rebase` on the pull request. Once someone else has pushed to the branch, fetch-metadata has no update type, so the gate leaves the pull request for a human.
 - The merge failed because the branch is behind or in conflict: Dependabot rebases it on its own (or after `@dependabot rebase`), and the gate runs again for the new head.
 
-### A major update
+### A pull request left open
 
-Read the release notes, check the pull request's CI runs, and merge it in the web UI (squash). That merge is yours, not the workflow token's, so it is a push to main like any other and starts main's CI by itself.
+An unknown update type or a moved commit pin: read the release notes, check the pull request's CI runs, and merge it in the web UI (squash). That merge is yours, not the workflow token's, so it is a push to main like any other and starts main's CI by itself.
+
+To keep major updates for a human again, remove `version-update:semver-major` from `MERGE` in [dependencies.py](/.github/scripts/dependencies.py).
 
 ## Dependabot's own runs
 

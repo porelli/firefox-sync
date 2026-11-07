@@ -1,7 +1,7 @@
 name: dependencies
-# The gate of Dependabot's pull requests (.github/dependabot.yml): a semver minor or patch
-# update is squash-merged once every CI run of its head commit passed; a major one, one whose
-# type is unknown, and one that moves an action pinned by commit stay open for a human.
+# The gate of Dependabot's pull requests (.github/dependabot.yml): a semver major, minor or
+# patch update is squash-merged once every CI run of its head commit passed; one whose type is
+# unknown, and one that moves an action pinned by commit, stay open for a human.
 # .github/scripts/dependencies.py decides, waits and starts the runs; see
 # docs/development/dependencies.md.
 #

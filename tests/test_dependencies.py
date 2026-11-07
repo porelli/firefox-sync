@@ -17,12 +17,12 @@ spec.loader.exec_module(dep)
 
 
 class Decide(unittest.TestCase):
-    def test_minor_patch_merge(self):
-        for t in ("version-update:semver-minor", "version-update:semver-patch"):
+    def test_major_minor_patch_merge(self):
+        for t in ("version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"):
             self.assertTrue(dep.decide(t, "+go 1.26\n")[0], t)
 
-    def test_major_unknown_manual(self):
-        for t in ("version-update:semver-major", "", "something-new"):
+    def test_unknown_manual(self):
+        for t in ("", "something-new"):
             merge, why = dep.decide(t, "")
             self.assertFalse(merge, t)
             self.assertIn("left for a human", why)
@@ -30,6 +30,8 @@ class Decide(unittest.TestCase):
     def test_sha_pin_manual(self):
         diff = ("-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1\n"
                 "+        uses: azure/setup-helm@0123456789abcdef0123456789abcdef01234567 # v5.0.2\n")
+        for t in ("version-update:semver-major", "version-update:semver-patch"):
+            self.assertFalse(dep.decide(t, diff)[0], t)
         merge, why = dep.decide("version-update:semver-patch", diff)
         self.assertFalse(merge)
         self.assertIn("pinned by commit", why)

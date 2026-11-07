@@ -156,13 +156,20 @@ def admin():
     return http
 
 
+def overview_table(http, table):
+    """The table of the overview with that id, empty while the page has none: the admin UI
+    shows the schema table only once it read the schemas, which it does after it starts"""
+    page = http.get(f"{ADMIN}/", timeout=30).text
+    return page.split(f'<table id="{table}"')[1].split("</table>")[0] if f'<table id="{table}"' in page else ""
+
+
 def wait_for_levels(http, levels):
     """The schema table of the overview once it shows these levels (read every
     HEALTH_CHECK_SECONDS, 5 in the test stack)"""
     expected = dict(pair.split("=") for pair in levels.split())
     deadline = time.time() + 60
     while True:
-        schema = http.get(f"{ADMIN}/", timeout=30).text.split('<table id="schema"')[1].split("</table>")[0]
+        schema = overview_table(http, "schema")
         shown = dict(re.findall(r"<tr><td>([^<]+)</td><td>([^<]*)</td>", schema))
         if all(shown.get(db) == level for db, level in expected.items()) or time.time() > deadline:
             return expected, shown
@@ -195,8 +202,7 @@ def test_after_the_admin_ui_shows_the_new_release_all_up(state):
     # the versions are read every HEALTH_CHECK_SECONDS (5 in the test stack)
     deadline = time.time() + 60
     while True:
-        page = http.get(f"{ADMIN}/", timeout=30).text
-        health = page.split('<table id="health"')[1].split("</table>")[0]
+        health = overview_table(http, "health")
         if re.search(r"<td>Accounts API</td><td>[^<]*<span[^>]*>up</span></td><td>v?" + version + r"\b", health) or time.time() > deadline:
             break
         time.sleep(3)
@@ -209,7 +215,7 @@ def test_after_the_admin_ui_shows_the_new_release_all_up(state):
         deadline = time.time() + 60
         while not re.search(row, health) and time.time() < deadline:
             time.sleep(3)
-            health = http.get(f"{ADMIN}/", timeout=30).text.split('<table id="health"')[1].split("</table>")[0]
+            health = overview_table(http, "health")
         assert re.search(row, health), health
     for component in ("Sync server", "Tokenserver database", "Storage database", "Accounts API", "Accounts pages",
                       "Profile server", "Accounts database", "Accounts Redis"):

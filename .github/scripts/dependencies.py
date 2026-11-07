@@ -6,8 +6,8 @@ Usage:
   dependencies.py wait --base REF --head SHA --branch BRANCH [--timeout S] [--interval S]
   dependencies.py dispatch --base REF --head SHA --ref main
 
-- decide: whether the pull request may be merged without a human: a semver minor or patch
-  update (dependabot/fetch-metadata's update-type, the highest of a group) that moves no
+- decide: whether the pull request may be merged without a human: a semver major, minor or
+  patch update (dependabot/fetch-metadata's update-type, the highest of a group) that moves no
   action pinned by commit. Prints merge=true|false and why=..., for GITHUB_OUTPUT.
 - wait: until every workflow run of the head commit completed, then exits 0 when each passed.
   The workflows a push of the changed files (BASE...HEAD) starts must each have a run of the
@@ -33,7 +33,8 @@ WORKFLOWS = Path(".github/workflows")
 SELF = ".github/workflows/dependencies.yml"
 # on main: release.yml's push run plans nothing (the weekly runs and tags release)
 NOT_ON_MAIN = {".github/workflows/release.yml"}
-MERGE = {"version-update:semver-minor", "version-update:semver-patch"}
+# a major one too: CI is what decides (the test jobs a push of its files starts, every one passed)
+MERGE = {"version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"}
 SHA_PIN = re.compile(r"^\+.*\buses:\s*[^\s#]+@[0-9a-f]{40}\b", re.M)
 PASSED = {"success", "skipped", "neutral"}
 

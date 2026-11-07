@@ -1,6 +1,6 @@
 # Dependabot's version updates, weekly. Its pull requests go through the gate of
-# .github/workflows/dependencies.yml: semver minor and patch updates are merged once CI passed,
-# major ones (and actions pinned by commit) stay open for a human. See
+# .github/workflows/dependencies.yml: major, minor and patch updates are merged once CI passed,
+# actions pinned by commit stay open for a human. See
 # docs/development/dependencies.md: why these ecosystems and not the others (the images'
 # base tags, docs/requirements.txt), and how to turn it off.
 version: 2
@@ -15,7 +15,8 @@ updates:
       time: "06:00"
       timezone: Etc/UTC
     groups:
-      # one pull request for the minor and patch updates; each major one its own
+      # one pull request for the minor and patch updates; each major one its own (a failure
+      # then points at that update)
       admin-go:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -25,7 +26,7 @@ updates:
       include: scope
 
   # the actions of the workflows and of the composite actions, by major tag (@v7): a new major
-  # is a pull request of its own, left for a human; the azure/setup-helm commit pin of
+  # is a pull request of its own, merged once CI passed too; the azure/setup-helm commit pin of
   # helm.yml's publish job moves with its releases, also left for a human
   - package-ecosystem: github-actions
     directories:
