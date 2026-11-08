@@ -32,7 +32,7 @@ set -u
 TESTS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CODE=$(dirname "${TESTS}")
 # (until promotion: then the old setup's files become saved expected files, and BASE goes)
-BASE=${BASE:-83970f2b6a6cc484872bda5f1e78044209458904}
+BASE=${BASE:-436ab78a2652b45ee16e428fa002c5bdba0e9a9d}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ffs-setup-output.XXXXXX")
 trap 'chmod -R u+w "${WORK}" 2> /dev/null; rm -rf "${WORK}"' EXIT
 FAILED=0
