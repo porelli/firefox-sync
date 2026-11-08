@@ -556,9 +556,11 @@ check "$(grep -c "'ffs_admin_\(ui\|sync\)'@'%' IDENTIFIED BY '$(env_value ADMIN_
   "6 3" "database-setup.sql with the admin UI's users (its database; the Sync data) and its database"
 # the accounts' user: the server's default (caching_sha2_password) with mozilla/fxa#21709 in the
 # image, else mysql_native_password, and the server it needs said
-if [ -n "${SETUP_MYSQL2}" ]; then fxa_auth="IDENTIFIED BY" fxa_needs="MySQL 8.4 or 9 with"; else fxa_auth="IDENTIFIED WITH mysql_native_password BY" fxa_needs="MySQL 8.4 started with mysql_native_password=ON"; fi
+# (with mozilla/fxa#21709 the two "-- native:" lines stay, as comments: the statements for an
+# image without it; without, they replace the statements after them, none left)
+if [ -n "${SETUP_MYSQL2}" ]; then fxa_auth="IDENTIFIED BY" fxa_needs="MySQL 8.4 or 9 with" fxa_native=2; else fxa_auth="IDENTIFIED WITH mysql_native_password BY" fxa_needs="MySQL 8.4 started with mysql_native_password=ON" fxa_native=0; fi
 check "$(grep -c "'fxa'@'%' ${fxa_auth} '$(env_value FXA_MYSQL_PASSWORD)'" "${SETUP}/database-setup-fxa.sql") $(grep -c "'ffs_policy'@'%' IDENTIFIED BY '$(env_value FXA_MYSQL_POLICY_PASSWORD)'" "${SETUP}/database-setup-fxa.sql") $(grep -c '^-- native:' "${SETUP}/database-setup-fxa.sql") $(grep -c "${fxa_needs}" "${WORK}/setup-external.log")" \
-  "2 2 0 1" "database-setup-fxa.sql with the generated passwords, ${fxa_auth} for the accounts"
+  "2 2 ${fxa_native} 1" "database-setup-fxa.sql with the generated passwords, ${fxa_auth} for the accounts"
 check "$(grep -c "'ffs_admin'@'%' IDENTIFIED BY '$(env_value FXA_ADMIN_DB_PASSWORD)'" "${SETUP}/database-setup-fxa.sql") $(grep -c 'CREATE USER ON' "${SETUP}/database-setup-fxa.sql")" \
   "2 0" "database-setup-fxa.sql creates ffs_admin, no CREATE USER for the policy user"
 check "$(grep -cE '(mysql|mariadb) -h db.example.org -P 3306 -u root -p < database-setup.sql' "${WORK}/setup-external.log")" 2 "prepare_environment.sh says how to run the SQL (MySQL, MariaDB)"
