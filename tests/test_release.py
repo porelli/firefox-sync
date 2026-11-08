@@ -230,6 +230,25 @@ class Notes(unittest.TestCase):
         self.assertIn("`oci://ghcr.io/owner/repo/charts/firefox-sync` version `0.2.0`", text)
         self.assertEqual(release.previous_release([{"tag_name": "v2026.11.09", "body": text}])[1], new)
 
+    def test_repo_links(self):
+        base = "https://github.com/Owner/Repo/blob/v2026.11.09/"
+        md = ("See [Upgrading](docs/upgrading.md#the-earlier-firefox-sync-release), [the tests](/tests/e2e.sh), "
+              "![shot](docs/images/a.png), [Mozilla](https://mozilla.org/x), [here](#changes), "
+              "[mail](mailto:a@example.com) and `[code](not/a/link)`.")
+        out = release.repo_links(md, base)
+        self.assertIn(f"[Upgrading]({base}docs/upgrading.md#the-earlier-firefox-sync-release)", out)
+        self.assertIn(f"[the tests]({base}tests/e2e.sh)", out)
+        self.assertIn(f"![shot]({base}docs/images/a.png)", out)
+        for kept in ("[Mozilla](https://mozilla.org/x)", "[here](#changes)", "[mail](mailto:a@example.com)",
+                     "`[code](not/a/link)`"):
+            self.assertIn(kept, out)
+
+    def test_notes_links_at_the_tag(self):
+        text = release.notes("v2026.11.09", release.unreleased_entries(EMPTY.replace(
+            "### Added\n", "### Added\n\n- The admin UI. See [Admin UI](docs/admin/README.md).\n", 1)),
+            None, None, self.current(STATE), (None, []), "ghcr.io", "Owner/Repo", ls_remote=lambda url: self.TAGS)
+        self.assertIn("See [Admin UI](https://github.com/Owner/Repo/blob/v2026.11.09/docs/admin/README.md).", text)
+
     def test_notes_without_entries_or_previous(self):
         text = release.notes("v2026.11.09", release.unreleased_entries(EMPTY), None, None, self.current(STATE),
                              ("0.3.0", ["0.2.0"]), "ghcr.io", "owner/repo", ls_remote=lambda url: self.TAGS)

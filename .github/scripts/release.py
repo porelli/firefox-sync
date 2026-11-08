@@ -487,12 +487,30 @@ def upstream_lines(previous, current, ls_remote=None):
     return lines
 
 
+LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\))")
+CODE_SPAN = re.compile(r"(`[^`]*`)")
+
+
+def repo_links(markdown, base):
+    """The links of CHANGELOG.md's entries (repository-relative: docs/x.md#a, /tests/y.sh) made
+    absolute, base + path: a release's notes resolve links against the release's page, not
+    the repository. URLs, #anchors, mailto: and code spans stay as they are."""
+    def fix(m):
+        target = m.group(2)
+        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("#"):
+            return m.group(0)
+        return m.group(1) + base + target.lstrip("/") + m.group(3)
+    parts = CODE_SPAN.split(markdown)
+    return "".join(part if i % 2 else LINK.sub(fix, part) for i, part in enumerate(parts))
+
+
 def notes(tag, unreleased, previous_tag, previous_state, current, chart, registry_host, repository,
           server="https://github.com", ls_remote=None):
     """The release notes, markdown, with the state recorded at the end (an HTML comment)."""
     state = current["state"]
     out = []
-    body = render_sections(unreleased)
+    # the links of the entries: the files at this release's tag
+    body = repo_links(render_sections(unreleased), f"{server}/{repository}/blob/{tag}/")
     if body:
         out += ["## Changes", "", body.rstrip("\n"), ""]
     out += ["## Upstream", ""]
