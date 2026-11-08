@@ -6,6 +6,18 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Breaking
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Security
+
+## v2026.11.08 — 2026-11-08
+
+### Breaking
+
 - The first release since commit ca9101d (October 2026), the layout this repository had until now. How to upgrade from it: [The earlier firefox-sync release](docs/upgrading.md#the-earlier-firefox-sync-release).
 - The compose files moved to `compose/`. With `COMPOSE_FILE=docker-compose.postgres.yml` compose stops until you run `./prepare_environment.sh --upgrade`, which writes the new names and `COMPOSE_PROJECT_NAME`. Without `COMPOSE_FILE`, `docker-compose.yml` still works and finds the same containers. See [Files that moved](docs/upgrading.md#files-that-moved).
 - To upgrade with docker compose: `git pull`, `./prepare_environment.sh --upgrade`, then `docker compose pull && docker compose up -d`. See [With docker compose](docs/upgrading.md#with-docker-compose).
