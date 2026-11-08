@@ -492,7 +492,7 @@ CODE_SPAN = re.compile(r"(`[^`]*`)")
 
 
 def repo_links(markdown, base):
-    """The links of CHANGELOG.md's entries (repository-relative: docs/x.md#a, /tests/y.sh) made
+    """The links of CHANGELOG.md's entries (repository-relative: docs/upgrading.md, /tests/e2e.sh) made
     absolute, base + path: a release's notes resolve links against the release's page, not
     the repository. URLs, #anchors, mailto: and code spans stay as they are."""
     def fix(m):
