@@ -138,6 +138,7 @@ Tested on macOS on Apple silicon (arm64, HVF). macOS on Intel and Linux with KVM
 `tests/e2e.sh`:
 
 - with `SYNC_DB=mysql`, the stack on MySQL (`SYNC_MYSQL_IMAGE`: `mysql:lts`, or `mysql:8` as the installs from before; then it also checks that `lts` refuses their data, that `--upgrade` pins them, and the move to `lts`);
+- upstream's storage and tokenserver integration tests (not `test_e2e.py`, which needs Mozilla's stage accounts); for an image with upstream's data deletion endpoint (`DELETE /1.0/users/<account id>/storage`, syncstorage-rs 0.25.0 on), the endpoint is turned on before the tokenserver tests as upstream's CI does: the public half of the image's test key (`tools/fxa_delete/testing`) as the secondary JWK, and the audience and issuer its tests sign for. An older image runs them without it;
 - the upgrade from an install before `ADMIN_DB_PASSWORD` (this tree without it, the admin UI's tables in the tokenserver database, the old setting names), which moves the admin UI's event log out of the Sync server's users' reach;
 - the Sync MariaDB containers of an install from before `SYNC_MARIADB_IMAGE`, pinned by `--upgrade` to the major of their data;
 - with `PG_MAJOR_MOVE=1` (postgres), the install on the major before that of `postgres:latest` (read at run time) and, at the end, the move of [PostgreSQL](../upgrading.md#postgresql): the backup, the new major refused on the old data (by [keep-major.sh](/db/postgres/keep-major.sh)), the restore into an empty volume, the same accounts and items read back on the new major, also after a restart.

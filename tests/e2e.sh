@@ -1572,6 +1572,40 @@ echo "== errors in syncstorage logs"
 check "$(dc logs syncstorage 2>&1 | grep -ciE 'panicked|"status":5[0-9][0-9]')" 0 "no panics or 5xx in syncstorage logs"
 
 echo "== upstream tokenserver integration tests (SYNC_MAX_USERS raised, they create many users)"
+# FxA's data deletion endpoint (DELETE /1.0/users/<fxa_uid>/storage, 0.25.0, upstream
+# mozilla-services/syncstorage-rs#2732) is off by default; its tests (test_delete_data.py) sign
+# their assertions with the image's test key, tools/fxa_delete/testing. Enabled from here on as
+# upstream's CI does (docker/docker-compose.e2e.jwk-cache.yaml): its public half as the
+# secondary JWK, with the audience and issuer the tests sign for. Only for the images that ship
+# the key, those with the tests: an older one (0.24.x) runs as before. A configured JWK only
+# adds a local check of JWT access tokens: the mock FxA's tokens are not JWTs and still go to
+# its /v1/verify.
+DELETE_KEY=tools/fxa_delete/testing/delete_test_key.pem
+DELETE_AUD=urn:mozilla:fxa:tokenserver:sync-data-delete DELETE_ISS=https://accounts.firefox.com
+DELETE_ENV=
+if in_app "test -f ${DELETE_KEY} && test -f tools/integration_tests/tokenserver/test_delete_data.py" > /dev/null 2>&1; then
+  in_app "python3 -c 'import json, sys; k = json.load(open(\"tools/fxa_delete/testing/delete_test_jwk.json\")); print(k[\"n\"], k[\"e\"])'" > "${WORK}/delete-jwk" 2> /dev/null
+  read -r DELETE_N DELETE_E < "${WORK}/delete-jwk"
+  check "$([ -n "${DELETE_N:-}" ] && [ -n "${DELETE_E:-}" ] && echo read)" read "the public half of upstream's delete test key, from the image"
+  cat > "${WORK}/delete-data.yml" << EOF
+services:
+  syncstorage:
+    environment:
+      SYNC_TOKENSERVER__FXA_DELETE_DATA_ENABLED: "true"
+      SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE: "${DELETE_AUD}"
+      SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER: "${DELETE_ISS}"
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__KTY: RSA
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__ALG: RS256
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__KID: syncstorage-rs-delete-test
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__USE: sig
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__N: "${DELETE_N:-}"
+      SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__E: "${DELETE_E:-}"
+EOF
+  COMPOSE_EXTRA+=("${WORK}/delete-data.yml")
+  # what the tests sign with, in their runner (helpers.py's defaults, said explicitly)
+  DELETE_ENV="FXA_DELETE_SIGNING_KEY_PEM=/app/${DELETE_KEY} SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE=${DELETE_AUD} SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER=${DELETE_ISS} "
+  echo "  the image has upstream's delete endpoint tests: the endpoint on, with its test key"
+fi
 set_env SYNC_MAX_USERS 1000000
 dc up -d > /dev/null 2>&1
 check "$(wait_init)" 0 "init container exit code (SYNC_MAX_USERS=1000000)"
@@ -1587,8 +1621,13 @@ if [ "${BACKEND}" = mysql ] && [ "${DATABASE_SERVER}" != MySQL ] && [[ " ${UPSTR
   T=test_node_assignment.py::test_user_creation
   UPSTREAM_TS="${UPSTREAM_TS} --deselect tokenserver/${T} --deselect tools/integration_tests/tokenserver/${T}"
 fi
-pytest_in_app "${UPSTREAM_TS}$(racy_deselect tokenserver/)"
+in_app "${DELETE_ENV}$(pytest_sh "${UPSTREAM_TS}$(racy_deselect tokenserver/)")"
 check "$?" 0 "upstream tokenserver tests"
+if [ -n "${DELETE_ENV}" ]; then
+  # the route is there, and refuses what is not signed (a 404 when it is off)
+  check "$(in_app "curl -s -o /dev/null -w '%{http_code}' -X DELETE http://syncstorage:8000/1.0/users/ffs-e2e-nobody/storage")" 401 \
+    "the delete endpoint is on and refuses a request without an assertion"
+fi
 racy_run tokenserver/
 
 echo "== admin UI"
