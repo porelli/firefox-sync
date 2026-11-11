@@ -216,6 +216,7 @@ To be sure it stays so:
 - Pairing a phone with a QR code ([Pair a phone](firefox.md#pair-a-phone)) uses Mozilla's channel server, unless you run your own: see [Pairing](reverse-proxy.md#pairing). Its image follows `FXA_IMAGE`; with Mozilla's accounts image, set `FXA_PAIRING_IMAGE` too.
 - The accounts service rate-limits sign-in attempts itself, in Redis, with upstream's `rate-limit-rules.txt`. For example: 5 failed sign-ins per IP address and email in 15 minutes. It reads the client's address from `X-Forwarded-For`, see [Client IP address](reverse-proxy.md#client-ip-address).
 - Not available: payments and subscriptions, the recovery phone (SMS), sign-in with Google or Apple, and the deferred clean-up tasks and event notifications to other services. They need Google Cloud. The [security history](#security-history) does not.
+- An account deleted in its account settings leaves its Sync data behind: the event that would tell the Sync server needs Google Cloud's queues too. The admin UI's [purge](admin/storage.md#purge) removes it. Deleting an account in the admin UI deletes its Sync data with it. With `SYNC_DELETE_DATA=true`, the admin UI resets and deletes Sync data through the Sync server's data deletion endpoint (syncstorage-rs 0.25.0 on), with a key of this install: see [Sync data through the Sync server](admin/accounts.md#sync-data-through-the-sync-server).
 
 ### Only your own accounts
 

@@ -504,6 +504,9 @@ Secret has none), for your own servers only */}}
 {{- end }}
 {{- end }}
 {{- include "firefox-sync.checkExistingSecret" . }}
+{{- if and .Values.syncstorage.deleteData (not (and .Values.fxa.enabled .Values.admin.enabled)) }}
+{{- fail "firefox-sync: syncstorage.deleteData is for the self-hosted accounts (fxa.enabled) with the admin UI (admin.enabled), its only caller (docs/admin/accounts.md#sync-data-through-the-sync-server)" }}
+{{- end }}
 {{- if not .Values.database.bundled }}
 {{- if not .Values.database.external.host }}
 {{- fail "firefox-sync: database.bundled=false needs database.external.host, your database server (docs/databases.md#your-own-server)" }}
@@ -640,6 +643,11 @@ again: turned on again, they find the passwords the kept fxa-db volume has */ -}
 {{- if not (hasKey $data .) }}
 {{- $_ := set $data . (randAlphaNum 32 | b64enc) }}
 {{- end }}
+{{- end }}
+{{- /* SYNC_DELETE_DATA_KEY (syncstorage.deleteData): this release's RSA key, the base64 of its
+PEM as .env has it, generated once and kept (also once deleteData is off again) */ -}}
+{{- if and .Values.syncstorage.deleteData (not (hasKey $data "SYNC_DELETE_DATA_KEY")) }}
+{{- $_ := set $data "SYNC_DELETE_DATA_KEY" (genPrivateKey "rsa" | b64enc | b64enc) }}
 {{- end }}
 {{- /* the admin UI's password when given (otherwise the generated one, kept) */ -}}
 {{- with .Values.admin.password }}
@@ -986,4 +994,14 @@ automounts (the token, the cluster's CA, the namespace), in its container alone
             - path: namespace
               fieldRef:
                 fieldPath: metadata.namespace
+{{- end }}
+
+{{/*
+syncstorage.deleteData: SYNC_DELETE_DATA and its key (from the Secret, optional: an existingSecret
+without it leaves the endpoint off, the admin UI says why), in the Sync server and the admin UI
+*/}}
+{{- define "firefox-sync.deleteDataEnv" -}}
+- name: SYNC_DELETE_DATA
+  value: "true"
+{{ include "firefox-sync.secretEnv" (dict "root" . "name" "SYNC_DELETE_DATA_KEY" "key" "SYNC_DELETE_DATA_KEY" "optional" true) }}
 {{- end }}

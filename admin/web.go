@@ -155,6 +155,9 @@ type App struct {
 	unconfirmedDays, signupBurst int
 	// FXA_ACCOUNT_EVENTS: the accounts service records the security history (securityevents.go)
 	accountEvents bool
+	// SYNC_DELETE_DATA: the Sync data reset through the Sync server's data deletion endpoint
+	// (deletedata.go), nil: in the storage database
+	deleter *syncDeleter
 	// second passes on the storage of deleted accounts (lifecycle.go)
 	passes passes
 
@@ -199,6 +202,14 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	eventsSetting, eventsSet := os.LookupEnv("FXA_ACCOUNT_EVENTS")
+	deleteOn, err := envSwitch("SYNC_DELETE_DATA")
+	if err != nil {
+		return err
+	}
+	deleter, err := newSyncDeleter(deleteOn, os.Getenv("SYNC_DELETE_DATA_KEY"), env("SYNCSTORAGE_URL", "http://syncstorage:8000"))
+	if err != nil {
+		return err
+	}
 	adminZone = loadZone()
 	syncDB, err := openSyncDB()
 	if err != nil {
@@ -246,7 +257,10 @@ func serve(ctx context.Context) error {
 		gateProbe: randomToken(), syncDomain: strings.TrimSuffix(env("SYNCSTORAGE_DOMAIN", ""), "/"),
 		emailDomain: strings.ToLower(env("FXA_EMAIL_DOMAIN", "")), pairingURL: env("FXA_PAIRING_URL", ""),
 		autoPurge: autoPurge, unconfirmedDays: unconfirmedDays, signupBurst: signupBurst,
-		accountEvents: fxaDB != nil && accountEventsOn(eventsSetting, eventsSet)}
+		accountEvents: fxaDB != nil && accountEventsOn(eventsSetting, eventsSet), deleter: deleter}
+	if deleter != nil {
+		log.Printf("Sync data reset through the Sync server's data deletion endpoint (SYNC_DELETE_DATA)")
+	}
 	app.alerter = newAlerter(notifyTargets)
 	if names := app.alerter.NotifyNames(); len(names) > 0 {
 		log.Printf("alerts also to %s (ADMIN_NOTIFY)", strings.Join(names, ", "))

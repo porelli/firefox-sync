@@ -8,6 +8,8 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Added
 
+- With self-hosted accounts, the admin UI can reset and delete Sync data through the Sync server's data deletion endpoint, which syncstorage-rs 0.25.0 added. It signs its requests with a key generated for your install. The setup asks; on an existing install set `SYNC_DELETE_DATA=true` and run `./prepare_environment.sh --upgrade` (Helm: `syncstorage.deleteData`). It is off by default, and nothing changes while it stays off. The health and configuration pages show it. See [Sync data through the Sync server](docs/admin/accounts.md#sync-data-through-the-sync-server).
+
 ### Changed
 
 ### Fixed

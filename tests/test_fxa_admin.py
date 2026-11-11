@@ -1166,6 +1166,19 @@ def mail_text(message_id):
     return requests.get(f"{MAILPIT}/api/v1/message/{message_id}", timeout=10).json()
 
 
+@pytest.mark.skipif(os.environ.get("SYNC_DELETE_DATA") != "true", reason="SYNC_DELETE_DATA is not true (tests/e2e-fxa.sh: an image before 0.25.0)")
+def test_sync_data_deletion_endpoint(admin):
+    # the health page: the Sync server takes the admin UI's assertions (signed for an account
+    # id no account has: 404 Unknown user, nothing deleted); the configuration page says it
+    # is on, and shows no part of the key
+    row = health_row(admin, "Sync data deletion")
+    assert '<span class="ok">up</span>' in row and "on: the Sync server takes the admin UI" in html.unescape(row), row
+    config = admin.get("/config")
+    assert "Data deletion endpoint" in config and "Data deletion key" in config, config[:3000]
+    key = os.environ["SYNC_DELETE_DATA_KEY"]
+    assert key[:24] not in config and key[-24:] not in config
+
+
 def test_smtp_health_and_test_email(admin):
     # mailpit:1025 of the test stack, which accepts any password
     row = health_row(admin, "Email (SMTP)")

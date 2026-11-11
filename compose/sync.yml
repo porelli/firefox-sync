@@ -19,7 +19,7 @@ x-syncstorage: &syncstorage
   # and its migrations, broken into or not; nothing of theirs needs them
   cap_drop: [NET_RAW]
   # (the databases' URLs and the node type: the database's file)
-  environment:
+  environment: &syncstorage-env
     # set under both names: the migrations stop (x-both-env-names)
     FFS_BOTH_ENV_NAMES: *both-env-names
     SYNC_HOST: 0.0.0.0
@@ -129,7 +129,17 @@ services:
           export SYNC_STATSD_HOST=ffs-admin SYNC_STATSD_PORT=8125
           echo "Sending metrics to the admin UI"
         fi
+        . /ffs-sync/delete-data.sh
         exec /app/bin/syncserver
+    environment:
+      <<: *syncstorage-env
+      # the data deletion endpoint for the admin UI (config/sync/delete-data.sh,
+      # docs/admin/accounts.md#sync-data-through-the-sync-server): off unless true, with
+      # the key the admin UI signs with (its public half is what the Sync server is given)
+      SYNC_DELETE_DATA: ${SYNC_DELETE_DATA:-false}
+      SYNC_DELETE_DATA_KEY: ${SYNC_DELETE_DATA_KEY:-}
+    volumes:
+      - ../config/sync:/ffs-sync:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/__heartbeat__"]
       interval: 30s
@@ -191,6 +201,10 @@ services:
       SYNC_DB_CONTAINERS: ${SYNC_DB_CONTAINERS:-1}
       SYNC_DB_BOOTSTRAP_USER: ${SYNC_DB_BOOTSTRAP_USER:-}
       SYNCSTORAGE_URL: http://syncstorage:8000
+      # Reset Sync data through the Sync server's data deletion endpoint, signed with this
+      # key (docs/admin/accounts.md#sync-data-through-the-sync-server)
+      SYNC_DELETE_DATA: ${SYNC_DELETE_DATA:-false}
+      SYNC_DELETE_DATA_KEY: ${SYNC_DELETE_DATA_KEY:-}
       # the setup checks: the Sync node, the keys of the sign-ins, the accounts' email domain
       SYNCSTORAGE_DOMAIN: ${SYNC_PUBLIC_URL:-${SYNCSTORAGE_DOMAIN:-}}
       # the old setting names of .env, for a setup check

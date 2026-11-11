@@ -265,13 +265,38 @@ What looks wrong is said in one line each:
 
 ### Reset the Sync data
 
-**Reset the Sync data**, on the account page and then the confirm page, deletes what the storage holds for the current row. It keeps the account and its tokenserver row. Each Firefox finds the server empty on its next sync, and uploads what it has again. Data that is only on the server is lost.
+**Reset the Sync data**, on the account page and then the confirm page, deletes what the storage holds for the current row (in the storage database, or [through the Sync server](#sync-data-through-the-sync-server) with `SYNC_DELETE_DATA=true`). It keeps the account and its tokenserver row. Each Firefox finds the server empty on its next sync, and uploads what it has again. Data that is only on the server is lost.
 
 **Reset…** next to a collection deletes that collection only. Firefox does not notice it by itself: it sends again what changes on a device, or everything after Sync is reset there (disconnect, then sign in again).
 
 The checkbox **also free the max users slot** deletes the account's tokenserver rows too, with the storage of each. The account no longer counts towards max users, and its next Sync token goes through the limit again: refused when the server is full.
 
 Every reset is in the event log and the alerts. It deletes 1000 items at a time, so the Sync server keeps answering: on MariaDB from `bso`, `user_collections`, `batch_uploads` and `batch_upload_items`; on PostgreSQL from `bsos`, then `user_collections`, which takes the batches with it.
+
+### Sync data through the Sync server
+
+syncstorage-rs 0.25.0 added a data deletion endpoint, `DELETE /1.0/users/<account id>/storage`. It empties what the account's current row stores, on the node the tokenserver assigned it, and leaves the row as it was: the same uid, node, keys and generation. That is what **Reset the Sync data** does. The endpoint is off unless the Sync server is given a key to check the requests with. Mozilla's accounts service has no code that calls it, so here the admin UI is the caller.
+
+With `SYNC_DELETE_DATA=true` (Helm: `syncstorage.deleteData`) the admin UI uses the endpoint. This works with self-hosted accounts and the admin UI only:
+
+- **Reset the Sync data**, all of it, asks the Sync server to delete the data. The confirm page is the same as before. The event log says *through the Sync server's data deletion endpoint*. If the endpoint fails, the admin UI deletes the data in the storage database as before, and the message and the event say why.
+- **Resetting one collection** happens in the storage database, because the endpoint deletes all of the data or none.
+- **Deleting an account**, or **also free the max users slot**, asks the Sync server first for the current row. Then the admin UI empties every row in the storage database and deletes the rows, as before.
+- **The health page** has a row *Sync data deletion*. It is up when the Sync server accepts the admin UI's requests. The check sends a request for `ffs-health-probe`, which is not a valid account id, so nothing is deleted.
+- **The configuration page** says whether the endpoint is on. It shows whether the key is set, never the key.
+
+How a request is checked:
+
+- **The key.** Each request carries an assertion that lives for one minute. The admin UI signs it with `SYNC_DELETE_DATA_KEY`, an RSA key generated for this install. At its start, the Sync server derives the public half of the key and uses it as its only configured JWK, with an audience and an issuer of this stack ([config/sync/delete-data.sh](/config/sync/delete-data.sh)). It accepts no assertion that this key did not sign. The private key is not passed on to `syncserver` itself.
+- **What the key can do.** The tokenserver accepts any JWT that this key signs as an access token too. Whoever has the key could therefore get a Sync token for any account. Keep it as secret as `SYNC_MASTER_SECRET`, which can already sign Sync tokens for any account.
+- **The network.** The Sync server asks its own node to delete the data, over the network, at `SYNC_PUBLIC_URL`. From inside its container it must resolve that host and trust its certificate. A certificate from a private CA needs `SSL_CERT_FILE` in the Sync server's environment. When the Sync server cannot reach its public URL, the endpoint answers 503 and the admin UI deletes the data in the database instead.
+- **Access tokens.** With a JWK configured, the tokenserver no longer fetches the accounts' keys from `/v1/jwks`. It checks every JWT access token against that JWK alone. The self-hosted accounts' access tokens are not JWTs by default, so they still go to the accounts' `/v1/verify`. Do not turn the endpoint on if you set `JWT_ACCESS_TOKENS_ENABLED_CLIENT_IDS`: the accounts' JWTs would then be refused. With Mozilla's accounts the endpoint stays off, which the Sync server says in its log, because their access tokens may be JWTs.
+
+To turn it on:
+
+- **compose and Quadlets.** Answer yes to *Reset Sync data through the Sync server's endpoint?* in `./prepare_environment.sh`. On an existing install, set `SYNC_DELETE_DATA=true` in `.env` and run `./prepare_environment.sh --upgrade`, which generates `SYNC_DELETE_DATA_KEY`. Then start the stack again (Quadlets: `--render-units`).
+- **Helm.** Set `syncstorage.deleteData: true`. The chart generates the key into its Secret and keeps it on upgrades. With `existingSecret`, add `SYNC_DELETE_DATA_KEY` yourself: the base64 of an RSA key's PEM, for example `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 | base64 -w0`.
+- **Off.** `SYNC_DELETE_DATA=false` is the default, and keeps everything as it was.
 
 ## Delete an account
 
@@ -288,7 +313,7 @@ What goes:
 - **In the accounts databases**, in one transaction: its recovery phone; its OAuth codes, refresh and access tokens, activity and consents (`fxa_oauth`); its profile and avatars (`fxa_profile`); its push messages (`pushbox`). Then Mozilla's own deletion (`deleteAccount_24`, reason `fxa_admin_requested_account_delete`): sessions, keys, devices, emails, two-step authentication, recovery key and codes, security events.
 - **On the allowlist**: its exact email, so that with sign-ups on an allowlist it cannot sign up again unless invited.
 - **In Redis**: its access tokens, the cache of its sessions and refresh tokens, its profile.
-- **On the Sync side**: every tokenserver row of `<uid>@<FXA_EMAIL_DOMAIN>`, with the storage of each, which frees its max users slot.
+- **On the Sync side**: every tokenserver row of `<uid>@<FXA_EMAIL_DOMAIN>`, with the storage of each, which frees its max users slot (with `SYNC_DELETE_DATA=true` the current row's data [through the Sync server](#sync-data-through-the-sync-server) first).
 - **Its note.**
 
 Firefox can keep writing for up to an hour with the Sync token it has. A second pass deletes that storage again 65 minutes later. A restart of the admin UI forgets that pass; the [purge](storage.md#purge) then finds that storage, which has no tokenserver row.

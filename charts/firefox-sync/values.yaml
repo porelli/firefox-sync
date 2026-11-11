@@ -419,6 +419,14 @@ syncstorage:
     # Service port
     port: 8000
 
+  # compose's SYNC_DELETE_DATA (docs/admin/accounts.md#sync-data-through-the-sync-server): true,
+  # the admin UI resets Sync data through the Sync server's data deletion endpoint (syncstorage-rs
+  # 0.25.0 on) with assertions it signs with a key of this release, generated into the Secret
+  # (SYNC_DELETE_DATA_KEY, kept on upgrades; with existingSecret: yours, base64 of an RSA
+  # key's PEM). The self-hosted accounts (fxa.enabled) and the admin UI (admin.enabled) only.
+  # The Sync server then needs to reach syncDomain itself, and trust its certificate
+  deleteData: false
+
 # The admin UI (compose's ffs-admin, see docs/admin/README.md): max users, accounts, health, metrics,
 # alerts. Not published: kubectl port-forward svc/<release>-firefox-sync-admin 8090:8080,
 # or admin.ingress below behind your own sign-in. The Sync server sends it its metrics

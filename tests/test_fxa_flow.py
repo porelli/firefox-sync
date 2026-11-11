@@ -305,8 +305,24 @@ def test_sync_again_after_a_reset(account):
     # passwords above block new sign-ins)
     session, key_id = account["session"], account["key_id"]
     uid = session.uid
+    # something stored, and the tokenserver's row of before
+    bearer = authorize(session)
+    res = requests.get(f"{SYNC}/1.0/sync/1.5", headers={"Authorization": f"Bearer {bearer}", "X-KeyID": key_id}, timeout=30)
+    assert res.status_code == 200, res.text
+    tabs = [{"id": "tabs000", "payload": json.dumps({"title": "before the reset"})}]
+    assert len(storage(res.json(), "POST", "/storage/tabs", tabs).json()["success"]) == 1
+    assert "tabs" in storage(res.json(), "GET", "/info/collections").json()
+    rows = tokenserver_rows()
     done = admin_confirm(f"/users/{uid}/reset-sync")
     assert "Reset the Sync data of" in done, done[:3000]
+    # SYNC_DELETE_DATA=true: through the Sync server's data deletion endpoint, not the
+    # storage database (what the admin UI does when the endpoint fails, and says so)
+    if os.environ.get("SYNC_DELETE_DATA") == "true":
+        assert "through the Sync server&#39;s data deletion endpoint" in done or "through the Sync server's data deletion endpoint" in done, done[:3000]
+        assert "deleted in the storage database instead" not in done, done[:3000]
+    # the data is gone, the user kept as it was: the same tokenserver row (no new generation,
+    # keys or node: what upstream's test_delete_data.py asserts of the endpoint)
+    assert tokenserver_rows() == rows
     bearer = authorize(session)
     res = requests.get(f"{SYNC}/1.0/sync/1.5", headers={"Authorization": f"Bearer {bearer}", "X-KeyID": key_id}, timeout=30)
     assert res.status_code == 200, res.text

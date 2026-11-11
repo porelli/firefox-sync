@@ -95,6 +95,13 @@ ALLOWED_DIFFERENCES = {
     "*:syncstorage/SYNC_STATSD_HOST": "chart-only as a variable: compose exports it in syncstorage's entrypoint when ffs-admin resolves; "
     "the chart sets it while the admin UI is on (its value is still compared with the export)",
     "*:syncstorage/SYNC_STATSD_PORT": "as SYNC_STATSD_HOST",
+    # the data deletion endpoint (SYNC_DELETE_DATA, config/sync/delete-data.sh): compose passes it
+    # always (false by default); the chart only with syncstorage.deleteData, so that the default
+    # render stays that of 0.1.0
+    "*:syncstorage/SYNC_DELETE_DATA": "as ADMIN_INSECURE_COOKIE: the chart only with syncstorage.deleteData",
+    "*:syncstorage/SYNC_DELETE_DATA_KEY": "as SYNC_DELETE_DATA",
+    "*:admin/SYNC_DELETE_DATA": "as the Sync server's",
+    "*:admin/SYNC_DELETE_DATA_KEY": "as the Sync server's",
     # the chart passes the passwords as their own variables (from the Secret) and builds the
     # database URLs with $(VAR): compose interpolates them into the URLs (and a $(VAR) must use them)
     f"{MYSQL_SERVERS}:migrate/STORAGE_DB_PASSWORD": "chart-only: the password of SYNC_SYNCSTORAGE__DATABASE_URL, $(STORAGE_DB_PASSWORD) there",
@@ -166,7 +173,8 @@ ALLOWED_CHART_SECRETS = {
 # commands other than compose's, the chart's exactly: "<cases>:<container>" -> ([command, args], why)
 ALLOWED_COMMANDS = {
     "*:syncstorage": ([["/app/bin/syncserver"], None],
-                      "compose's entrypoint script only adds SYNC_STATSD_* (env here) before exec /app/bin/syncserver"),
+                      "compose's entrypoint script only adds SYNC_STATSD_* (env here) and, with SYNC_DELETE_DATA=true, sources "
+                      "config/sync/delete-data.sh (the chart only with syncstorage.deleteData) before exec /app/bin/syncserver"),
     "*:backup": ([["sh", "/ffs-backup/backup.sh"], ["now"]],
                  "a CronJob runs backup.sh now at backup.schedule; compose's container runs backup.sh loop"),
     f"{SYNC_POSTGRES}:db": ([None, None],
@@ -314,6 +322,7 @@ EQUIVALENT_CHECK_PATTERNS = [
 # compose's scripts the chart carries a copy of
 IDENTICAL_FILES = {
     "charts/firefox-sync/files/backup.sh": "config/backup/backup.sh",
+    "charts/firefox-sync/files/sync-delete-data.sh": "config/sync/delete-data.sh",
     "charts/firefox-sync/files/admin-user.sh": "db/mysql/admin-user.sh",
     "charts/firefox-sync/files/postgres-keep-major.sh": "db/postgres/keep-major.sh",
     "charts/firefox-sync/files/db-setup.sh": "db/db-setup.sh",

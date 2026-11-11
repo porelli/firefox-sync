@@ -46,6 +46,8 @@ var configVars = map[string]bool{
 	"TOKENSERVER_DB_USER": false, "TOKENSERVER_DB_SSLMODE": false,
 	"STORAGE_DB_HOST": false, "STORAGE_DB_PORT": false, "STORAGE_DB_NAME": false, "STORAGE_DB_USER": false,
 	"FXA_OAUTH_SERVER_URL": false, "FXA_EMAIL_DOMAIN": false,
+	// the Sync server's data deletion endpoint (deletedata.go): the key the admin UI signs with
+	"SYNC_DELETE_DATA": false, "SYNC_DELETE_DATA_KEY": true,
 	// the admin UI's own users and database (owndb.go)
 	"ADMIN_DB_USER": false, "ADMIN_DB_SYNC_USER": false, "ADMIN_DB_NAME": false,
 	// your own database server, the account that applies its SQL (its name, the password is not given)
@@ -429,7 +431,9 @@ func (a *App) configPage(w http.ResponseWriter, r *http.Request, s *session) {
 	syncGroup.Rows = append(syncGroup.Rows,
 		setting("Sign-in keys", "FXA_OAUTH_SERVER_URL", "", "", oauthNote),
 		setting("Account emails", "FXA_EMAIL_DOMAIN", "", "", "the tokenserver keeps each account as <uid>@FXA_EMAIL_DOMAIN"),
-		setting("Sync server, inside the stack", "SYNCSTORAGE_URL", "", "http://syncstorage:8000", "the health checks and the versions"))
+		setting("Sync server, inside the stack", "SYNCSTORAGE_URL", "", "http://syncstorage:8000", "the health checks and the versions"),
+		a.deleteDataRow(),
+		setting("Data deletion key", "SYNC_DELETE_DATA_KEY", "", "not set", "the private key the admin UI signs the deletions with; the Sync server has its public half"))
 
 	// the self-hosted accounts
 	accounts := configGroup{ID: "accounts", Title: "Accounts"}
@@ -794,4 +798,12 @@ func (a *App) configHints(r *http.Request, status *SyncStatus, components []Comp
 		hints = append(hints, attention{Text: "Backups: " + strings.ToLower(text[:1]) + text[1:] + ".", Href: "/#backups-card", Link: "Backups"})
 	}
 	return hints
+}
+
+// deleteDataRow: whether Reset Sync data goes through the Sync server (SYNC_DELETE_DATA)
+func (a *App) deleteDataRow() configRow {
+	if a.deleter == nil {
+		return fact("Data deletion endpoint", "off", "Reset Sync data deletes in the storage database (docs/admin/accounts.md#sync-data-through-the-sync-server)", "SYNC_DELETE_DATA").unset()
+	}
+	return fact("Data deletion endpoint", "on", "Reset Sync data asks the Sync server (DELETE /1.0/users/<account id>/storage), with assertions the admin UI signs; the health page checks that it takes them", "SYNC_DELETE_DATA")
 }

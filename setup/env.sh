@@ -9,6 +9,17 @@ generate_random_string() {
   tr -dc '[:alnum:]' < /dev/urandom | head -c "${length}"
 }
 
+# generate_delete_key: SYNC_DELETE_DATA_KEY, a new RSA key of 2048 bits (openssl), the base64 of
+# its PEM on one line
+generate_delete_key() {
+  local key
+  command -v openssl > /dev/null 2>&1 \
+    || { echo "ERROR: SYNC_DELETE_DATA=true needs openssl to generate its key (SYNC_DELETE_DATA_KEY): install it, or answer no" >&2; return 1; }
+  key=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2> /dev/null | base64 | tr -d '\n')
+  [ -n "${key}" ] || { echo "ERROR: openssl did not generate SYNC_DELETE_DATA_KEY" >&2; return 1; }
+  printf '%s' "${key}"
+}
+
 # The temporary files that hold passwords (sed scripts, the .env being written, the units
 # rendered aside) are removed at the exit, also on Ctrl-C (INT) and TERM: those of a subshell
 # are in FFS_TMP, a directory of this user only (mktemp -d) that the main shell removes, the

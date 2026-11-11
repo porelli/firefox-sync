@@ -723,6 +723,9 @@
         "initResources": {
           "type": "object",
           "$comment": "a container's resources (requests, limits), as Kubernetes has them"
+        },
+        "deleteData": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

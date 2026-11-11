@@ -164,6 +164,7 @@ Its keys:
 | `FXA_MYSQL_POLICY_PASSWORD` | `fxa.enabled`, your own accounts database server, a non-empty `fxa.database.external.policyUser` | that user's password. The chart never generates it |
 | `FXA_DB_BOOTSTRAP_PASSWORD` | `fxa.enabled`, your own accounts database server, a non-empty `fxa.database.external.bootstrap.user` | that account's password, as `SYNC_DB_BOOTSTRAP_PASSWORD` |
 | `ADMIN_FXA_CLIENT_SECRET` | optional | leave it out: see [Sign in with the accounts](#sign-in-with-the-accounts) |
+| `SYNC_DELETE_DATA_KEY` | `syncstorage.deleteData` | the RSA key the admin UI signs its requests to the Sync server's data deletion endpoint with: the base64 of its PEM (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \| base64 -w0`). Missing: the endpoint stays off and the admin UI does not start, saying why. The chart's own Secret has one generated: see [Sync data through the Sync server](../admin/accounts.md#sync-data-through-the-sync-server) |
 
 With `existingSecret`, the chart does not read the values of those optional secrets (`smtp.password`, `admin.oidc.clientSecret`, `admin.metricsToken`, `admin.notify`, `fxa.adminClientSecret`), nor `admin.password`. With `fxa.enabled`, or a bootstrap account of your own server, an install or upgrade whose `existingSecret` lacks one of the accounts' keys or the bootstrap account's password is refused, with the missing keys named.
 
