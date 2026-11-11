@@ -153,13 +153,6 @@ apply_sed "${NEW_ENV}" "s|^ADMIN_DB_PASSWORD=.*|ADMIN_DB_PASSWORD=${ADMIN_DB_PAS
 # the optional services chosen, the whole list (none: the line stays commented out)
 [ -n "${COMPOSE_PROFILES_CHOSEN}" ] && apply_sed "${NEW_ENV}" "s|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=${COMPOSE_PROFILES_CHOSEN}|"
 [ -n "${ADMIN_NOTIFY}" ] && apply_sed "${NEW_ENV}" "s|^ADMIN_NOTIFY=.*|ADMIN_NOTIFY='$(sed_escape "${ADMIN_NOTIFY}")'|"
-# Reset Sync data through the Sync server's endpoint: this install's key (setup/env.sh)
-if [ "${SYNC_DELETE_DATA}" = true ]; then
-    DELETE_KEY=$(generate_delete_key) || exit 1
-    apply_sed "${NEW_ENV}" "s|^SYNC_DELETE_DATA=.*|SYNC_DELETE_DATA=true|"
-    apply_sed "${NEW_ENV}" "s|^SYNC_DELETE_DATA_KEY=.*|SYNC_DELETE_DATA_KEY=$(sed_escape "${DELETE_KEY}")|"
-    unset DELETE_KEY
-fi
 # the reverse proxy: which one, who reaches the admin UI's public address, the bundled Caddy's
 # ports and certificates, the labels for Traefik's
 apply_sed "${NEW_ENV}" "s|^PROXY=.*|PROXY=${PROXY}|"

@@ -27,7 +27,7 @@ SETUP_STEPS=(
     "@The admin UI"
     admin admin_signin admin_url admin_oidc_issuer admin_oidc_client_id admin_oidc_client_secret
     admin_oidc_name admin_oidc_scopes admin_auth_header admin_auth_groups_header admin_trusted_proxies
-    admin_users admin_groups admin_password admin_notify sync_delete_data
+    admin_users admin_groups admin_password admin_notify
     "@Backups"
     backups
     "@Reverse proxy"
@@ -1281,20 +1281,6 @@ step_admin_notify() {
     [ -z "${ADMIN_NOTIFY}" ] || echo "Alerts also to ${NOTIFY_NAMES} (ADMIN_NOTIFY in .env; more destinations there, separated by commas)"
 }
 
-step_sync_delete_data() {
-    # Reset Sync data through the Sync server's data deletion endpoint, signed by the admin UI
-    # with a key of this install (docs/admin/accounts.md#sync-data-through-the-sync-server):
-    # the self-hosted accounts and the admin UI only. Run again on an install: its choice
-    SYNC_DELETE_DATA=false
-    [ "${SELF_HOST_FXA}" = yes ] && [ "${ADMIN_UI}" = yes ] || return 0
-    hint "The admin UI can reset the Sync data of an account through the Sync server's own data deletion endpoint"
-    hint "  (syncstorage-rs 0.25.0 on) instead of in its database, with a key generated for this install. The Sync"
-    hint "  server then needs to reach its own public URL (docs/admin/accounts.md#sync-data-through-the-sync-server)"
-    ask_yn sync_delete_data "Reset Sync data through the Sync server's endpoint?" "$(previous_setting SYNC_DELETE_DATA false | sed 's/^true$/yes/; s/^false$/no/')" || return
-    [ "${YN}" = yes ] && SYNC_DELETE_DATA=true
-    return 0
-}
-
 # --- 5) Backups
 step_backups() {
     # the nightly backups (docs/backups.md#the-backup-service): compose's backup profile, the
@@ -1702,7 +1688,6 @@ setup_summary() {
             header) echo "  4 Admin UI: on, sign-in by the header ${ADMIN_AUTH_HEADER_V} from ${ADMIN_TRUSTED_PROXIES_V} for ${ADMIN_ALLOWED_USERS}${ADMIN_ALLOWED_USERS:+${ADMIN_ALLOWED_GROUPS_V:+ and }}${ADMIN_ALLOWED_GROUPS_V:+the groups ${ADMIN_ALLOWED_GROUPS_V}}$(password_way)" ;;
         esac
         echo "     alerts: $([ -n "${ADMIN_NOTIFY}" ] && echo "${NOTIFY_NAMES}" || echo "by email only, once ADMIN_ALERT_EMAIL is set")"
-        [ "${SELF_HOST_FXA}" = yes ] && echo "     Reset Sync data: $([ "${SYNC_DELETE_DATA}" = true ] && echo "through the Sync server's data deletion endpoint (a key generated)" || echo "in the storage database")"
     else
         echo "  4 Admin UI: off"
     fi

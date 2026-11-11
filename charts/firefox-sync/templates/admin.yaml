@@ -175,10 +175,6 @@ spec:
             # initial:N: the admin UI manages max users, otherwise the chart does (read-only)
             - name: MAX_USERS
               value: {{ include "firefox-sync.maxUsers" . | quote }}
-            # Reset Sync data through the Sync server's data deletion endpoint (syncstorage.deleteData)
-            {{- if .Values.syncstorage.deleteData }}
-            {{- include "firefox-sync.deleteDataEnv" . | nindent 12 }}
-            {{- end }}
             # admin or initial:...: the admin UI manages the allowlist of Sync, otherwise the chart
             # does (only when set: unset is empty, off)
             {{- with .Values.allowedAccounts }}

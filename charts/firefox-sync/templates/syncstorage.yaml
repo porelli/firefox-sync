@@ -50,10 +50,6 @@ spec:
       {{- /* a new db-setup.sh or SQL (a chart upgrade) restarts the pod: db-bootstrap runs it */}}
       {{- $_ := set $annotations "checksum/db-setup" (include "firefox-sync.dbSetupData" . | sha256sum) }}
       {{- end }}
-      {{- if .Values.syncstorage.deleteData }}
-      {{- /* a new delete-data.sh, or a new key in the chart's Secret, restarts it */}}
-      {{- $_ := set $annotations "checksum/delete-data" (print (.Files.Get "files/sync-delete-data.sh") (ternary "" (get (include "firefox-sync.secretData" . | fromJson) "SYNC_DELETE_DATA_KEY" | default "") (empty .Values.existingSecret | not)) | sha256sum) }}
-      {{- end }}
       {{- with include "firefox-sync.podAnnotations" (dict "root" . "annotations" $annotations) }}{{ . | trim | nindent 6 }}{{ end }}
     spec:
       {{- include "firefox-sync.podSpec" . | nindent 6 }}
@@ -296,20 +292,10 @@ spec:
         - name: syncstorage
           image: {{ include "firefox-sync.image" (dict "root" . "name" "syncstorage") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.syncstorage.deleteData }}
-          # the data deletion endpoint for the admin UI (files/sync-delete-data.sh, compose's
-          # config/sync/delete-data.sh): the public half of the key as the tokenserver's JWK
-          command: ["/bin/sh", "-c"]
-          args: [". /ffs-sync/delete-data.sh; exec /app/bin/syncserver"]
-          {{- else }}
           command: ["/app/bin/syncserver"]
-          {{- end }}
           {{- include "firefox-sync.syncstorageSecurityContext" . | nindent 10 }}
           env:
             {{- include "firefox-sync.syncstorageEnv" . | nindent 12 }}
-            {{- if .Values.syncstorage.deleteData }}
-            {{- include "firefox-sync.deleteDataEnv" . | nindent 12 }}
-            {{- end }}
             {{- if .Values.admin.enabled }}
             # compose's entrypoint: the metrics to the admin UI only while it runs, syncstorage-rs
             # does not start when the statsd host does not resolve (the Service's name does,
@@ -341,32 +327,7 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if .Values.syncstorage.deleteData }}
-          volumeMounts:
-            - name: sync-scripts
-              mountPath: /ffs-sync
-              readOnly: true
-          {{- end }}
-      {{- if or (not .Values.database.bundled) .Values.syncstorage.deleteData }}
+      {{- if not .Values.database.bundled }}
       volumes:
-        {{- if not .Values.database.bundled }}
         {{- include "firefox-sync.dbSetupVolume" (dict "root" . "scope" "sync") | nindent 8 }}
-        {{- end }}
-        {{- if .Values.syncstorage.deleteData }}
-        - name: sync-scripts
-          configMap:
-            name: {{ $fullname }}-sync-scripts
-        {{- end }}
       {{- end }}
-{{- if .Values.syncstorage.deleteData }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $fullname }}-sync-scripts
-  labels:
-    {{- include "firefox-sync.labels" (dict "root" . "component" "syncstorage") | nindent 4 }}
-data:
-  delete-data.sh: |
-    {{- .Files.Get "files/sync-delete-data.sh" | trimSuffix "\n" | nindent 4 }}
-{{- end }}

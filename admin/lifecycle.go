@@ -321,22 +321,6 @@ func (a *App) resetSync(w http.ResponseWriter, r *http.Request, s *session) {
 		a.doneTo(w, r, s, to, message, err)
 		return
 	}
-	// all of it: through the Sync server when it has the endpoint (deletedata.go), in the
-	// storage database when that fails
-	fallback := ""
-	if collection == "" && a.deleter != nil {
-		removed, deleted, err := a.deleteThroughSync(ctx, uid, current.ID)
-		if err == nil {
-			message := fmt.Sprintf("Reset the Sync data of %s through the Sync server's data deletion endpoint (%s, storage uid %d)", label, removed, current.ID)
-			if !deleted {
-				message += ": no node assigned, nothing stored"
-			}
-			a.doneTo(w, r, s, "/users/"+uid, message, nil)
-			return
-		}
-		log.Printf("reset of %s through the Sync server: %v", label, err)
-		fallback = "; the Sync server's data deletion endpoint failed (" + err.Error() + "), deleted in the storage database instead"
-	}
 	removed, err := a.storage.DeleteStorage(ctx, current.ID, collection)
 	what := "the Sync data"
 	if collection != "" {
@@ -345,7 +329,7 @@ func (a *App) resetSync(w http.ResponseWriter, r *http.Request, s *session) {
 	if err != nil {
 		err = syncPartial(err, 0, removed)
 	}
-	a.doneTo(w, r, s, "/users/"+uid, fmt.Sprintf("Reset %s of %s (%s, storage uid %d)%s", what, label, removed, current.ID, fallback), err)
+	a.doneTo(w, r, s, "/users/"+uid, fmt.Sprintf("Reset %s of %s (%s, storage uid %d)", what, label, removed, current.ID), err)
 }
 
 // syncPartial: a failure after some Sync data went is a change made, for the event log
@@ -534,24 +518,6 @@ func (a *App) deleteSyncRows(ctx context.Context, rows []UserRow, label string) 
 	var removed Removed
 	ids := make([]int64, 0, len(rows))
 	defer func() { a.scheduleSecondPass(ids, label, time.Now()) }()
-	// the current row's data through the Sync server first, when it has the endpoint
-	// (deletedata.go): it knows the row's node. The storage database then empties every
-	// row anyway (the endpoint leaves the older ones, and the rows go)
-	if a.deleter != nil {
-		for _, row := range rows {
-			// (the tokenserver keeps the account id as <account id>@FXA_EMAIL_DOMAIN)
-			uid, _, _ := strings.Cut(row.Email, "@")
-			if !row.Current || uid == "" {
-				continue
-			}
-			n, _, err := a.deleteThroughSync(ctx, uid, row.ID)
-			if err != nil && !errors.Is(err, errDeleteNoUser) {
-				log.Printf("deleting the Sync data of %s through the Sync server: %v (deleted in the storage database)", label, err)
-			} else if err == nil {
-				removed.add(n)
-			}
-		}
-	}
 	for _, row := range rows {
 		if a.storage != nil {
 			n, err := a.storage.DeleteStorage(ctx, row.ID, "")

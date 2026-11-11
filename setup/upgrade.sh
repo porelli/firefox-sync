@@ -196,14 +196,6 @@ upgrade_env() {
         env_has "${name}" || set_value "${name}" "$(grep "^${name}=" "${SCRIPT_DIR}/.env-example" | cut -d= -f2-)"
     done
     [ -n "$(env_value ADMIN_DB_PASSWORD)" ] || set_value ADMIN_DB_PASSWORD "$(generate_random_string 32)"
-    # SYNC_DELETE_DATA set to true by hand (docs/admin/accounts.md#sync-data-through-the-sync-server):
-    # its key generated, once; false or not set: nothing changes
-    if [ "$(env_value SYNC_DELETE_DATA)" = true ] && [ -z "$(env_value SYNC_DELETE_DATA_KEY)" ]; then
-        local delete_key
-        delete_key=$(generate_delete_key) || exit 1
-        set_value SYNC_DELETE_DATA_KEY "${delete_key}"
-        echo "SYNC_DELETE_DATA_KEY: generated, for SYNC_DELETE_DATA=true (restart the Sync server and the admin UI)"
-    fi
     # the compose files moved to compose/ (docs/upgrading.md#files-that-moved): their new names in
     # COMPOSE_FILE, and the project's name written next to it (compose/ first there, compose
     # would name it "compose": other containers, other volumes). No COMPOSE_FILE (docker-compose.yml,

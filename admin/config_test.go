@@ -112,9 +112,7 @@ func secretName(name string) bool {
 var adminSecrets = map[string]bool{"ADMIN_PASSWORD": true, "ADMIN_OIDC_CLIENT_SECRET": true, "ADMIN_FXA_CLIENT_SECRET": true, "ADMIN_METRICS_TOKEN": true,
 	"FXA_SMTP_PASS": true, "ADMIN_DB_PASSWORD": true, "FXA_ADMIN_DB_PASSWORD": true,
 	// the Helm chart's Redis of the accounts has one (compose's is on a network of its own)
-	"FXA_REDIS_PASSWORD": true,
-	// the key it signs the Sync server's data deletions with (deletedata.go)
-	"SYNC_DELETE_DATA_KEY":         true,
+	"FXA_REDIS_PASSWORD":           true,
 	"SYNC_TOKENSERVER_DB_PASSWORD": true, "SYNC_STORAGE_DB_PASSWORD": true, "SYNC_POSTGRES_PASSWORD": true, "SYNC_POSTGRES_APP_PASSWORD": true,
 	// their old names, still read when the new ones are not set (docs/upgrading.md#renamed-settings)
 	"MARIADB_TOKENSERVER_PASSWORD": true, "MARIADB_SYNCSTORAGE_PASSWORD": true, "POSTGRES_PASSWORD": true, "POSTGRES_SYNC_PASSWORD": true}

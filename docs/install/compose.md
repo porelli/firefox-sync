@@ -178,7 +178,6 @@ A choice takes its name or its number in the list, yes or no `yes`, `y`, `no` or
 | `admin_groups` | `oidc`, `header`: groups whose members are admins | group names | none |
 | `admin_password` | `accounts`, `oidc`, `header`: keep a password as a fallback? | yes; no: `ADMIN_PASSWORD` empty, single sign-on only | yes |
 | `admin_notify` | where the alerts go too | destination URLs | none |
-| `sync_delete_data` | self-hosted accounts and the admin UI: reset Sync data through the Sync server's data deletion endpoint? ([Sync data through the Sync server](../admin/accounts.md#sync-data-through-the-sync-server); needs `openssl`) | yes, no | no (an install's: its own) |
 | `backups` | nightly backups? | yes, no | no (an install's: its own) |
 | `proxy` | do you already run a reverse proxy? | `own`, `caddy` (the bundled Caddy; not with `admin_signin=header`), `traefik` (labels for your Traefik; not with Quadlets) | `own` (an install's: its own) |
 | `proxy_admin_allow` | with the admin UI's public URL: who can open it | addresses and CIDRs, comma-separated; `anybody` | `127.0.0.1,::1` (this host) |

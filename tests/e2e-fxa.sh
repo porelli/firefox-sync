@@ -19,9 +19,6 @@
 #   SKIP_BROWSER     set to 1 to skip the real Firefox test
 #   FXA_ACCOUNT_EVENTS true (default here, off for users) records the security history of the
 #                    accounts: every test then also runs with it on, test_fxa_admin.py checks it
-#   SYNC_DELETE_DATA true (default here when the Sync image has the endpoint, syncstorage-rs
-#                    0.25.0 on; off for users): the admin UI resets Sync data through the Sync
-#                    server's data deletion endpoint, with a key generated here; false: as before
 #   SKIP_PULL        set to 1 to use the local images (e.g. an init image built from this tree)
 #   FXA_DB           mysql (default, FXA_MYSQL_IMAGE) or mariadb (FXA_MARIADB_IMAGE, compose/fxa-mariadb.yml)
 #                    for the accounts database
@@ -115,22 +112,6 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "s|^FXA_ACCOUNT_EVENTS=.*|FXA_ACCOUNT_EVENTS=${FXA_ACCOUNT_EVENTS:-true}|" \
     -e "/^COMPOSE_FILE=/d" > "${ENV_FILE}"
 slot_fxa_ports "${ENV_FILE}"
-# Reset Sync data through the Sync server's data deletion endpoint (SYNC_DELETE_DATA, its key
-# as prepare_environment.sh generates it): on by default here, for the images that have the
-# endpoint (those with upstream's tools/fxa_delete, 0.25.0 on); the tests then check it
-if [ -z "${SYNC_DELETE_DATA:-}" ]; then
-  SYNC_DELETE_DATA=false
-  docker run --rm --pull="$([ -n "${SKIP_PULL:-}" ] && echo missing || echo always)" --entrypoint test \
-    "${REPOSITORY}:$(sed -n 's/^SYNC_IMAGE=//p' "${ENV_FILE}")-${TAG}" -d /app/tools/fxa_delete > /dev/null 2>&1 && SYNC_DELETE_DATA=true
-fi
-sed -i "s|^SYNC_DELETE_DATA=.*|SYNC_DELETE_DATA=${SYNC_DELETE_DATA}|" "${ENV_FILE}"
-if [ "${SYNC_DELETE_DATA}" = true ]; then
-  # (setup/env.sh's generate_delete_key)
-  delete_key=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2> /dev/null | base64 | tr -d '\n')
-  [ -n "${delete_key}" ] || { echo "FAIL: SYNC_DELETE_DATA_KEY not generated (openssl)"; exit 1; }
-  sed -i "s|^SYNC_DELETE_DATA_KEY=.*|SYNC_DELETE_DATA_KEY=${delete_key}|" "${ENV_FILE}"
-fi
-echo "SYNC_DELETE_DATA=${SYNC_DELETE_DATA}: Reset Sync data $([ "${SYNC_DELETE_DATA}" = true ] && echo "through the Sync server's data deletion endpoint" || echo "in the storage database")"
 # the demo: sign-ups for its household (dave@example.net gets invited)
 [ -n "${DEMO:-}" ] && sed -i -e "s|^FXA_SIGNUP_ALLOWLIST=.*|FXA_SIGNUP_ALLOWLIST=@example.com,carol@example.org|" "${ENV_FILE}"
 # by default the accounts images of the registry under test, for this machine
@@ -1036,14 +1017,6 @@ dc run --rm -T --no-deps --user root \
   --entrypoint /bin/sh syncstorage \
   -c "cd /app && $(pytest_sh "/tests/test_fxa_flow.py ${PYTEST_ARGS}")" < /dev/null
 check "$?" 0 "self-hosted FxA flow tests"
-if [ "${SYNC_DELETE_DATA}" = true ]; then
-  # config/sync/delete-data.sh: the endpoint on, and the private key not in syncserver's environment
-  sync_log=$(dc logs --no-log-prefix syncstorage 2>&1)
-  check "$(grep -q "The data deletion endpoint is on" <<< "${sync_log}" && echo on) $(grep -c 'ERROR: SYNC_DELETE' <<< "${sync_log}")" \
-    "on 0" "the Sync server's data deletion endpoint on (SYNC_DELETE_DATA), no error"
-  check "$(dc exec -T syncstorage sh -c 'tr "\\0" "\\n" < /proc/1/environ' 2> /dev/null | grep -c '^SYNC_DELETE_DATA_KEY=\|^SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__N=')" 1 \
-    "syncserver has the public half of SYNC_DELETE_DATA_KEY only (its JWK), not the key"
-fi
 check "$(( $(refused_verify) - verify_before ))" 1 "the opaque token of another accounts server refused by the stack's fxa-auth (/v1/verify 400), where the tokenserver asked"
 fi
 

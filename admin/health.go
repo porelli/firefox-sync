@@ -257,10 +257,6 @@ func newHealth(app *App) *Health {
 	if app.storage != nil && !app.sync.postgres {
 		h.checks = append(h.checks, check{name: "Storage database", health: func(ctx context.Context) error { return app.storage.db.PingContext(ctx) }, version: app.storage.Version})
 	}
-	if app.deleter != nil {
-		// the endpoint on, with the public half of the admin UI's key (deletedata.go)
-		h.checks = append(h.checks, check{name: deleteCheckName, run: app.deleter.probe})
-	}
 	if app.sync != nil && app.sync.own != nil {
 		own := app.sync.own
 		// the event log and the audit trail (owndb.go), on the tokenserver's server

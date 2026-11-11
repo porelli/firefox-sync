@@ -28,17 +28,10 @@ Environment=SYNC_TOKENSERVER__FXA_METRICS_HASH_SECRET=%SYNC_METRICS_HASH_SECRET%
 Environment=SYNC_TOKENSERVER__ADDITIONAL_BLOCKING_THREADS_FOR_FXA_REQUESTS=2
 Environment=RUST_LOG=info
 
-# the data deletion endpoint for the admin UI (config/sync/delete-data.sh,
-# docs/admin/accounts.md#sync-data-through-the-sync-server): off unless true, with the key
-# the admin UI signs with (its public half is what the Sync server is given)
-Environment=SYNC_DELETE_DATA=%SYNC_DELETE_DATA%
-Environment=SYNC_DELETE_DATA_KEY=%SYNC_DELETE_DATA_KEY%
-Volume=%SCRIPT_DIR%/config/sync:/ffs-sync:ro,z
-
 # metrics for the admin UI, when it runs: syncstorage-rs does not start if the metrics
 # host does not resolve, so only point it there if it does
 PodmanArgs=--entrypoint=/bin/sh
-Exec=-c 'if getent hosts ffs-admin > /dev/null; then export SYNC_STATSD_HOST=ffs-admin SYNC_STATSD_PORT=8125; echo "Sending metrics to the admin UI"; fi; . /ffs-sync/delete-data.sh; exec /app/bin/syncserver'
+Exec=-c 'if getent hosts ffs-admin > /dev/null; then export SYNC_STATSD_HOST=ffs-admin SYNC_STATSD_PORT=8125; echo "Sending metrics to the admin UI"; fi; exec /app/bin/syncserver'
 HealthCmd=curl -f http://localhost:8000/__heartbeat__
 HealthInterval=30s
 HealthTimeout=10s

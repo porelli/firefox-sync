@@ -9,7 +9,6 @@ The Health part of the overview shows, for each component, whether it answers it
 - the versions running, and whether a newer release is out, see [Versions and schema levels](#versions-and-schema-levels), with the schema levels and the [setup migrations](#setup-migrations) of the databases;
 - the limits: the accounts against max users and max accounts, see [Limits](accounts.md#limits);
 - the Email (SMTP) row and the Notifications row, see [Alerts](alerts.md);
-- with `SYNC_DELETE_DATA=true`, the Sync data deletion row: up while the Sync server accepts the admin UI's requests to its data deletion endpoint, see [Sync data through the Sync server](accounts.md#sync-data-through-the-sync-server);
 - the public URLs with their certificates, see [Public checks](#public-checks);
 - rows that appear only when they have something to say: `Sync metrics`, `Sync error rate`, `Database growth`.
 
@@ -142,9 +141,7 @@ Each setting shows its value, the variable it comes from (or `(default)` when it
 
 To change a setting, edit `.env` and start the stack again, or with the Helm chart your values and `helm upgrade`. On Kubernetes the page names the values as the variables of `.env`. The limits and the sign-ups are changed on the overview.
 
-- **The data deletion endpoint**: whether Reset Sync data goes through the Sync server (`SYNC_DELETE_DATA`), see [Sync data through the Sync server](accounts.md#sync-data-through-the-sync-server).
-
-**Secrets are never on the page**, only "set" or "not set": `ADMIN_PASSWORD`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `FXA_SMTP_PASS`, `SYNC_DELETE_DATA_KEY` and the passwords of the databases. A password inside a URL is hidden too, and the destinations of `ADMIN_NOTIFY` show as `scheme://host` only. The admin UI does not get the other secrets of `.env` at all (`SYNC_MASTER_SECRET`, the keys of the accounts service).
+**Secrets are never on the page**, only "set" or "not set": `ADMIN_PASSWORD`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `FXA_SMTP_PASS` and the passwords of the databases. A password inside a URL is hidden too, and the destinations of `ADMIN_NOTIFY` show as `scheme://host` only. The admin UI does not get the other secrets of `.env` at all (`SYNC_MASTER_SECRET`, the keys of the accounts service).
 
 <details><summary>Why no secret can end up there</summary>
 

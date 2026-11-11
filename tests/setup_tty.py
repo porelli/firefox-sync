@@ -63,7 +63,6 @@ FLOW = [
     ("Who is an admin", "me@example.org\r", None),
     ("Keep a password as a fallback", "\r", None),
     ("Destinations of the alerts", "\r", None),
-    ("Reset Sync data through the Sync server", "\r", None),
     ("Enable nightly backups", "\r", None),
     ("Do you already run a reverse proxy", "\r", None),
     ("Who can open the admin UI's public address", "\r", None),

@@ -90,19 +90,6 @@ services:
       caddy-ca:
         condition: service_completed_successfully
 
-  # the data deletion endpoint (SYNC_DELETE_DATA): the tokenserver asks the node, its own public
-  # URL (https://sync.fxa.test, through the proxy under test), to delete; its certificate is of
-  # the test CA (not at /caddy-ca, where the tests' containers of this service mount it)
-  syncstorage:
-    healthcheck: *health-test
-    environment:
-      SSL_CERT_FILE: /ffs-test-ca/root.crt
-    volumes:
-      - caddy-ca:/ffs-test-ca:ro
-    depends_on:
-      caddy-ca:
-        condition: service_completed_successfully
-
   fxa-auth:
     healthcheck: *health-test
     environment:
@@ -133,6 +120,8 @@ services:
       caddy-ca:
         condition: service_completed_successfully
 
+  syncstorage:
+    healthcheck: *health-test
   tokenserver_db:
     healthcheck: *health-test
   syncstorage_db:
