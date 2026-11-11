@@ -60,6 +60,10 @@ The docs check of a branch ([tests/check_docs_changed.py](/tests/check_docs_chan
 - Stop the version updates: remove the ecosystem from [.github/dependabot.yml](/.github/dependabot.yml), or set `open-pull-requests-limit: 0` on it. Pull requests already open stay open.
 - Stop the security updates: *Settings*, *Advanced Security*, *Dependabot security updates*. The alerts stay on.
 
+### A development copy
+
+A development repository that is fast-forwarded into this one runs the same Dependabot configuration and would merge the same updates: the same change as two different commits, and the two default branches no longer fast-forward. So only the public repository merges them. The development one has the repository variable `FFS_DEPENDENCIES=off`: its gate closes its Dependabot pull requests with a comment and deletes their branches, and it gets the updates by bringing its default branch up to the public one's before it is promoted again (a fast-forward, or a rebase of its newer commits).
+
 ## Repository settings
 
 The setup expects these settings, on this repository and on any repository the code moves to:
