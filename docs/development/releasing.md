@@ -27,6 +27,8 @@ The release:
 
 Only that last job, `publish`, can write (`contents: write`); the decision runs with read access.
 
+A copy of the repository that must never release (a development repository that is fast-forwarded into this one) sets its repository variable `FFS_RELEASES=off`: release.yml still decides and prints the notes, and `publish` is skipped, so no tag, release or CHANGELOG.md commit is made there.
+
 To see what would be released now, without releasing:
 
 ```bash

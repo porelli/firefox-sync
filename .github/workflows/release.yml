@@ -99,9 +99,11 @@ jobs:
           path: ${{ runner.temp }}/release
           if-no-files-found: ignore
 
+  # a repository that never releases (a development copy, its repository variable
+  # FFS_RELEASES=off): it plans and prints the notes, and publishes nothing
   publish:
     needs: plan
-    if: needs.plan.outputs.release == 'true'
+    if: needs.plan.outputs.release == 'true' && vars.FFS_RELEASES != 'off'
     runs-on: ubuntu-latest
     permissions:
       contents: write
