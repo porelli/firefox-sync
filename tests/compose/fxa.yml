@@ -94,6 +94,7 @@ services:
   # URL (https://sync.fxa.test, through the proxy under test), to delete; its certificate is of
   # the test CA (not at /caddy-ca, where the tests' containers of this service mount it)
   syncstorage:
+    healthcheck: *health-test
     environment:
       SSL_CERT_FILE: /ffs-test-ca/root.crt
     volumes:
@@ -132,8 +133,6 @@ services:
       caddy-ca:
         condition: service_completed_successfully
 
-  syncstorage:
-    healthcheck: *health-test
   tokenserver_db:
     healthcheck: *health-test
   syncstorage_db:
