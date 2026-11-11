@@ -316,7 +316,7 @@ func TestResetAndDeleteThroughTheSyncServer(t *testing.T) {
 	if got := taken(); len(got) != 1 || got[0] != endpoint || storageDeletes(fake) != 0 {
 		t.Errorf("reset: %q, %d deletes in the storage database", got, storageDeletes(fake))
 	}
-	if !strings.Contains(s.message, "through the Sync server's data deletion endpoint (storage uid 7)") || s.failed != "" {
+	if !strings.Contains(s.message, "through the Sync server's data deletion endpoint (3 items, 300 B, storage uid 7)") || s.failed != "" {
 		t.Errorf("reset: %q / %q", s.message, s.failed)
 	}
 	if ev := inserted(fake, "admin"); len(ev) == 0 || !strings.Contains(ev[len(ev)-1], "through the Sync server's data deletion endpoint") {
@@ -352,7 +352,9 @@ func TestResetAndDeleteThroughTheSyncServer(t *testing.T) {
 	if got := taken(); len(got) != 1 || got[0] != endpoint || storageDeletes(fake) == 0 {
 		t.Errorf("delete: %q, %d deletes", got, storageDeletes(fake))
 	}
-	if !strings.HasPrefix(s.message, "Deleted alice@example.com") || s.failed != "" {
+	// what the current row held, counted before the Sync server deleted it, and what the
+	// storage database then found (the fake's 3 items again)
+	if !strings.HasPrefix(s.message, "Deleted alice@example.com (uid "+fakeUID+") and its Sync data (6 items, 600 B, 1 tokenserver rows)") || s.failed != "" {
 		t.Errorf("delete: %q / %q", s.message, s.failed)
 	}
 }

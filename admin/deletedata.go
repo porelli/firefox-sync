@@ -199,3 +199,22 @@ func (d *syncDeleter) probe(ctx context.Context) (string, error) {
 	}
 	return "", err
 }
+
+// deleteThroughSync: the data of the account id's current row (storage uid id) deleted by
+// the Sync server, and what it held, counted in the storage database first (the endpoint
+// says only whether it deleted)
+func (a *App) deleteThroughSync(ctx context.Context, uid string, id int64) (Removed, bool, error) {
+	var held Removed
+	if a.storage != nil {
+		if all, err := a.storage.UsageOf(ctx, []int64{id}); err == nil {
+			u := all[id].total()
+			held = Removed{Items: u.Items, Bytes: u.Bytes}
+		}
+		defer a.storage.forget()
+	}
+	deleted, err := a.deleter.Delete(ctx, uid)
+	if err != nil {
+		return Removed{}, false, err
+	}
+	return held, deleted, nil
+}

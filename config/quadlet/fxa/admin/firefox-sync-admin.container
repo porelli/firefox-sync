@@ -33,6 +33,10 @@ Environment="STORAGE_DB_PORT=%SYNC_STORAGE_DB_PORT%"
 Environment="STORAGE_DB_NAME=%SYNC_STORAGE_DB_NAME%"
 Environment="STORAGE_DB_USER=%SYNC_STORAGE_DB_USER%"
 Environment="SYNCSTORAGE_URL=http://firefox-sync-syncstorage:8000"
+# Reset Sync data through the Sync server's data deletion endpoint, signed with this key
+# (docs/admin/accounts.md#sync-data-through-the-sync-server)
+Environment="SYNC_DELETE_DATA=%SYNC_DELETE_DATA%"
+Environment="SYNC_DELETE_DATA_KEY=%SYNC_DELETE_DATA_KEY%"
 # the setup checks: the Sync node, the keys of the sign-ins, the accounts' email domain
 Environment="SYNCSTORAGE_DOMAIN=%SYNC_PUBLIC_URL%"
 Environment="FXA_OAUTH_SERVER_URL=%FXA_OAUTH_SERVER_URL%"

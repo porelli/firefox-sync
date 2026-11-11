@@ -325,9 +325,9 @@ func (a *App) resetSync(w http.ResponseWriter, r *http.Request, s *session) {
 	// storage database when that fails
 	fallback := ""
 	if collection == "" && a.deleter != nil {
-		deleted, err := a.deleter.Delete(ctx, uid)
+		removed, deleted, err := a.deleteThroughSync(ctx, uid, current.ID)
 		if err == nil {
-			message := fmt.Sprintf("Reset the Sync data of %s through the Sync server's data deletion endpoint (storage uid %d)", label, current.ID)
+			message := fmt.Sprintf("Reset the Sync data of %s through the Sync server's data deletion endpoint (%s, storage uid %d)", label, removed, current.ID)
 			if !deleted {
 				message += ": no node assigned, nothing stored"
 			}
@@ -544,8 +544,11 @@ func (a *App) deleteSyncRows(ctx context.Context, rows []UserRow, label string) 
 			if !row.Current || uid == "" {
 				continue
 			}
-			if _, err := a.deleter.Delete(ctx, uid); err != nil && !errors.Is(err, errDeleteNoUser) {
+			n, _, err := a.deleteThroughSync(ctx, uid, row.ID)
+			if err != nil && !errors.Is(err, errDeleteNoUser) {
 				log.Printf("deleting the Sync data of %s through the Sync server: %v (deleted in the storage database)", label, err)
+			} else if err == nil {
+				removed.add(n)
 			}
 		}
 	}
