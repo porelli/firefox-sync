@@ -14,6 +14,10 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Security
 
+## v2026.11.16 — 2026-11-16
+
+Upstream only: syncstorage-rs 0.25.0, accounts v1.349.0.
+
 ## v2026.11.08 — 2026-11-08
 
 ### Breaking
