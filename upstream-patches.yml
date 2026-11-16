@@ -179,6 +179,23 @@
     having it). Until mozilla/fxa#21731 is released too, a wrong FXA_MYSQL_PASSWORD makes
     Mozilla's fxa-migrations exit without "Access denied" (retried, not stopped at once).
 
+- id: fxa-mysql2-backfill-flags
+  repo: mozilla/fxa
+  pr: 21733
+  head_repo: mozilla/fxa
+  base: 30bb9b3b23539b32c7c71cf748f1388ac271c091
+  sha: 3b802ea620e5c18ec2bb077641285e1bb8423a77
+  component: fxa-mono
+  # merged into main after v1.349.2 (3b802ea): applied until a release has it. After fxa-mysql2:
+  # v1.349.2 backported the backfill script's fix (mozilla/fxa#21690) with mysql's string flags,
+  # which mysql2 (fxa-mysql2, applied above) refuses: fxa-auth-server's build-ts fails
+  why: >-
+    fix(auth): pass mysql2 flags as an array in the backfill script. With the mysql2 switch
+    (mozilla/fxa#21709) the backfill-account-authorizations script's flags: '-FOUND_ROWS' no
+    longer type-checks, and the auth server does not build.
+  when_released: >-
+    Nothing to undo: remove this entry (with fxa-mysql2, once a release has both).
+
 - id: fxa-migrations-refused-signin
   repo: mozilla/fxa
   pr: 21731
