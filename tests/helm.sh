@@ -1295,8 +1295,16 @@ allowlist_e2e() {
   local listed=0123456789abcdef0123456789abcdef other=fedcba9876543210fedcba9876543210 got
   helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set-string allowedAccounts="initial:${listed}" --wait --timeout 10m \
     || fail "helm upgrade with allowedAccounts did not get Ready"
-  kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=-1 | grep -q "SYNC_ALLOWED_ACCOUNTS=initial:${listed}: invite-only, 1 accounts allowed" \
-    || fail "the db-init container did not apply allowedAccounts: $(kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=5)"
+  # read again for up to a minute: right after --wait the selector can still give the old pod
+  # (terminating), or the new pod's init log is not readable yet (seen on MariaDB: the line was
+  # there a second later)
+  local i
+  for i in $(seq 1 30); do
+    kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=-1 2> /dev/null \
+      | grep -q "SYNC_ALLOWED_ACCOUNTS=initial:${listed}: invite-only, 1 accounts allowed" && break
+    [ "${i}" = 30 ] && fail "the db-init container did not apply allowedAccounts: $(kubectl logs -l "${POD_SELECTOR}" -c db-init --tail=5)"
+    sleep 2
+  done
   got=$(sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'; SELECT uid FROM sync_allowed_accounts;" -sN | paste -sd' ' -)
   [[ "${got}" == "on ${listed}" ]] || fail "allowedAccounts: the database has ${got}"
   check "allowedAccounts=initial:<uid> applied by the db-init container (on, the uid listed)"
