@@ -79,7 +79,6 @@ Today:
 | [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) | `fxa-mono` | the accounts on MySQL 9, and on 8.4 without `mysql_native_password`, see [MySQL 9](../accounts.md#mysql-9). Merged, not in a release yet. Our images from before list mozilla/fxa#21554, the same change |
 | [mozilla/fxa#21733](https://github.com/mozilla/fxa/pull/21733) | `fxa-mono` | with mysql2, the auth server did not build from v1.349.2 on: its backfill script (backported in that release) passes mysql's flags as a string. Merged, not in a release yet |
 | [mozilla/fxa#21731](https://github.com/mozilla/fxa/pull/21731) | `fxa-mono` | with mysql2, `fxa-migrations` exited without an error when the database refused its user (a wrong `FXA_MYSQL_PASSWORD`), instead of stopping at once with `Access denied`, see [Troubleshooting](../troubleshooting.md#databases) |
-| [mozilla-services/syncstorage-rs#2638](https://github.com/mozilla-services/syncstorage-rs/pull/2638) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | ties between tokenserver nodes, which on MariaDB made upstream's `test_user_creation` fail |
 | [mozilla-services/syncstorage-rs#2671](https://github.com/mozilla-services/syncstorage-rs/pull/2671) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same millisecond |
 | [mozilla-services/syncstorage-rs#2680](https://github.com/mozilla-services/syncstorage-rs/pull/2680) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same centisecond |
 

@@ -94,7 +94,7 @@ An accounts pull request that `prepare_environment.sh` and the tests look for in
 
 ## In the tests
 
-Tests that work around an upstream bug read the label. The accounts' tests ([tests/e2e-fxa.sh](/tests/e2e-fxa.sh), [tests/podman.sh](/tests/podman.sh), [tests/helm-fxa.sh](/tests/helm-fxa.sh), [tests/fxa-upgrade.sh](/tests/fxa-upgrade.sh)) decide with [tests/fxa_fix.sh](/tests/fxa_fix.sh), as `prepare_environment.sh` does: the label, or [config/fxa/fixed-in](/config/fxa/fixed-in). [tests/prepare_functions.sh](/tests/prepare_functions.sh) checks both. `tests/e2e.sh` skips upstream's `test_node_assignment.py::test_user_creation` on MariaDB only for images without [mozilla-services/syncstorage-rs#2638](https://github.com/mozilla-services/syncstorage-rs/pull/2638).
+Tests that work around an upstream bug read the label. The accounts' tests ([tests/e2e-fxa.sh](/tests/e2e-fxa.sh), [tests/podman.sh](/tests/podman.sh), [tests/helm-fxa.sh](/tests/helm-fxa.sh), [tests/fxa-upgrade.sh](/tests/fxa-upgrade.sh)) decide with [tests/fxa_fix.sh](/tests/fxa_fix.sh), as `prepare_environment.sh` does: the label, or [config/fxa/fixed-in](/config/fxa/fixed-in). [tests/prepare_functions.sh](/tests/prepare_functions.sh) checks both.
 
 ## Run it locally
 

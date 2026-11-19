@@ -104,21 +104,6 @@
     prepare_environment.sh and the tests then take every image of that release or later as
     having it (tests/prepare_functions.sh shows how).
 
-- id: tokenserver-node-ties
-  repo: mozilla-services/syncstorage-rs
-  pr: 2638
-  head_repo: porelli/syncstorage-rs
-  base: 3a5abd9e2365fd70ee9ac27bc2c07561a727c4a9
-  sha: 771fa8cfb697d17e94beed2818e4905a6aebdf84
-  component: syncstorage-rs
-  why: >-
-    fix: break ties by id when choosing the best tokenserver node. On MariaDB the nodes that
-    tie (LOG(0) of empty nodes is NULL) come back in any order, upstream's
-    test_node_assignment.py::test_user_creation fails there.
-  when_released: >-
-    In tests/e2e.sh drop the --deselect of test_node_assignment.py::test_user_creation (the
-    LOG(0) comment) and its check of the image label: every image tested then has the fix.
-
 - id: tokenserver-new-client-state-test
   repo: mozilla-services/syncstorage-rs
   pr: 2671

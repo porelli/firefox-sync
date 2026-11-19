@@ -1587,13 +1587,23 @@ if in_app "test -f ${DELETE_KEY} && test -f tools/integration_tests/tokenserver/
   in_app "python3 -c 'import json, sys; k = json.load(open(\"tools/fxa_delete/testing/delete_test_jwk.json\")); print(k[\"n\"], k[\"e\"])'" > "${WORK}/delete-jwk" 2> /dev/null
   read -r DELETE_N DELETE_E < "${WORK}/delete-jwk"
   check "$([ -n "${DELETE_N:-}" ] && [ -n "${DELETE_E:-}" ] && echo read)" read "the public half of upstream's delete test key, from the image"
+  # 0.25.1 (mozilla-services/syncstorage-rs#2766, #2768) renamed the settings: the issuer is
+  # FXA_ADMIN_ISSUER, the audience FXA_ADMIN_AUDIENCE with a default (urn:mozilla:fxa:tokenserver);
+  # 0.25.0 had FXA_DELETE_DATA_AUDIENCE and _ISSUER. Those the image's own tests read
+  if in_app "grep -q SYNC_TOKENSERVER__FXA_ADMIN_ISSUER tools/integration_tests/tokenserver/helpers.py" > /dev/null 2>&1; then
+    DELETE_SETTINGS="SYNC_TOKENSERVER__FXA_ADMIN_ISSUER: \"${DELETE_ISS}\""
+    DELETE_RUNNER="SYNC_TOKENSERVER__FXA_ADMIN_ISSUER=${DELETE_ISS}"
+  else
+    DELETE_SETTINGS="SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE: \"${DELETE_AUD}\"
+      SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER: \"${DELETE_ISS}\""
+    DELETE_RUNNER="SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE=${DELETE_AUD} SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER=${DELETE_ISS}"
+  fi
   cat > "${WORK}/delete-data.yml" << EOF
 services:
   syncstorage:
     environment:
       SYNC_TOKENSERVER__FXA_DELETE_DATA_ENABLED: "true"
-      SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE: "${DELETE_AUD}"
-      SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER: "${DELETE_ISS}"
+      ${DELETE_SETTINGS}
       SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__KTY: RSA
       SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__ALG: RS256
       SYNC_TOKENSERVER__FXA_OAUTH_SECONDARY_JWK__KID: syncstorage-rs-delete-test
@@ -1603,7 +1613,7 @@ services:
 EOF
   COMPOSE_EXTRA+=("${WORK}/delete-data.yml")
   # what the tests sign with, in their runner (helpers.py's defaults, said explicitly)
-  DELETE_ENV="FXA_DELETE_SIGNING_KEY_PEM=/app/${DELETE_KEY} SYNC_TOKENSERVER__FXA_DELETE_DATA_AUDIENCE=${DELETE_AUD} SYNC_TOKENSERVER__FXA_DELETE_DATA_ISSUER=${DELETE_ISS} "
+  DELETE_ENV="FXA_DELETE_SIGNING_KEY_PEM=/app/${DELETE_KEY} ${DELETE_RUNNER} "
   echo "  the image has upstream's delete endpoint tests: the endpoint on, with its test key"
 fi
 set_env SYNC_MAX_USERS 1000000
@@ -1612,15 +1622,6 @@ check "$(wait_init)" 0 "init container exit code (SYNC_MAX_USERS=1000000)"
 hb > /dev/null
 # test_e2e.py needs real accounts on Mozilla's FxA stage environment
 UPSTREAM_TS="tools/integration_tests/tokenserver --ignore=tools/integration_tests/tokenserver/test_e2e.py"
-if [ "${BACKEND}" = mysql ] && [ "${DATABASE_SERVER}" != MySQL ] && [[ " ${UPSTREAM_PATCHES} " != *" mozilla-services/syncstorage-rs#2638@"* ]]; then
-  # with several empty nodes the tokenserver orders them by LOG(0) (NULL), MySQL 8
-  # (upstream CI, EXTERNAL_DB=1 and SYNC_DB=mysql here, where it runs) returns them in id
-  # order, MariaDB does not: this stack has one node. Fixed by mozilla-services/syncstorage-rs#2638,
-  # in our images since upstream-patches.yml: deselected only for the images without it
-  # (node ids are relative to tools/integration_tests, pytest's rootdir in the image)
-  T=test_node_assignment.py::test_user_creation
-  UPSTREAM_TS="${UPSTREAM_TS} --deselect tokenserver/${T} --deselect tools/integration_tests/tokenserver/${T}"
-fi
 in_app "${DELETE_ENV}$(pytest_sh "${UPSTREAM_TS}$(racy_deselect tokenserver/)")"
 check "$?" 0 "upstream tokenserver tests"
 if [ -n "${DELETE_ENV}" ]; then
