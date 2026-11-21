@@ -291,6 +291,8 @@ services:
       # as in fxa-auth: the admin UI never skips the sign-in code (Mozilla's default + the admin UI)
       SERVICES_WITH_EMAIL_VERIFICATION: 32aaeb6f1c21316a,${ADMIN_FXA_CLIENT_ID:-}
       FLOW_ID_KEY: ${FXA_FLOW_ID_KEY}
+      # the feature flags' Redis of releases before v1.350.0, which dropped the setting (since
+      # v1.349.0 unused): for a pinned older FXA_VERSION
       FEATURE_FLAGS_REDIS_HOST: fxa-redis
       REDIS_HOST: fxa-redis
       GEODB_ENABLED: "false"

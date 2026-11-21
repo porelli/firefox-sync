@@ -94,6 +94,8 @@ spec:
             - name: SERVICES_WITH_EMAIL_VERIFICATION
               value: {{ printf "32aaeb6f1c21316a,%s" (include "firefox-sync.fxaAdminClientId" .) | quote }}
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FLOW_ID_KEY" "key" "FXA_FLOW_ID_KEY") | nindent 12 }}
+            # the feature flags' Redis of releases before v1.350.0, which dropped the setting
+            # (since v1.349.0 unused): for a pinned older fxa.image.tag
             - name: FEATURE_FLAGS_REDIS_HOST
               value: {{ $fullname }}-fxa-redis
             # (and REDIS_PASSWORD, FXA_REDIS_PASSWORD: chart-only, the password of both)
