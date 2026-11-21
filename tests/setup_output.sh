@@ -324,7 +324,10 @@ smtp_host=smtp.example.org'
 # the differences meant, per case: "<case> <file>" (none: the same files for the same choices);
 # for every case: the files of proxy/, the new setup's only, which replace the nginx examples
 # of before (compared below for their host names and upstreams)
-EXPECTED_DIFF=()
+# your own PostgreSQL server: SYNC_POSTGRES_IMAGE not pinned (only the client there, pg_dump refuses a
+# newer server; before: the major of postgres:latest), db-bootstrap and the backups on postgres:latest
+EXPECTED_DIFF=("mozilla-own-postgres-bootstrap env" "quadlets-own-postgres env"
+    "quadlets-own-postgres unit_firefox-sync-backup.container" "quadlets-own-postgres unit_firefox-sync-db-bootstrap.container")
 NEW_ONLY="proxy_*" OLD_ONLY="config_nginx_syncstorage-rs.conf config_nginx_fxa.conf"
 expected() {
     local e
