@@ -7,7 +7,8 @@ Description=Firefox Sync - Backup of the databases
 After=firefox-sync-network.service firefox-sync-postgres-db.service
 
 [Container]
-# SYNC_POSTGRES_IMAGE of .env: pg_dump of the server's major (with your own server: at least its major)
+# SYNC_POSTGRES_IMAGE of .env: pg_dump of the server's major (with your own server: at least its
+# major, postgres:latest unless .env pins it)
 Image=%SYNC_POSTGRES_IMAGE%
 ContainerName=firefox-sync-backup
 Network=firefox-sync-network.network

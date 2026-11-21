@@ -1182,6 +1182,9 @@ if [ -n "${EXTERNAL_DB:-}" ]; then
   if [ "${SYNC_DB}" = postgres ]; then
     check "$(unit_count "^Environment=\"?(SYNC_SYNCSTORAGE__DATABASE_URL=postgres://syncserver:[A-Za-z0-9]+@${EXTDB}:5432/syncserver|POSTGRES_SERVER=${EXTDB}|TOKENSERVER_DB_HOST=${EXTDB})\"?$" \
       "${QUADLET_DIR}"/firefox-sync-{syncstorage,tokenserver-db-init,admin}.container)" "1 1 1" "quadlets connect to your server"
+    # the image is only the client there (pg_dump refuses a newer server): not pinned, latest
+    check "$(env_of SYNC_POSTGRES_IMAGE)| $(sed -n 's/^Image=//p' "${QUADLET_DIR}"/firefox-sync-{db-bootstrap,backup}.container | paste -sd' ') $(grep -c '^SYNC_POSTGRES_IMAGE not pinned: with your own PostgreSQL server' setup-external.log)" \
+      "| docker.io/library/postgres:latest docker.io/library/postgres:latest 1" "your own PostgreSQL server: SYNC_POSTGRES_IMAGE not pinned, db-bootstrap and the backups on postgres:latest, and said"
     ext_dumps="ffs_admin.sql.gz syncserver.sql.gz"
   else
     check "$(unit_count "^Environment=\"?(SYNC_SYNCSTORAGE__DATABASE_URL=mysql://syncstorage:[A-Za-z0-9]+@${EXTDB}:3306/syncstorage|MARIADB_SERVER=${EXTDB}|MARIADB_TLS_VERIFY=false|STORAGE_DB_HOST=${EXTDB})\"?$" \

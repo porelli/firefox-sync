@@ -494,6 +494,21 @@ check "$(upv ADMIN_DB_PASSWORD | grep -cE '^[A-Za-z0-9]{32}$') $(upv SYNC_POSTGR
   || cat "${WORK}/upgrade.log"
 (unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; no_listeners; FFS_ENTRY_DIR=${WORK}/up QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade-again.log" 2>&1
 check "$? $(ls "${WORK}/up"/.env.before-upgrade-* | wc -l | tr -d ' ') $(grep -c '^Updated ' "${WORK}/upgrade-again.log")" "0 1 0" "upgrade_env run again: nothing changes"
+# your own PostgreSQL server (SYNC_DB_CONTAINERS=0): SYNC_POSTGRES_IMAGE is only the client there,
+# not pinned; a pin of before is kept, and said
+for own_pin in "" postgres:18; do
+  rm -rf "${WORK}/up-own" && mkdir -p "${WORK}/up-own" && cp -r "${CODE}/.env-example" "${CODE}/db" "${WORK}/up-own/"
+  sed -e 's|<REPLACE_WITH_SOMETHING_SECURE>|s3cret|' -e 's|<REPLACE_WITH_YOUR_DOMAIN>|sync.example.org|' -e 's|^ADMIN_DB_PASSWORD=.*|ADMIN_DB_PASSWORD=|' \
+    -e 's|^FXA_MYSQL_PASSWORD=.*|FXA_MYSQL_PASSWORD=<REPLACE_WITH_SOMETHING_SECURE>|' -e 's|^SYNC_IMAGE=.*|SYNC_IMAGE=syncstorage-rs-postgres|' \
+    -e 's|^SYNC_DB_CONTAINERS=.*|SYNC_DB_CONTAINERS=0|' -e 's|^SYNC_POSTGRES_HOST=.*|SYNC_POSTGRES_HOST=pg.example.org|' \
+    -e "s|^# SYNC_POSTGRES_IMAGE=.*|$([ -n "${own_pin}" ] && echo "SYNC_POSTGRES_IMAGE=${own_pin}" || echo '# SYNC_POSTGRES_IMAGE=postgres:latest')|" \
+    "${CODE}/.env-example" > "${WORK}/up-own/.env"
+  (unset COMPOSE_PROJECT_NAME; compose_on_podman() { return 1; }; no_listeners; FFS_ENTRY_DIR=${WORK}/up-own QUADLET_DIR=${WORK}/no-units upgrade_env) < /dev/null > "${WORK}/upgrade-own.log" 2>&1
+  own_rc=$?
+  check "${own_rc} $(ENV_READ=${WORK}/up-own/.env SCRIPT_DIR=${WORK}/up-own env_plain SYNC_POSTGRES_IMAGE)| $(grep -c "^NOTE: SYNC_POSTGRES_IMAGE=${own_pin:-x}: with your own PostgreSQL server it is only the client" "${WORK}/upgrade-own.log")" \
+    "0 ${own_pin}| $([ -n "${own_pin}" ] && echo 1 || echo 0)" "upgrade_env, your own PostgreSQL server: SYNC_POSTGRES_IMAGE ${own_pin:-not pinned}$([ -n "${own_pin}" ] && echo ': kept, with a note')" \
+    || cat "${WORK}/upgrade-own.log"
+done
 
 [ "${FAILED}" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"
 exit "${FAILED}"

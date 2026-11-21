@@ -85,19 +85,24 @@ fi
 # which every release before it used, git log --follow -- compose/sync-postgres.yml); a new setup over the PostgreSQL volume of an
 # earlier install the major of its data; a new install the major postgres:latest is at now, read
 # from the image itself. Unset it would be postgres:latest, which a new major leaves unable to
-# start: not knowing the major is an error
+# start: not knowing the major is an error.
+# Your own server: no data of the stack's, the image is only the client (db-bootstrap's psql,
+# the backups' pg_dump), and pg_dump refuses a server of a newer major than its own: no pin,
+# postgres:latest, whose client works with every server (an earlier .env's value is kept)
 SYNC_POSTGRES_PIN="" SYNC_POSTGRES_MAJOR="" SYNC_POSTGRES_VOLUME=""
-if [ "${DATABASE_BACKEND}" = postgres ]; then
+if [ "${DATABASE_BACKEND}" = postgres ] && [ "${EXTERNAL_DB}" = "yes" ]; then
+    if [ "${PREVIOUS_SYNCSTORAGE_IMAGE}" = "syncstorage-rs-postgres" ]; then SYNC_POSTGRES_PIN=${PREVIOUS_POSTGRES_IMAGE}; fi
+elif [ "${DATABASE_BACKEND}" = postgres ]; then
     if [ "${PREVIOUS_SYNCSTORAGE_IMAGE}" = "syncstorage-rs-postgres" ]; then
         SYNC_POSTGRES_PIN=${PREVIOUS_POSTGRES_IMAGE}
         # from before SYNC_POSTGRES_IMAGE: the major of its data, else 18 (every release before it)
         if [ -z "${SYNC_POSTGRES_PIN}" ]; then
             SYNC_POSTGRES_PIN=postgres:18
-            [ "${EXTERNAL_DB}" != "yes" ] && SYNC_POSTGRES_VOLUME=$(db_volume postgres-db) \
+            SYNC_POSTGRES_VOLUME=$(db_volume postgres-db) \
                 && SYNC_POSTGRES_VOLUME_MAJOR=$(postgres_volume_major "${SYNC_POSTGRES_VOLUME}") \
                 && SYNC_POSTGRES_PIN=postgres:${SYNC_POSTGRES_VOLUME_MAJOR}
         fi
-    elif [ "${EXTERNAL_DB}" != "yes" ] && SYNC_POSTGRES_VOLUME=$(db_volume postgres-db) \
+    elif SYNC_POSTGRES_VOLUME=$(db_volume postgres-db) \
         && SYNC_POSTGRES_VOLUME_MAJOR=$(postgres_volume_major "${SYNC_POSTGRES_VOLUME}"); then
         SYNC_POSTGRES_PIN=postgres:${SYNC_POSTGRES_VOLUME_MAJOR}
     elif SYNC_POSTGRES_MAJOR=$(postgres_latest_major); then
@@ -349,8 +354,8 @@ if [ "${DATABASE_BACKEND}" = "postgres" ]; then
         apply_sed "${NEW_ENV}" "s|^SYNC_POSTGRES_APP_USER=.*|SYNC_POSTGRES_APP_USER=syncserver_app|"
         apply_sed "${NEW_ENV}" "s|^SYNC_POSTGRES_APP_PASSWORD=.*|SYNC_POSTGRES_APP_PASSWORD=$(generate_random_string 32)|"
     fi
-    # the major of the install, above
-    apply_sed "${NEW_ENV}" "s|^# SYNC_POSTGRES_IMAGE=.*|SYNC_POSTGRES_IMAGE=$(sed_escape "${SYNC_POSTGRES_PIN}")|"
+    # the major of the install, above (your own server: none, unless its .env had one)
+    [ -z "${SYNC_POSTGRES_PIN}" ] || apply_sed "${NEW_ENV}" "s|^# SYNC_POSTGRES_IMAGE=.*|SYNC_POSTGRES_IMAGE=$(sed_escape "${SYNC_POSTGRES_PIN}")|"
 fi
 # the compose files (also written for the Quadlets, which do not read it): the Sync database's,
 # MariaDB's with your own MySQL server too (its client, as before compose/), the accounts', and
@@ -530,6 +535,8 @@ fi
 if [ "${DATABASE_BACKEND}" = postgres ] && [ -n "${SYNC_POSTGRES_MAJOR:-}" ]; then
     echo "SYNC_POSTGRES_IMAGE=postgres:${SYNC_POSTGRES_MAJOR}: PostgreSQL ${SYNC_POSTGRES_MAJOR}, the major of postgres:latest today, pinned: a newer"
     echo "  major cannot open its data. Moving later: docs/upgrading.md#postgresql"
+elif [ "${DATABASE_BACKEND}" = postgres ] && [ "${EXTERNAL_DB}" = "yes" ]; then
+    postgres_client_note "${SYNC_POSTGRES_PIN}"
 elif [ "${DATABASE_BACKEND}" = postgres ] && [ -n "${SYNC_POSTGRES_VOLUME}" ]; then
     echo "SYNC_POSTGRES_IMAGE=${SYNC_POSTGRES_PIN}: found the Sync database of an earlier install (${SYNC_POSTGRES_VOLUME}),"
     echo "  PostgreSQL ${SYNC_POSTGRES_VOLUME_MAJOR}: it stays on it. A new install: remove the volume (its data is lost) and run this"

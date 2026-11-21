@@ -629,6 +629,10 @@ if [ "${BACKEND}" = mysql ] && [ "${SYNC_DB}" = mariadb ] && [ -z "${EXTDB}" ]; 
   check "$(grep '^SYNC_MARIADB_IMAGE=' "${UP}/.env") $(grep -c "the Sync databases stay on MariaDB ${mariadb_major}, the major of their data" "${WORK}/upgrade.log")" \
     "SYNC_MARIADB_IMAGE=mariadb:${mariadb_major} 1" "--upgrade pins the Sync MariaDB of an install from before to the major of its data (${mariadb_major})"
 fi
+# your own PostgreSQL server: no data of the stack's, the image only its client (the backups'
+# pg_dump, which refuses a newer server): --upgrade pins nothing there
+[ "${BACKEND}" = postgres ] && [ -n "${EXTDB}" ] && check "$(grep -c '^SYNC_POSTGRES_IMAGE=' "${UP}/.env")" 0 \
+  "--upgrade with your own PostgreSQL server: SYNC_POSTGRES_IMAGE not pinned (postgres:latest, the client)"
 [ "${SYNC_DB}" = mysql ] && [ -n "${MYSQL_PINNED}" ] && check "$(grep '^SYNC_MYSQL_IMAGE=' "${UP}/.env") $(grep -c 'the Sync databases stay on MySQL 8' "${WORK}/upgrade.log")" \
   "SYNC_MYSQL_IMAGE=mysql:8 1" "--upgrade pins the Sync databases of an install from before on MySQL 8"
 # each value under its new name, as it was under the old one (the empty ones it may fill in)
@@ -1323,7 +1327,7 @@ else
       "${BACKUP_IMAGE}" sh /ffs-backup/backup.sh now >> "${WORK}/backup-extdb.log" 2>&1
   }
   backup_extdb
-  check "$?" 0 "a backup run with EXTERNAL_DB (as database client)"
+  check "$?" 0 "a backup run with EXTERNAL_DB (as database client, ${BACKUP_IMAGE})" || tail -5 "${WORK}/backup-extdb.log"
   # check the dumps exist and pass gzip -t
   if [ "${BACKEND}" = mysql ]; then
     expected="${ADMIN_DB_NAME}.sql.gz ${SYNC_STORAGE_DB_NAME}.sql.gz ${SYNC_TOKENSERVER_DB_NAME}.sql.gz"

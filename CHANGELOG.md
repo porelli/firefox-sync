@@ -10,7 +10,11 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Changed
 
+- PostgreSQL 19: a new install on the stack's PostgreSQL container is pinned to 19, the major of `postgres:latest` now. An install on 18 stays on 18. Moving it to 19 takes a backup, the new major and a restore, tested from 18 to 19: see [PostgreSQL](docs/upgrading.md#postgresql).
+
 ### Fixed
+
+- With your own PostgreSQL server, the setup and `--upgrade` no longer pin `SYNC_POSTGRES_IMAGE`. There it is only the client of `db-bootstrap` and the backups, and pinned to 18 its `pg_dump` refused a server on 19. A pin already in `.env` stays, with a note: remove the line to follow `postgres:latest`. See [PostgreSQL](docs/databases.md#postgresql).
 
 ### Security
 

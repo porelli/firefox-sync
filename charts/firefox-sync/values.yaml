@@ -278,7 +278,7 @@ database:
   # /var/lib/postgresql/<major>/docker and refuses to start on an older major's data, so
   # moving to a newer one needs a dump and restore (docs/backups.md#restore) or pg_upgrade
   # (docs/upgrading.md#postgresql). With your own server (bundled: false) it is only
-  # the client: pg_dump must be at least the server's major. Fully qualified (Docker Hub's
+  # the client: pg_dump must be at least the server's major, which latest always is. Fully qualified (Docker Hub's
   # official images), for the nodes whose runtime has no default registry or another one
   image:
     mariadb: docker.io/library/mariadb:lts

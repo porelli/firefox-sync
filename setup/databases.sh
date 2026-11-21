@@ -100,6 +100,19 @@ postgres_latest_major() {
     done
     return 1
 }
+# what SYNC_POSTGRES_IMAGE is with your own PostgreSQL server: the client only (db-bootstrap's
+# psql, the backups' pg_dump). postgres_client_note <its value, empty: not set>
+postgres_client_note() {
+    case "${1}" in
+        ""|*:latest|postgres)
+            echo "SYNC_POSTGRES_IMAGE not pinned: with your own PostgreSQL server it is only the client of db-bootstrap and"
+            echo "  the backups, postgres:latest, whose pg_dump works with the server's major and every older one" ;;
+        *)
+            echo "NOTE: SYNC_POSTGRES_IMAGE=${1}: with your own PostgreSQL server it is only the client of db-bootstrap and"
+            echo "  the backups, and pg_dump refuses a server of a newer major than its own. Remove the line to follow"
+            echo "  postgres:latest, or keep it at your server's major (docs/databases.md#postgresql)" ;;
+    esac
+}
 # the major of the MySQL data in a volume of db_volume ("<runtime> volume <name>"): the last
 # version of its mysql_upgrade_history (8.4 and later write it); none, an empty volume or one of
 # 8.0: nothing (fails)

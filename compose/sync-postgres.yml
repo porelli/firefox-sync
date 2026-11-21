@@ -68,7 +68,7 @@ services:
   postgres_db:
     # SYNC_POSTGRES_IMAGE pins the major of the install (prepare_environment.sh writes
     # postgres:<the major of postgres:latest> for new installs, postgres:18 for those from
-    # before it); unset: postgres:latest. An image of another major than the data's does not
+    # before it; none with your own server, where it is only the client); unset: postgres:latest. An image of another major than the data's does not
     # start: db/postgres/keep-major.sh stops it and says what to set (the image's entrypoint
     # refuses too; docs/upgrading.md#postgresql)
     image: ${SYNC_POSTGRES_IMAGE:-postgres:latest}

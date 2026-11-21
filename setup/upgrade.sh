@@ -251,13 +251,15 @@ upgrade_env() {
         set_value SYNC_POSTGRES_APP_PASSWORD "$(generate_random_string 32)"
     fi
     # Sync on PostgreSQL, from before SYNC_POSTGRES_IMAGE: the major its data is on, read from the
-    # stack's volume (PG_VERSION); without a readable volume (your own server, another host)
-    # postgres:18, which every release before SYNC_POSTGRES_IMAGE ran (git log --follow --
-    # compose/sync-postgres.yml)
-    if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ] && ! env_has SYNC_POSTGRES_IMAGE; then
+    # stack's volume (PG_VERSION); without a readable volume (another host) postgres:18, which
+    # every release before SYNC_POSTGRES_IMAGE ran (git log --follow -- compose/sync-postgres.yml).
+    # Your own server: no data of the stack's, the image is only the client, which must be at
+    # least the server's major: no pin (postgres:latest), and a pin there is said
+    if [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ] && [ "$(env_value SYNC_DB_CONTAINERS)" = 0 ]; then
+        if [ -n "$(env_value SYNC_POSTGRES_IMAGE)" ]; then postgres_client_note "$(env_value SYNC_POSTGRES_IMAGE)"; fi
+    elif [ "$(env_value SYNC_IMAGE)" = "syncstorage-rs-postgres" ] && ! env_has SYNC_POSTGRES_IMAGE; then
         local pg_major=18 pg_volume
-        if [ "$(env_value SYNC_DB_CONTAINERS)" != 0 ] && pg_volume=$(db_volume postgres-db) \
-            && pg_volume=$(postgres_volume_major "${pg_volume}"); then
+        if pg_volume=$(db_volume postgres-db) && pg_volume=$(postgres_volume_major "${pg_volume}"); then
             pg_major=${pg_volume}
         fi
         set_value SYNC_POSTGRES_IMAGE "postgres:${pg_major}"

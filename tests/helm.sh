@@ -1244,26 +1244,31 @@ e2e() {
       == "${revision} ${running} ${sts_size} 10Gi" ]] || fail "a refused volume change changed the release, the StatefulSet or the backups' PVC"
     check "helm upgrade with database.persistence.size or .storageClass (${db_sts}'s volumeClaimTemplate), backup.persistence.size up on a StorageClass without allowVolumeExpansion: refused at render time saying what to set, nothing applied"
     if [[ ${backend} == postgres ]]; then
-      # a pin to another major goes through the render (from latest, not comparable), the
-      # db-major init container then refuses the data and says what to pin; back on the
-      # running image, it starts again (a StatefulSet does not replace a broken pod by itself)
-      helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set database.image.postgres=docker.io/library/postgres:17 > /dev/null \
-        || fail "helm upgrade to postgres:17 not rendered"
-      local said="" i
+      # a pin to another major (the one before the data's: the data is on the major latest had
+      # at the install) goes through the render (from latest, not comparable), the db-major
+      # init container then refuses the data and says what to pin; back on the running image,
+      # it starts again (a StatefulSet does not replace a broken pod by itself)
+      local data_major older said="" i
+      # shellcheck disable=SC2016 # (PGDATA: the container's)
+      data_major=$(kubectl exec "${db_sts}-0" -c db -- sh -c 'cat "$PGDATA/PG_VERSION"' 2> /dev/null)
+      [[ "${data_major}" =~ ^[0-9]+$ ]] || fail "the major of the bundled PostgreSQL's data not read (${data_major})"
+      older=$((data_major - 1))
+      helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set database.image.postgres="docker.io/library/postgres:${older}" > /dev/null \
+        || fail "helm upgrade to postgres:${older} not rendered"
       for i in $(seq 1 90); do
-        said=$(kubectl logs "${db_sts}-0" -c db-major 2> /dev/null | grep -c 'keep-major.sh: this database is PostgreSQL 18 (/var/lib/postgresql/18/docker), the image is PostgreSQL 17' || true)
+        said=$(kubectl logs "${db_sts}-0" -c db-major 2> /dev/null | grep -c "keep-major.sh: this database is PostgreSQL ${data_major} (/var/lib/postgresql/${data_major}/docker), the image is PostgreSQL ${older}" || true)
         [[ "${said}" -ge 1 ]] 2> /dev/null && break
         sleep 2
       done
       [[ "${said}" -ge 1 && "$(kubectl get pod "${db_sts}-0" -o jsonpath='{.status.containerStatuses[0].ready}')" != true ]] \
-        || fail "postgres:17 on 18's data: the db-major init container did not refuse ($(kubectl logs "${db_sts}-0" -c db-major 2>&1 | tail -3))"
-      kubectl logs "${db_sts}-0" -c db-major 2> /dev/null | grep -q 'Set database.image.postgres to the major of the data, postgres:18' \
+        || fail "postgres:${older} on ${data_major}'s data: the db-major init container did not refuse ($(kubectl logs "${db_sts}-0" -c db-major 2>&1 | tail -3))"
+      kubectl logs "${db_sts}-0" -c db-major 2> /dev/null | grep -q "Set database.image.postgres to the major of the data, postgres:${data_major}" \
         || fail "db-major does not say what to pin"
       helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set database.image.postgres="${running}" > /dev/null || fail "helm upgrade back to ${running}"
       kubectl delete pod "${db_sts}-0" --wait=true > /dev/null
       kubectl rollout status "sts/${db_sts}" --timeout=10m > /dev/null || fail "PostgreSQL not back on ${running}"
       kubectl wait --for=condition=Ready pod -l "${POD_SELECTOR}" --timeout=10m > /dev/null || fail "syncstorage not Ready after PostgreSQL came back"
-      check "postgres:17 on 18's data: refused by the db-major init container, which says what to pin; back on ${running}"
+      check "postgres:${older} on ${data_major}'s data: refused by the db-major init container, which says what to pin; back on ${running}"
     fi
     if [[ ${backend} == mysql ]]; then
       helm upgrade "${REL}" "${CHART_DIR}" --reuse-values --set database.image.mysql="${other}" --set database.allowMajorUpgrade=true \

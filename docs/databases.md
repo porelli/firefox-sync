@@ -28,7 +28,7 @@ To use a server you already run instead of the containers, see [Your own server]
 |---|---|---|---|
 | Sync server | MariaDB | 10.10 and later | `mariadb:lts` (12 today) |
 | Sync server | MySQL | 8.0 and later, 9 included | `mysql:lts` (9 today) and `mysql:8` (8.4) |
-| Sync server | PostgreSQL | 11 and later | `postgres:latest` (18 today) |
+| Sync server | PostgreSQL | 11 and later | `postgres:latest` (19 today), and an install on 18 moved to it ([PostgreSQL](upgrading.md#postgresql)) |
 | Accounts | MySQL | 8.4 and 9 | `mysql:lts` (9 today), and `mysql:8` (8.4) with `mysql_native_password` |
 | Accounts | MariaDB | 11.4 and later | `mariadb:lts` (12 today) and `mariadb:11` (11.8) |
 | Accounts | Redis (cache, no volume) | the image's | `redis:alpine` |
@@ -49,7 +49,7 @@ The patches are [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) f
 
 ### Default tags and pins
 
-The defaults follow each database's long-term tag: `mariadb:lts` and `mysql:lts`. PostgreSQL has no such tag, so each install is pinned to the major `postgres:latest` had when it was set up. When `lts` moves, a server set to it upgrades the data at its first start on the new major, and there is no way back but a backup. With no image setting at all, the containers refuse data of another major instead.
+The defaults follow each database's long-term tag: `mariadb:lts` and `mysql:lts`. PostgreSQL has no such tag, so each install on the stack's PostgreSQL container is pinned to the major `postgres:latest` had when it was set up: 19 for a new install today. On your own PostgreSQL server nothing is pinned, see [PostgreSQL](#postgresql). When `lts` moves, a server set to it upgrades the data at its first start on the new major, and there is no way back but a backup. With no image setting at all, the containers refuse data of another major instead.
 
 Each setting, its default, the pins `prepare_environment.sh` writes, and how to move to a newer major: [Database majors](upgrading.md#database-majors). The images the stack builds on top of these (the init containers): [Images](reference/images.md#sync-server).
 
@@ -92,7 +92,7 @@ With Quadlets, the units of [config/quadlet/sync-postgres/](/config/quadlet/sync
 
 `SYNC_POSTGRES_IMAGE` pins the PostgreSQL major of each install, for `postgres_db` and the backups: see [PostgreSQL](upgrading.md#postgresql).
 
-With your own server, `SYNC_POSTGRES_IMAGE` is only the client of the backups. `pg_dump` must be at least the server's major: set it to your server's major or a newer one. With Helm, the same goes for `database.image.postgres`.
+With your own server, `SYNC_POSTGRES_IMAGE` is only the client: of `db-bootstrap` (`psql`) and of the backups (`pg_dump`). `pg_dump` refuses a server of a newer major than its own (`aborting because of server version mismatch`), and the newest one dumps every older server. So `prepare_environment.sh` and `--upgrade` leave it unset there, on `postgres:latest`, and say so. A pin you set yourself, or one that the setup or `--upgrade` of an earlier release wrote (`postgres:18`), stays, and they print a note about it. Remove the line, or keep it at your server's major or a newer one. On a server before 17, pin its major if you restore with `ON_ERROR_STOP`: the dumps of `pg_dump` 17 and later set `transaction_timeout`, which those servers do not have. With Helm, the same goes for `database.image.postgres` (`postgres:latest` by default).
 
 ## Your own server
 
