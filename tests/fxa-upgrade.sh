@@ -309,6 +309,13 @@ if [ "${FXA_DB}" = mysql ]; then
   dc up -d --no-deps fxa-db > "${WORK}/up-pinned.log" 2>&1
   for _ in $(seq 1 60); do [ "$(state fxa-db Health.Status)" = healthy ] && break; sleep 2; done
   check "$(state fxa-db Health.Status) $(fxa_sql "SELECT VERSION()")" "healthy ${old_db_version}" "fxa-db back on mysql:8, its data as it was"
+  # the rest of what --upgrade wrote, as an install then starts it (docs/upgrading.md): it also
+  # pins the Sync databases to the major of their data (SYNC_MARIADB_IMAGE), so they are
+  # recreated now. The admin UI's errors while they restart are expected, the ones after not
+  echo "settings --upgrade changed: $(diff <(sort "${WORK}/prepare/.env.before-upgrade-"* 2> /dev/null) <(sort "${ENV_FILE}") | sed -n 's/^> \([A-Z_]*\)=.*/\1/p' | sort -u | paste -sd' ' -)"
+  dc up -d > "${WORK}/up-upgraded-env.log" 2>&1 || { echo "FAIL: compose up with the .env of --upgrade"; tail -10 "${WORK}/up-upgraded-env.log"; }
+  wait_up "with the .env of --upgrade"
+  errors_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 fi
 
 echo "== upgrade as docs/upgrading.md#self-hosted-accounts says: a backup, FXA_VERSION in .env, docker compose pull, docker compose up -d"
