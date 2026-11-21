@@ -277,7 +277,7 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
     fi
     # MySQL lts for new installs (9 today), written out (also the default when unset), when the
     # accounts image has mozilla/fxa#21709; else MySQL 8 with mysql_native_password, the only
-    # authentication of the images without it (Mozilla's, ours from before). One that ran MySQL
+    # authentication of the images without it (Mozilla's before v1.350.0, ours from before). One that ran MySQL
     # before FXA_MYSQL_IMAGE, or whose fxa-db volume is still there, runs 8 like that: pinned,
     # its users are on mysql_native_password (docs/upgrading.md#mysql-8-to-9). Your own server: the
     # image is the backups' client, and without the patch the accounts' user is created with
@@ -519,12 +519,12 @@ if [ "${SELF_HOST_FXA}" = "yes" ]; then
         if [ "${FXA_MYSQL2}" = 2 ]; then
             echo "NOTE: could not read the labels of $(env_value FXA_IMAGE):$(env_value FXA_VERSION): MySQL lts (9) needs"
         elif [ "${FXA_MYSQL2}" = 3 ]; then
-            echo "NOTE: your local $(env_value FXA_IMAGE):$(env_value FXA_VERSION) is older than the registry's: it does not have"
-            echo "  mozilla/fxa#21709, the registry's has it. For MySQL lts (9) on this new install: pull it, then before the"
+            echo "NOTE: your local $(env_value FXA_IMAGE):$(env_value FXA_VERSION) does not have mozilla/fxa#21709,"
+            echo "  the registry's has it. For MySQL lts (9) on this new install: pull it, then before the"
             echo "  first start set FXA_MYSQL_IMAGE=mysql:lts and remove FXA_MYSQL_ARGS in .env. Until then MySQL lts needs"
         else
-            echo "NOTE: $(env_value FXA_IMAGE):$(env_value FXA_VERSION) does not have mozilla/fxa#21709 (Mozilla's images, ours"
-            echo "  built before it), which MySQL lts (9) needs"
+            echo "NOTE: $(env_value FXA_IMAGE):$(env_value FXA_VERSION) does not have mozilla/fxa#21709 ($(fxa_without_mysql2)),"
+            echo "  which MySQL lts (9) needs"
         fi
         echo "  an accounts image with mozilla/fxa#21709 (the mysql2 driver): fxa-db runs MySQL 8 with mysql_native_password"
         echo "  (FXA_MYSQL_IMAGE=mysql:8, FXA_MYSQL_ARGS=${FXA_MYSQL_NATIVE_ARGS}), see docs/accounts.md#mysql-or-mariadb"

@@ -32,7 +32,7 @@ The images here are built as close to Mozilla's as possible. They add arm64, Mar
 
 | Image | Tags | What it is |
 |---|---|---|
-| `fxa-mono` | `fxa-mono-latest`, `fxa-mono-<release>` (for example `fxa-mono-v1.349.0`) | Mozilla's accounts service, built from [its Dockerfile](https://github.com/mozilla/fxa/blob/main/_dev/docker/mono/Dockerfile), about 5 GB unpacked |
+| `fxa-mono` | `fxa-mono-latest`, `fxa-mono-<release>` (for example `fxa-mono-v1.350.0`) | Mozilla's accounts service, built from [its Dockerfile](https://github.com/mozilla/fxa/blob/main/_dev/docker/mono/Dockerfile), about 5 GB unpacked |
 | `fxa-channelserver` | `fxa-channelserver-latest`, `fxa-channelserver-<release>` | the optional pairing server for QR codes, built the same way from [Mozilla's channelserver](https://github.com/mozilla-services/channelserver) |
 
 - Architectures: amd64 and arm64, both tested before publishing. Mozilla publishes [`mozilla/fxa-mono`](https://hub.docker.com/r/mozilla/fxa-mono) for amd64 only.
@@ -45,13 +45,13 @@ Mozilla's own image works too, on amd64:
 
 ```ini
 FXA_IMAGE=docker.io/mozilla/fxa-mono
-FXA_VERSION=v1.349.0
+FXA_VERSION=v1.350.0
 FXA_ARCH=amd64
 # with the pairing server: Mozilla's, as FXA_IMAGE has none
 FXA_PAIRING_IMAGE=docker.io/mozilla/channelserver:latest
 ```
 
-It has none of the upstream patches, so it needs an older database major: see [Supported versions](../databases.md#supported-versions).
+It has none of the upstream patches. From v1.350.0 on it runs on MySQL 9 (`mysql:lts`), as ours do; on MariaDB it needs MariaDB 11 (`FXA_MARIADB_IMAGE=mariadb:11`), and a wrong `FXA_MYSQL_PASSWORD` is retried rather than stopped at once ([Troubleshooting](../troubleshooting.md#self-hosted-accounts)). See [Supported versions](../databases.md#supported-versions).
 
 ## Admin UI
 
@@ -76,9 +76,7 @@ Today:
 | Pull request | Image | What it fixes |
 |---|---|---|
 | [mozilla/fxa#21494](https://github.com/mozilla/fxa/pull/21494) | `fxa-mono` | the accounts' migrations on MariaDB 12, see [MariaDB 12](../accounts.md#mariadb-12) |
-| [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) | `fxa-mono` | the accounts on MySQL 9, and on 8.4 without `mysql_native_password`, see [MySQL 9](../accounts.md#mysql-9). Merged, not in a release yet. Our images from before list mozilla/fxa#21554, the same change |
-| [mozilla/fxa#21733](https://github.com/mozilla/fxa/pull/21733) | `fxa-mono` | with mysql2, the auth server did not build from v1.349.2 on: its backfill script (backported in that release) passes mysql's flags as a string. Merged, not in a release yet |
-| [mozilla/fxa#21731](https://github.com/mozilla/fxa/pull/21731) | `fxa-mono` | with mysql2, `fxa-migrations` exited without an error when the database refused its user (a wrong `FXA_MYSQL_PASSWORD`), instead of stopping at once with `Access denied`, see [Troubleshooting](../troubleshooting.md#databases) |
+| [mozilla/fxa#21731](https://github.com/mozilla/fxa/pull/21731) | `fxa-mono` | with mysql2, `fxa-migrations` exited without an error when the database refused its user (a wrong `FXA_MYSQL_PASSWORD`), instead of stopping at once with `Access denied`, see [Troubleshooting](../troubleshooting.md#self-hosted-accounts) |
 | [mozilla-services/syncstorage-rs#2671](https://github.com/mozilla-services/syncstorage-rs/pull/2671) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same millisecond |
 | [mozilla-services/syncstorage-rs#2680](https://github.com/mozilla-services/syncstorage-rs/pull/2680) | `syncstorage-rs-mysql`, `syncstorage-rs-postgres` | an upstream test that failed when two writes fell in the same centisecond |
 
@@ -88,12 +86,18 @@ Each image lists what was applied in its label `org.firefox-sync.upstream-patche
 docker image inspect -f '{{index .Config.Labels "org.firefox-sync.upstream-patches"}}' ghcr.io/porelli/firefox-sync:fxa-mono-latest
 ```
 
-The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`: the commit of the pull request applied, which for a release the newest commit does not apply to can be an earlier head of it (for example `mozilla/fxa#21554@3e2cb67..a99361e` on v1.348.5, in our images from before mozilla/fxa#21709). A ported change, made by hand, ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
+The label lists one entry per pull request, separated by spaces, as `<repository>#<number>@<base>..<commit>`: the commit of the pull request applied, which for a release the newest commit does not apply to can be an earlier head of it (for example `mozilla/fxa#21554@3e2cb67..a99361e` on v1.348.5, in our images from before mozilla/fxa#21709 was merged). A ported change, made by hand, ends with `+<release>`, the release the port was made for (an older one when a newer release reuses it), for example `mozilla/fxa#21554@3e2cb67..84d71e2+v1.347.3`. The label is `none` when nothing was applied. Images built before the patches, and Mozilla's own images, have no label.
 
 The label decides what works. Once Mozilla releases a pull request, its entry leaves upstream-patches.yml and the label: [config/fxa/fixed-in](/config/fxa/fixed-in) then names the first accounts release with it, and every accounts image of that release or later has it (Mozilla's too), read from its label `org.opencontainers.image.version`, else its tag.
 
 - `prepare_environment.sh` reads them to choose the accounts' database image, and warns when the image does not fit the database. It reads the local image, which is what starts, or the registry's one (with `docker buildx imagetools` or `skopeo`) when there is no local copy or to tell you to pull a newer one.
 - `tests/e2e.sh` skips, or retries, the upstream tests that a patch fixes when the image under test does not have it.
+
+Released and gone from the list:
+
+| Pull request | Released in | What it fixed |
+|---|---|---|
+| [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709) | v1.350.0 | the accounts on MySQL 9, and on 8.4 without `mysql_native_password`: v1.350.0 and later have it, Mozilla's images too, see [MySQL 9](../accounts.md#mysql-9). Our images of earlier releases built since the patch list it (v1.349.2 with [mozilla/fxa#21733](https://github.com/mozilla/fxa/pull/21733), which its auth server needed to build with it, also in v1.350.0); older ones list mozilla/fxa#21554, the same change |
 
 How the patches are added, checked and removed: [Upstream patches](../development/upstream-patches.md).
 

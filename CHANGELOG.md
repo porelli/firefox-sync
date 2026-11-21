@@ -11,6 +11,7 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 ### Changed
 
 - PostgreSQL 19: a new install on the stack's PostgreSQL container is pinned to 19, the major of `postgres:latest` now. An install on 18 stays on 18. Moving it to 19 takes a backup, the new major and a restore, tested from 18 to 19: see [PostgreSQL](docs/upgrading.md#postgresql).
+- The accounts on MySQL 9 (`mysql:lts`) now work with Mozilla's own images too, from v1.350.0 on: Mozilla released the driver change our images carried. `prepare_environment.sh` writes `FXA_MYSQL_IMAGE=mysql:lts` for any accounts image of v1.350.0 or later, and `mysql:8` with `FXA_MYSQL_ARGS` only for older ones. See [MySQL 9](docs/accounts.md#mysql-9).
 
 ### Fixed
 

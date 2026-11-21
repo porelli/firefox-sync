@@ -63,8 +63,8 @@ fxa:
   # 3-4 GB of memory), on the three public URLs below (required), each a host of its own
   enabled: false
   # FXA_IMAGE (empty: image.repository) and FXA_VERSION: our builds of Mozilla's releases, amd64
-  # and arm64; pin a release with e.g. fxa-mono-v1.349.0 (docs/upgrading.md#self-hosted-accounts). Mozilla's own
-  # (amd64 only): repository docker.io/mozilla/fxa-mono, tag v1.349.0
+  # and arm64; pin a release with e.g. fxa-mono-v1.350.0 (docs/upgrading.md#self-hosted-accounts). Mozilla's own
+  # (amd64 only): repository docker.io/mozilla/fxa-mono, tag v1.350.0
   image:
     repository: ""
     tag: fxa-mono-latest
@@ -144,9 +144,9 @@ fxa:
     bundled: true
     # the server's image, also the client of the backups and of the wait for the server
     # (FXA_MYSQL_IMAGE, FXA_MARIADB_IMAGE): MySQL's and MariaDB's long-term major, as compose's.
-    # mysql:lts (MySQL 9) needs an accounts image with mozilla/fxa#21709 (ours); with another
-    # (Mozilla's, or ours from before) pin MySQL 8, docker.io/library/mysql:8: a MySQL 8 pin
-    # gets compose's FXA_MYSQL_ARGS, --mysql-native-password=ON
+    # mysql:lts (MySQL 9) needs an accounts image with mozilla/fxa#21709 (v1.350.0 and later,
+    # Mozilla's too, or ours); with an older one (Mozilla's, or ours from before) pin MySQL 8,
+    # docker.io/library/mysql:8: a MySQL 8 pin gets compose's FXA_MYSQL_ARGS, --mysql-native-password=ON
     # --authentication-policy=mysql_native_password, any other image none. lts moves on to the
     # next major on its own (an image pull): pin a major to choose when, e.g. mysql:9, mariadb:12
     # (docs/upgrading.md#database-majors)

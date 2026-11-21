@@ -681,7 +681,14 @@ sed -i 's|^FXA_MARIADB_IMAGE=.*|FXA_MARIADB_IMAGE=mariadb:lts|' "${SETUP}/.env"
 check "$? $(grep -c 'WARNING: the accounts on MariaDB lts (FXA_MARIADB_IMAGE=mariadb:lts) need an image with mozilla/fxa#21494' "${WORK}/setup-mariadb-mozilla-lts.log")" "0 1" "Mozilla's images on MariaDB lts: a warning"
 # once Mozilla released it (config/fxa/fixed-in, the entry gone from upstream-patches.yml and
 # the label): an image of that release or later has it, Mozilla's too; an older one not
-fixed_in() { cp "${CODE}/config/fxa/fixed-in" "${SETUP}/config/fxa/fixed-in" && [ -z "${1:-}" ] || echo "$1" >> "${SETUP}/config/fxa/fixed-in"; }
+# (fixed_in '<pull request> <release>': this checkout's file with that release for it; none: as it is)
+fixed_in() {
+  if [ -z "${1:-}" ]; then
+    cp "${CODE}/config/fxa/fixed-in" "${SETUP}/config/fxa/fixed-in"
+  else
+    { grep -v "^${1%% *} " "${CODE}/config/fxa/fixed-in"; echo "$1"; } > "${SETUP}/config/fxa/fixed-in"
+  fi
+}
 fixed_in 'mozilla/fxa#21494 v1.347.3'
 (cd "${SETUP}" && ./prepare_environment.sh --upgrade) > "${WORK}/setup-mariadb-mozilla-released.log" 2>&1
 check "$? $(grep -c 'mozilla/fxa#21494' "${WORK}/setup-mariadb-mozilla-released.log")" "0 0" "released in v1.347.3 (config/fxa/fixed-in): Mozilla's v1.347.3 on MariaDB lts, no warning"
@@ -717,6 +724,11 @@ fixed_in 'mozilla/fxa#21709 v1.347.0'
 (cd "${SETUP}" && ./prepare_environment.sh --upgrade) > "${WORK}/setup-fxa-mysql-mozilla-released.log" 2>&1
 check "$? $(grep -c 'mozilla/fxa#21709' "${WORK}/setup-fxa-mysql-mozilla-released.log")" "0 0" "released in v1.347.0 (config/fxa/fixed-in): Mozilla's v1.347.3 on MySQL lts, no warning"
 fixed_in
+# this checkout's config/fxa/fixed-in: mozilla/fxa#21709 in v1.350.0, Mozilla's v1.350.0 on MySQL lts
+sed -i 's|^FXA_VERSION=.*|FXA_VERSION=v1.350.0|' "${SETUP}/.env"
+(cd "${SETUP}" && ./prepare_environment.sh --upgrade) > "${WORK}/setup-fxa-mysql-mozilla-v1350.log" 2>&1
+check "$? $(grep -c 'mozilla/fxa#21709' "${WORK}/setup-fxa-mysql-mozilla-v1350.log")" "0 0" "Mozilla's v1.350.0 on MySQL lts (config/fxa/fixed-in): no warning"
+sed -i 's|^FXA_VERSION=.*|FXA_VERSION=v1.347.3|' "${SETUP}/.env"
 printf 'FXA_MYSQL_ARGS=%s\n' "${NATIVE_ARGS}" >> "${SETUP}/.env"
 (cd "${SETUP}" && ./prepare_environment.sh --upgrade) > "${WORK}/setup-fxa-mysql-lts-args.log" 2>&1
 check "$? $(grep -c 'WARNING: FXA_MYSQL_ARGS has --mysql-native-password=ON, which MySQL lts' "${WORK}/setup-fxa-mysql-lts-args.log")" "0 1" "mysql_native_password options on MySQL lts: a warning"

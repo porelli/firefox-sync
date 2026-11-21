@@ -20,8 +20,8 @@ x-fxa: &fxa
   restart: unless-stopped
 
 # the accounts database: fxa-db (fxa-mysql.yml or fxa-mariadb.yml), or your own MySQL 8.4 or 9
-# (9 with our images) or MariaDB 11.4+ server (12 with our images; FXA_DB_CONTAINERS=0,
-# docs/reference/database-users.md#the-accounts)
+# (9 with v1.350.0 and later, or our images) or MariaDB 11.4+ server (12 with our images;
+# FXA_DB_CONTAINERS=0, docs/reference/database-users.md#the-accounts)
 # nothing leaves the stack: every telemetry, metrics and error-reporting setting of the
 # accounts services, off (config/fxa/no-telemetry.env, also the Quadlets' and the chart's;
 # docs/accounts.md#telemetry). Every running accounts service has it

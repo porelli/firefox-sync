@@ -11,8 +11,8 @@
 # org.firefox-sync.upstream-patches lists it (ours, while Mozilla has not released it), or when
 # it is of the release that has it or a later one (config/fxa/fixed-in, once Mozilla released
 # it: every image then, Mozilla's too; its release from the label org.opencontainers.image.version,
-# else from the tag). Mozilla's (docker.io/mozilla/fxa-mono) and ours built before have no
-# label. The local image first (what starts), then the registry (docker buildx imagetools or
+# else from the tag). mozilla/fxa#21709 is in v1.350.0 and later, Mozilla's images too.
+# Mozilla's (docker.io/mozilla/fxa-mono) and ours built before the patches have no label. The local image first (what starts), then the registry (docker buildx imagetools or
 # skopeo). Here and not in the admin UI, which cannot inspect images
 # a label of the JSON of an image (docker or podman inspect, buildx imagetools, skopeo)
 json_label() { grep -o "\"${1//./\\.}\": *\"[^\"]*\"" | head -n 1 | sed 's/.*: *"//; s/"$//'; }
@@ -31,6 +31,17 @@ fxa_image_inspect_remote() {
     out=$(docker buildx imagetools inspect "${image}" --format '{{json .Image}}' 2> /dev/null) \
         || out=$(skopeo inspect "docker://${image}" 2> /dev/null) || return 1
     printf '%s' "${out}"
+}
+# the accounts images without mozilla/fxa#21709, as the messages name them: Mozilla's before the
+# release of config/fxa/fixed-in (v1.350.0), and ours built before the patch
+fxa_without_mysql2() {
+    local fixed
+    fixed=$(fxa_fixed_in mozilla/fxa#21709)
+    if [ -n "${fixed}" ]; then
+        printf "Mozilla's before %s, or ours built before the patch" "${fixed}"
+    else
+        printf "Mozilla's images, or ours built before it"
+    fi
 }
 # has_fxa_patch <pull request> <label>: e.g. mozilla/fxa#21494 in "mozilla/fxa#21494@517651a..aa0b178 ..."
 # Our images built before Mozilla merged the mysql2 switch (mozilla/fxa#21709) list our own pull
@@ -215,9 +226,14 @@ fxa_mysql_image_check() {
         return 0
     fi
     echo "WARNING: the accounts on MySQL ${db_image##*:} (FXA_MYSQL_IMAGE=${db_image}${args:+, FXA_MYSQL_ARGS=${args}}) need an image"
-    echo "  with mozilla/fxa#21709, which ${image} does not have (Mozilla's images, or ours built before it):"
-    echo "  they cannot log in. Use our images (FXA_IMAGE=ghcr.io/porelli/firefox-sync, FXA_VERSION=fxa-mono-latest)"
-    echo "  or FXA_MYSQL_IMAGE=mysql:8 with FXA_MYSQL_ARGS=${FXA_MYSQL_NATIVE_ARGS}"
+    echo "  with mozilla/fxa#21709, which ${image} does not have ($(fxa_without_mysql2)):"
+    if [ -n "$(fxa_fixed_in mozilla/fxa#21709)" ]; then
+        echo "  they cannot log in. Use a release from $(fxa_fixed_in mozilla/fxa#21709) on, Mozilla's too (ours: FXA_IMAGE=ghcr.io/porelli/firefox-sync,"
+        echo "  FXA_VERSION=fxa-mono-latest), or FXA_MYSQL_IMAGE=mysql:8 with FXA_MYSQL_ARGS=${FXA_MYSQL_NATIVE_ARGS}"
+    else
+        echo "  they cannot log in. Use our images (FXA_IMAGE=ghcr.io/porelli/firefox-sync, FXA_VERSION=fxa-mono-latest)"
+        echo "  or FXA_MYSQL_IMAGE=mysql:8 with FXA_MYSQL_ARGS=${FXA_MYSQL_NATIVE_ARGS}"
+    fi
     echo "  (on a new database only: MySQL 8 cannot open MySQL 9's data), see docs/accounts.md#mysql-or-mariadb"
     echo ""
 }

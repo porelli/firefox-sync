@@ -140,47 +140,6 @@
     test_storage.py::test_if_modified_since_on_info_views and its comment: every image tested
     then has the fix.
 
-- id: fxa-mysql2
-  repo: mozilla/fxa
-  pr: 21709
-  head_repo: mozilla/fxa
-  base: 86aa1fa5448e9be350cf2b41b8605224a30691f5
-  sha: d49421941032a18387b91a71fd67bd25a9afb11a
-  component: fxa-mono
-  # merged into main after v1.349.0 (857250d): applied until a release has it. Before
-  # fxa-migrations-refused-signin, which changes the patcher on top of it
-  why: >-
-    fix(shared): replace mysql with mysql2. The accounts used the unmaintained mysqljs driver,
-    which only speaks mysql_native_password: MySQL 8.4 needs mysql_native_password=ON for it and
-    MySQL 9 removed the plugin. With mysql2 the accounts connect with caching_sha2_password, so
-    fxa-db can be MySQL 9 (mysql:lts).
-  when_released: >-
-    Every accounts image from that release on, Mozilla's too, works on MySQL 9 and on 8.4
-    without mysql_native_password: say so (the release) instead of "our images" in docs/accounts.md,
-    docs/databases.md#supported-versions, docs/reference/images.md#upstream-patches,
-    docs/upgrading.md#database-majors, .env-example and prepare_environment.sh, add the line
-    "mozilla/fxa#21709 <that release>" to config/fxa/fixed-in (our images lose the label;
-    prepare_environment.sh and the tests then take every image of that release or later as
-    having it). Until mozilla/fxa#21731 is released too, a wrong FXA_MYSQL_PASSWORD makes
-    Mozilla's fxa-migrations exit without "Access denied" (retried, not stopped at once).
-
-- id: fxa-mysql2-backfill-flags
-  repo: mozilla/fxa
-  pr: 21733
-  head_repo: mozilla/fxa
-  base: 30bb9b3b23539b32c7c71cf748f1388ac271c091
-  sha: 3b802ea620e5c18ec2bb077641285e1bb8423a77
-  component: fxa-mono
-  # merged into main after v1.349.2 (3b802ea): applied until a release has it. After fxa-mysql2:
-  # v1.349.2 backported the backfill script's fix (mozilla/fxa#21690) with mysql's string flags,
-  # which mysql2 (fxa-mysql2, applied above) refuses: fxa-auth-server's build-ts fails
-  why: >-
-    fix(auth): pass mysql2 flags as an array in the backfill script. With the mysql2 switch
-    (mozilla/fxa#21709) the backfill-account-authorizations script's flags: '-FOUND_ROWS' no
-    longer type-checks, and the auth server does not build.
-  when_released: >-
-    Nothing to undo: remove this entry (with fxa-mysql2, once a release has both).
-
 - id: fxa-migrations-refused-signin
   repo: mozilla/fxa
   pr: 21731

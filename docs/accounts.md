@@ -87,11 +87,11 @@ The image of `fxa-db` is `FXA_MYSQL_IMAGE` or `FXA_MARIADB_IMAGE`. Their default
 
 ### MySQL 9
 
-Mozilla's accounts use a MySQL driver that speaks `mysql_native_password` only. MySQL 8.4 has that method off by default, and MySQL 9 removed it. [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709), merged after v1.349.0, replaces the driver with `mysql2`, which also speaks MySQL's default, `caching_sha2_password`. Our images built before it was merged had the same change from our own pull request, mozilla/fxa#21554, and `prepare_environment.sh` counts their label as having it.
+Mozilla's accounts used a MySQL driver that speaks `mysql_native_password` only. MySQL 8.4 has that method off by default, and MySQL 9 removed it. [mozilla/fxa#21709](https://github.com/mozilla/fxa/pull/21709), released in v1.350.0, replaces the driver with `mysql2`, which also speaks MySQL's default, `caching_sha2_password`. Every accounts image of v1.350.0 and later has it, Mozilla's too. Our images of earlier releases built since the patch have it too (in their label, [Upstream patches](reference/images.md#upstream-patches); those from before Mozilla merged it list our own pull request for the same change, mozilla/fxa#21554, and `prepare_environment.sh` counts it).
 
-Until a release includes it, the accounts images built here have it, see [Upstream patches](reference/images.md#upstream-patches). Mozilla's own images and ours built before it don't. With them, `fxa-db` runs `mysql:8` with `FXA_MYSQL_ARGS`, and your own server must be MySQL 8.4 with `mysql_native_password=ON`.
+Mozilla's images before v1.350.0, and ours built before the patch, don't. With them, `fxa-db` runs `mysql:8` with `FXA_MYSQL_ARGS`, and your own server must be MySQL 8.4 with `mysql_native_password=ON`.
 
-`prepare_environment.sh` reads the image's label and writes the right settings. It warns, with `--upgrade` too, when `FXA_MYSQL_IMAGE` and the image don't match. A mismatch shows as `ER_NOT_SUPPORTED_AUTH_MODE` in `fxa-migrations` and `fxa-auth`, see [Troubleshooting](troubleshooting.md#databases).
+`prepare_environment.sh` reads the image's labels (its patches, its release, else its tag) and writes the right settings. It warns, with `--upgrade` too, when `FXA_MYSQL_IMAGE` and the image don't match. A mismatch shows as `ER_NOT_SUPPORTED_AUTH_MODE` in `fxa-migrations` and `fxa-auth`, see [Troubleshooting](troubleshooting.md#databases).
 
 ### MariaDB 12
 

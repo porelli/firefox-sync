@@ -78,8 +78,8 @@ The defaults follow each database's long-term tag (`mariadb:lts`, `mysql:lts`; P
 | Sync | MySQL 8 (installs from before) | syncstorage-rs.yml `test` (`SYNC_DB=mysql`, `SYNC_MYSQL_IMAGE=mysql:8`) | syncstorage-rs.yml `test` (`SYNC_MYSQL_IMAGE=mysql:8`), admin.yml `e2e-fxa` (`FXA_MYSQL_IMAGE=mysql:8`: one server for Sync and the accounts) |
 | Sync | PostgreSQL `latest` (its major pinned) | syncstorage-rs.yml `test`, admin.yml `e2e`, helm.yml `e2e` (amd64 and arm64), and `e2e-fxa` with the accounts (`SYNC_BACKEND=postgres`) | syncstorage-rs.yml `test`, admin.yml `e2e`, helm.yml `e2e` |
 | Sync | PostgreSQL, the major before that of `latest` (18 today), moved to `latest` | syncstorage-rs.yml `test` (`PG_MAJOR_MOVE=1`) | - |
-| Accounts | MySQL `lts` (images with mozilla/fxa#21709) | fxa.yml `test`, admin.yml `e2e-fxa` and helm.yml `e2e-fxa` (each on amd64 and arm64) | admin.yml `e2e-fxa`, helm.yml `e2e-fxa` |
-| Accounts | MySQL 8 with `mysql_native_password` (installs from before, images without it) | fxa.yml `test` (`FXA_MYSQL_IMAGE=mysql:8`), syncstorage-rs.yml `test-fxa` (Mozilla's images), fxa.yml `test-upgrade` (then to `lts`) | admin.yml `e2e-fxa` (`FXA_MYSQL_IMAGE=mysql:8`) |
+| Accounts | MySQL `lts` (images with mozilla/fxa#21709: v1.350.0 and later, Mozilla's too) | fxa.yml `test`, admin.yml `e2e-fxa` and helm.yml `e2e-fxa` (each on amd64 and arm64), syncstorage-rs.yml `test-fxa` (Mozilla's images) | admin.yml `e2e-fxa`, helm.yml `e2e-fxa` |
+| Accounts | MySQL 8 with `mysql_native_password` (installs from before, images without it) | fxa.yml `test` (`FXA_MYSQL_IMAGE=mysql:8`), fxa.yml `test-upgrade` (then to `lts`) | admin.yml `e2e-fxa` (`FXA_MYSQL_IMAGE=mysql:8`) |
 | Accounts | MariaDB `lts` (needs mozilla/fxa#21494) | fxa.yml `test-mariadb`, admin.yml `e2e-fxa`, helm.yml `e2e-fxa` | admin.yml `e2e-fxa` (`FXA_DB=mariadb EXTERNAL_DB=1`) |
 | Accounts | MariaDB 11 (installs from before) | fxa.yml `test-mariadb` (`mariadb:11`) | - |
 | Podman, Quadlets | the defaults (MariaDB `lts`, the accounts on MySQL as above) | syncstorage-rs.yml, fxa.yml and admin.yml `test-podman`/`podman` | - |
@@ -172,7 +172,7 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
   - When it fails, the log shows what each Firefox window showed: the version, the address, the text and the form fields. `tests/e2e-fxa.sh` also keeps their page source and a screenshot, in a new `ffs-browser-artifacts.*` directory under `RUNNER_TEMP` or `/tmp` that it prints. CI uploads it as the `browser-pages-<job>` artifact.
 - [test_fxa_pairing.py](/tests/test_fxa_pairing.py) checks the pairing server's websocket channel.
 - It runs with the newest Mozilla accounts release every week, and on amd64 and arm64 for the [accounts images](/.github/workflows/fxa.yml).
-- The accounts database is MySQL, `FXA_MYSQL_IMAGE`: by default `mysql:lts` for an accounts image with mozilla/fxa#21709 in its label, else `mysql:8` with `FXA_MYSQL_ARGS` (`mysql_native_password`).
+- The accounts database is MySQL, `FXA_MYSQL_IMAGE`: by default `mysql:lts` for an accounts image with mozilla/fxa#21709 (in its label, or of v1.350.0 and later: [config/fxa/fixed-in](/config/fxa/fixed-in)), else `mysql:8` with `FXA_MYSQL_ARGS` (`mysql_native_password`).
 - With `FXA_DB=mariadb` it is MariaDB, `FXA_MARIADB_IMAGE`: by default `mariadb:lts`, or `mariadb:11` for an accounts image without mozilla/fxa#21494. `tests/podman.sh` takes `FXA_DB` too, for the Quadlets.
 - `db/mysql/keep-major.sh` refuses MariaDB 11 data on `mariadb:lts` without `SYNC_MARIADB_IMAGE`, and says what to set.
 
@@ -187,7 +187,7 @@ CI runs the three in the weekly accounts test of [syncstorage-rs.yml](/.github/w
 
 ```bash
 # from Mozilla's own image (amd64, emulated on arm64) with older schemas
-FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_VERSION=fxa-mono-v1.349.0 tests/fxa-upgrade.sh
+FXA_FROM=docker.io/mozilla/fxa-mono:v1.345.2 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_VERSION=fxa-mono-v1.350.0 tests/fxa-upgrade.sh
 # from one of our older builds on MariaDB
 FXA_FROM=ghcr.io/<owner>/<repo>:fxa-mono-v1.347.1 FXA_IMAGE=ghcr.io/<owner>/<repo> FXA_DB=mariadb tests/fxa-upgrade.sh
 # from an older fxa-mono-latest

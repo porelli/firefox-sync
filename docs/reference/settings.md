@@ -178,14 +178,14 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `.env` | Helm | Default | Meaning | Old name |
 |---|---|---|---|---|
 | `FXA_IMAGE` | `fxa.image.repository` (empty: `image.repository`) | `ghcr.io/porelli/firefox-sync` | the accounts' image. Mozilla's own: `docker.io/mozilla/fxa-mono` (amd64 only) | |
-| `FXA_VERSION` | `fxa.image.tag` | `fxa-mono-latest` | its tag: the newest tested release, or a pinned one such as `fxa-mono-v1.349.0`. [Upgrading](../upgrading.md#self-hosted-accounts) | |
+| `FXA_VERSION` | `fxa.image.tag` | `fxa-mono-latest` | its tag: the newest tested release, or a pinned one such as `fxa-mono-v1.350.0`. [Upgrading](../upgrading.md#self-hosted-accounts) | |
 | `FXA_ARCH` | – (the node's) | `amd64` | `amd64` or `arm64`, set by `prepare_environment.sh` (`amd64` with Mozilla's images) | |
 | `FXA_CONTENT_URL` | `fxa.contentUrl` | required | the public URL of the accounts pages, for example `https://accounts.example.com` | |
 | `FXA_AUTH_URL` | `fxa.authUrl` | required | the public URL of the accounts API | |
 | `FXA_PROFILE_URL` | `fxa.profileUrl` | required | the public URL of the profile server | |
 | `FXA_DB` | `fxa.database.backend` | `mysql` | the accounts database: `mysql` or `mariadb` ([MySQL or MariaDB](../accounts.md#mysql-or-mariadb)). With compose, `mariadb` also needs `compose/fxa-mariadb.yml` in `COMPOSE_FILE`, not `compose/fxa-mysql.yml` | |
 | `FXA_MYSQL_IMAGE` | `fxa.database.image.mysql` | unset: `mysql:lts` (Helm `docker.io/library/mysql:lts`) | with `FXA_DB=mysql`, the image of `fxa-db` and of its backups. Pins: [Database majors](../upgrading.md#database-majors) | |
-| `FXA_MYSQL_ARGS` | – (from `fxa.database.image.mysql`: the native password options on a MySQL 8 pin, [Database majors](../upgrading.md#database-majors)) | empty | extra options of `fxa-db`'s `mysqld`. On `mysql:8` for accounts images without mozilla/fxa#21709: `--mysql-native-password=ON --authentication-policy=mysql_native_password` | |
+| `FXA_MYSQL_ARGS` | – (from `fxa.database.image.mysql`: the native password options on a MySQL 8 pin, [Database majors](../upgrading.md#database-majors)) | empty | extra options of `fxa-db`'s `mysqld`. On `mysql:8` for accounts images without mozilla/fxa#21709 (before v1.350.0): `--mysql-native-password=ON --authentication-policy=mysql_native_password` | |
 | `FXA_MARIADB_IMAGE` | `fxa.database.image.mariadb` | unset: `mariadb:lts` (Helm `docker.io/library/mariadb:lts`) | with `FXA_DB=mariadb`, the image of `fxa-db` and of its backups | |
 | `FXA_DB_CONTAINERS` | `fxa.database.bundled` (`0`: `false`) | `1` (Helm `true`) | `0`: no `fxa-db` container, use your own MySQL or MariaDB server | |
 | `FXA_MYSQL_HOST` | `fxa.database.external.host` | `fxa-db` (Helm: `<release>-firefox-sync-fxa-db` while bundled) | the accounts' database server | |
