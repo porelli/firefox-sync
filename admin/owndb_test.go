@@ -236,7 +236,7 @@ func TestMoveOwnTables(t *testing.T) {
 	}
 	// PostgreSQL's container without SYNC_POSTGRES_APP_USER: the Sync server's role is a superuser
 	s = &SyncDB{own: sql.OpenDB(&fakeFxa{}), ownName: "ffs_admin", postgres: true}
-	if c := ownDBCheck(s, moveState{Superuser: "syncserver"}, deployment{}); c.OK || !strings.Contains(c.Text, "belong to syncserver, a superuser") || !strings.Contains(c.Text, "SYNC_POSTGRES_APP_USER") {
+	if c := ownDBCheck(s, moveState{Superuser: "syncserver"}, deployment{}); c.OK || !strings.Contains(c.Text, "connects as syncserver, a superuser") || !strings.Contains(c.Text, "SYNC_POSTGRES_APP_USER") {
 		t.Errorf("check with a superuser: %+v", c)
 	}
 }

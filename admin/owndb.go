@@ -375,6 +375,31 @@ func copiedSummary(copied map[string]int64) string {
 	return strings.Join(parts, ", ")
 }
 
+// superuserSyncRole: the role the Sync server connects as when it is a superuser, "" when it
+// is none. pg_stat_activity shows every session's role to any role (not its query): of the
+// roles with sessions of more than 2 minutes on the Sync database, the admin UI's own left out,
+// the one with the most is the Sync server, whose pool keeps its connections open. Migrations,
+// the init and the backups connect for a moment, also as a superuser that owns the tables (an
+// integrator's owner role), and a psql session of an administrator is one: neither is taken
+// for it. With no such session (the Sync server just started, or not running), the owner of
+// the tables decides, as before (superuserOwner).
+func (s *SyncDB) superuserSyncRole(ctx context.Context) string {
+	var role string
+	var super bool
+	err := s.db.QueryRowContext(ctx, `SELECT a.usename, bool_or(r.rolsuper)
+		FROM pg_stat_activity a JOIN pg_roles r ON r.oid = a.usesysid
+		WHERE a.datname = current_database() AND a.backend_type = 'client backend'
+			AND a.usename <> current_user AND a.backend_start < now() - interval '2 minutes'
+		GROUP BY a.usename ORDER BY count(*) DESC, a.usename LIMIT 1`).Scan(&role, &super)
+	if err != nil {
+		return s.superuserOwner(ctx)
+	}
+	if super {
+		return role
+	}
+	return ""
+}
+
 // superuserOwner: the owner of the Sync tables when it is a superuser, "" otherwise. The
 // PostgreSQL container of the stack makes SYNC_POSTGRES_USER one (the image does); without
 // SYNC_POSTGRES_APP_USER it is also the Sync server's role, the owner of the tables, and then
@@ -444,7 +469,7 @@ func ownDBCheck(s *SyncDB, st moveState, d deployment) setupCheck {
 			// the chart's bundled PostgreSQL has the Sync server's own role: your own server
 			fix = "Give the Sync server a role of its own on your database server, no superuser, owner of the Sync tables, as docs/reference/database-users.md#postgresql says, and the chart its name and password."
 		}
-		c.Text = fmt.Sprintf("The event log is in its own database %s, but the Sync tables belong to %s, a superuser of the PostgreSQL server (the stack's database container makes SYNC_POSTGRES_USER one): the Sync server connects as it and can still read and change the event log. "+
+		c.Text = fmt.Sprintf("The event log is in its own database %s, but the Sync server connects as %s, a superuser of the PostgreSQL server (the stack's database container makes SYNC_POSTGRES_USER one): it can still read and change the event log. "+
 			"%s", s.ownName, st.Superuser, fix)
 	default:
 		c.OK = true

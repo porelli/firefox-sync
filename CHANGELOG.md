@@ -15,6 +15,8 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Fixed
 
+- Admin UI, PostgreSQL: the Event log setup check no longer warns when the Sync tables belong to a superuser that only runs the migrations: it checks the role the Sync server connects as. See [Setup checks](docs/admin/monitoring.md).
+
 ### Security
 
 ## v2026.11.23 — 2026-11-23

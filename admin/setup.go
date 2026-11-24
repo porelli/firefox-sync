@@ -98,6 +98,10 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		} else {
 			st.Foreign = found
 		}
+		// the Sync server's own role, as it connects now (not only the tables' owner at start)
+		if a.sync.postgres && a.sync.own != nil {
+			st.Superuser = a.sync.superuserSyncRole(ctx)
+		}
 		checks = append(checks, ownDBCheck(a.sync, st, a.deployment))
 	}
 	// your own database server: the grants of database-setup.sql (dbsetup.go)
