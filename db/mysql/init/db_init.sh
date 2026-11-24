@@ -425,8 +425,8 @@ admin_grant_sql() {
 }
 # admin_grants: run them one by one. A REVOKE of what is not granted (ERROR 1141, 1147, 1403) is
 # done; a reader that does not exist (1133 MariaDB, 1410 MySQL) stops it, quietly; anything
-# else (no GRANT OPTION: 1044, 1142, 1370...) stops it with a note, or a warning with
-# ADMIN_ACCESS_EXTERNAL (the database does not enforce it then)
+# else (no GRANT OPTION: 1044, 1142, 1370...) stops it with a note; with ADMIN_ACCESS_EXTERNAL it
+# stops the init container (exit 1): the mode only with the database enforcing it, never half
 admin_grants() {
   local reader=${ADMIN_DB_SYNC_USER-ffs_admin_sync} stmt out error
   [ -n "${reader}" ] || return 0
@@ -444,10 +444,11 @@ admin_grants() {
         return 0 ;;
     esac
     if [ "${ACCESS_EXTERNAL}" = 1 ]; then
-      echo "WARNING: ADMIN_ACCESS_EXTERNAL is on, but the database does not enforce it: ${MARIADB_USER} cannot set the grants"
-      echo "  of ${reader} (${error}), which may still have EXECUTE on the procedures that change who may sync."
+      echo "✗ ERROR: ADMIN_ACCESS_EXTERNAL is on, but ${MARIADB_USER} cannot set the grants of ${reader} (${error}): the"
+      echo "  database would not enforce it, ${reader} could still change who may sync. Not started."
       echo "  As the administrator of the server: GRANT EXECUTE ON \`${MARIADB_DATABASE}\`.* TO '${MARIADB_USER}'@'%' WITH GRANT OPTION;"
       echo "  then start this again (docs/admin/accounts.md#the-database-enforces-it-too)"
+      exit 1
     else
       echo "  ${MARIADB_USER} cannot set the grants of ${reader} (${error}): it keeps EXECUTE on the whole database, as"
       echo "  database-setup.sql gave it. Per procedure with GRANT OPTION for ${MARIADB_USER} (docs/reference/database-users.md#mariadb-and-mysql)"

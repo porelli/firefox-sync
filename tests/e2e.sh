@@ -1485,8 +1485,17 @@ sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_us
 check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1')" "200 healthy yes" "/__heartbeat__ and the admin UI after the allowlist"
 
 echo "== access managed elsewhere (ADMIN_ACCESS_EXTERNAL): another system's rows and trigger, the admin UI read-only"
+init_says() { dc logs --no-log-prefix tokenserver_db_init 2>&1 | grep -c "$1"; }
 set_env ADMIN_ACCESS_EXTERNAL 1
 redeploy_allowed ""
+if [ -n "${EXTDB}" ] && [ "${BACKEND}" = mysql ]; then
+  # your own server, its SQL alone: the tokenserver's user cannot grant, so the init container
+  # refuses the mode (never half enforced) and says what to run. Then the grant the docs give
+  check "${INIT_CODE} $(init_says 'ADMIN_ACCESS_EXTERNAL is on, but') $(init_says 'WITH GRANT OPTION;')" "1 1 1" \
+    "your own MySQL server without GRANT OPTION for ${SYNC_TOKENSERVER_DB_USER}: the init container refuses ADMIN_ACCESS_EXTERNAL, and says the grant"
+  extdb_admin -e "GRANT EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* TO '${SYNC_TOKENSERVER_DB_USER}'@'%' WITH GRANT OPTION;" < /dev/null
+  redeploy_allowed ""
+fi
 MAX_BEFORE=$(max_users)
 sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users';" > /dev/null
 check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 external 1" "ADMIN_ACCESS_EXTERNAL=1: recorded by the init container, its own invite-only trigger off"
@@ -1507,16 +1516,6 @@ reader_access() {
     "$(verdict admin_sync_sql "${max}")"
   sql "DELETE FROM sync_allowed_accounts WHERE uid = '${EXT_E2E_UID}';" > /dev/null
 }
-init_says() { dc logs --no-log-prefix tokenserver_db_init 2>&1 | grep -c "$1"; }
-if [ -n "${EXTDB}" ] && [ "${BACKEND}" = mysql ]; then
-  # your own server, its SQL alone: the tokenserver's user cannot grant, the reader keeps its
-  # EXECUTE on the whole database; the init container and the admin UI say so. Then the grant
-  # the docs give, and the next start of the init container takes it back
-  check "$(reader_access) $(init_says 'ADMIN_ACCESS_EXTERNAL is on, but the database does not enforce it')" "allowed refused allowed 1" \
-    "your own MySQL server without GRANT OPTION for ${SYNC_TOKENSERVER_DB_USER}: not enforced by the database, the init container warns"
-  extdb_admin -e "GRANT EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* TO '${SYNC_TOKENSERVER_DB_USER}'@'%' WITH GRANT OPTION;" < /dev/null
-  check "$(rerun_init) $(init_says 'the database refuses them')" "0 1" "the grant of the docs given: the init container sets the reader's grants"
-fi
 check "$(reader_access) $(init_says 'the database refuses them')" "refused refused refused 1" \
   "ADMIN_ACCESS_EXTERNAL=1: ${ADMIN_DB_SYNC_USER} cannot run ffs_allow_account, INSERT into sync_allowed_accounts nor change max users: the database refuses it"
 if [ "${BACKEND}" = mysql ]; then

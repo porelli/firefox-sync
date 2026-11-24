@@ -346,7 +346,7 @@ The setup check **Access managed elsewhere: database grants** reads what the adm
 
 Where it needs more from you:
 
-- **Your own MariaDB or MySQL server**: the init container sets these grants as the tokenserver's user, and that user needs `GRANT OPTION` on its database for it. The stack's database containers give it. On your own server the setup migrations give `ffs_admin_sync` `EXECUTE` on the whole tokenserver database, and the init container cannot narrow that by itself. It says so in its log, with the mode on as a warning, and so does the setup check. Run this once, as the server's administrator, with your names:
+- **Your own MariaDB or MySQL server**: the init container sets these grants as the tokenserver's user, and that user needs `GRANT OPTION` on its database for it. The stack's database containers give it. On your own server the setup migrations give `ffs_admin_sync` `EXECUTE` on the whole tokenserver database, and the init container cannot narrow that by itself. Without the mode it says so in its log, and so does the setup check. With the mode on it stops (exit 1), and the Sync server with it, until the grant below is there: the mode runs only with the database enforcing it, never half. Run this once, as the server's administrator, with your names:
 
   ```sql
   GRANT EXECUTE ON `tokenserver`.* TO 'tokenserver'@'%' WITH GRANT OPTION;
