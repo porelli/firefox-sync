@@ -268,6 +268,12 @@ spec:
               value: {{ include "firefox-sync.fxaDbUser" . | quote }}
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_MYSQL_PASSWORD" "key" "FXA_MYSQL_PASSWORD") | nindent 12 }}
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_ADMIN_DB_PASSWORD" "key" "FXA_ADMIN_DB_PASSWORD") | nindent 12 }}
+            # ffs_access, the user of a system that keeps the sign-up allowlist (empty: none)
+            {{- include "firefox-sync.secretEnv" (dict "root" . "name" "FXA_ACCESS_DB_PASSWORD" "key" "FXA_ACCESS_DB_PASSWORD" "optional" true) | nindent 12 }}
+            {{- if .Values.admin.accessExternal }}
+            - name: ADMIN_ACCESS_EXTERNAL
+              value: "1"
+            {{- end }}
             - name: FXA_SIGNUPS
               value: {{ $f.signups | quote }}
             - name: FXA_SIGNUP_ALLOWLIST

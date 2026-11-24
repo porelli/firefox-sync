@@ -109,6 +109,8 @@ What it does: [Admin UI](../admin/README.md).
 |---|---|---|---|---|
 | `COMPOSE_PROFILES` with `admin` | `admin.enabled` | off | the admin UI | |
 | `ADMIN_PASSWORD` | `admin.password` (Secret: `ADMIN_PASSWORD`) | generated (Helm empty: generated) | the sign-in password. Empty in the Secret: no password sign-in | |
+| – (empty `ADMIN_PASSWORD`) | `admin.passwordSignIn` | `true` | `false`: no password sign-in, no `ADMIN_PASSWORD` generated or passed (one in the Secret is not used); needs `admin.oidc.issuer`, `admin.fxaSignIn` or `admin.trustedHeader.header`: [Ways to sign in](../admin/signing-in.md#ways-to-sign-in) | |
+| `ADMIN_ACCESS_EXTERNAL` | `admin.accessExternal` | empty (Helm `false`): off | for integrators, `1`, `true` or `yes` (as `ADMIN_INSECURE_COOKIE`): another system decides who may use the server. The limits, the allowlists and the sign-ups are read-only in the admin UI, and the init container and `fxa-policy` leave the allowlists' rows to it; `SYNC_ALLOWED_ACCOUNTS` and `FXA_SIGNUP_ALLOWLIST` must be empty: [Access managed elsewhere](../admin/accounts.md#access-managed-elsewhere) | |
 | `ADMIN_EXPORT_PORT` | – (`kubectl port-forward`, or `admin.ingress.*`) | `127.0.0.1:8090` | where the host publishes the admin UI | |
 | `ADMIN_TZ` | `admin.tz` | empty: UTC | the time zone of the pages and the alerts, for example `Europe/Rome` | |
 | `ADMIN_METRICS_TOKEN` | `admin.metricsToken` (Secret: `ADMIN_METRICS_TOKEN`) | empty: off | the bearer token of the Prometheus metrics at `/metrics`: [Prometheus](../admin/monitoring.md#prometheus) | |
@@ -197,6 +199,7 @@ The self-hosted Mozilla accounts, with `compose/fxa.yml` in `COMPOSE_FILE`: [Sel
 | `FXA_DB_BOOTSTRAP_USER` | `fxa.database.external.bootstrap.user` | empty | as `SYNC_DB_BOOTSTRAP_USER`, for `database-setup-fxa.sql` on your own accounts server | |
 | `FXA_DB_BOOTSTRAP_PASSWORD` | Secret: `FXA_DB_BOOTSTRAP_PASSWORD` | empty | its password | |
 | `FXA_ADMIN_DB_PASSWORD` | Secret: `FXA_ADMIN_DB_PASSWORD` | generated | the password of the admin UI's user `ffs_admin` of the accounts database (a user, not the database `ADMIN_DB_NAME`) | |
+| `FXA_ACCESS_DB_PASSWORD` | `fxa.accessDbPassword` (Secret: `FXA_ACCESS_DB_PASSWORD`) | empty: no such user | for integrators: the password of `ffs_access`, the user of a system that keeps the sign-up allowlist and disables accounts by email. Empty: `fxa-policy` drops it: [Access managed elsewhere](../admin/accounts.md#self-hosted-accounts) | |
 | `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | Secret: the same names | generated | the accounts services' secrets | |
 | `FXA_SIGNUPS` | `fxa.signups` | `open` | who can create an account: `open`, `allowlist` or `closed`: [Who can sign up](../accounts.md#who-can-sign-up) | |
 | `FXA_SIGNUP_ALLOWLIST` | `fxa.signupAllowlist` (a list, or one string) | empty | with `allowlist`, the emails and `@domains` allowed, comma-separated | |

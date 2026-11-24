@@ -171,7 +171,10 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            {{- /* admin.passwordSignIn false: no password sign-in, whatever a Secret holds */}}
+            {{- if $a.passwordSignIn }}
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "ADMIN_PASSWORD" "key" "ADMIN_PASSWORD" "optional" true) | nindent 12 }}
+            {{- end }}
             # initial:N: the admin UI manages max users, otherwise the chart does (read-only)
             - name: MAX_USERS
               value: {{ include "firefox-sync.maxUsers" . | quote }}
@@ -420,6 +423,12 @@ spec:
             {{- with $a.insecureCookie }}
             - name: ADMIN_INSECURE_COOKIE
               value: {{ . | toString | quote }}
+            {{- end }}
+            # who may use the server managed elsewhere: limits, allowlists and sign-ups read-only
+            # (only when on: the default render stays as it was)
+            {{- if $a.accessExternal }}
+            - name: ADMIN_ACCESS_EXTERNAL
+              value: "1"
             {{- end }}
           ports:
             - name: http

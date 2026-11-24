@@ -64,6 +64,10 @@ ALLOWED_DIFFERENCES = {
     "*:admin/SYNC_ALLOWED_ACCOUNTS": "as ADMIN_INSECURE_COOKIE: the chart only when allowedAccounts is set (unset is empty, off), "
     "so that the default render stays that of 0.1.0",
     "*:db-init/SYNC_ALLOWED_ACCOUNTS": "as the admin UI's: the chart only when allowedAccounts is set",
+    "*:admin/ADMIN_ACCESS_EXTERNAL": "as ADMIN_INSECURE_COOKIE: the chart only when admin.accessExternal is true (compose "
+    "passes it empty), so that the default render stays as it was",
+    "*:db-init/ADMIN_ACCESS_EXTERNAL": "as the admin UI's: the chart only when admin.accessExternal is true",
+    f"{FXA}:policy/ADMIN_ACCESS_EXTERNAL": "as the admin UI's: the chart only when admin.accessExternal is true",
     # the old names of .env (docs/upgrading.md#renamed-settings): compose tells its containers which
     # are still set, or set with their new ones; the chart has no .env
     "*:migrate/FFS_BOTH_ENV_NAMES": "compose-only: the old .env names set with their new ones; the chart has no .env",

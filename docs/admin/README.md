@@ -6,6 +6,7 @@ The admin UI is an optional web page to run your server: who can use it, the acc
 
 - **Limits**: max users of Sync and, with self-hosted accounts, max accounts, changed without a restart. See [Limits](accounts.md#limits).
 - **Sign-ups and invitations**, with self-hosted accounts: anybody, an allowlist or nobody, and invitations by email. See [Sign-ups](accounts.md#sign-ups).
+- **Access managed elsewhere**, for integrators: another system decides who may use the server, and the limits, the allowlists and the sign-ups are read-only here. See [Access managed elsewhere](accounts.md#access-managed-elsewhere).
 - **Accounts**: search them, disable them, sign out a device or everywhere, help owners who lost a password or an authenticator, read their security history, keep a note. See [Accounts](accounts.md).
 - **Sync data of an account**: what the tokenserver and the storage hold for it, what looks wrong, a reset, a deletion. See [Sync data](accounts.md#sync-data).
 - **Monitoring**: the health of each component, versions, the schema levels and setup migrations of the databases, public URLs and certificates, setup checks, a read-only Configuration page, Sync activity and errors, the event log and Prometheus metrics. See [Monitoring](monitoring.md).

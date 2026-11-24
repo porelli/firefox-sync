@@ -116,6 +116,9 @@ func (a *App) setupChecks(ctx context.Context, status *SyncStatus, components []
 		if c, ok := a.droppedCheck(ctx, time.Now()); ok {
 			checks = append(checks, c)
 		}
+		if c, ok := a.accessCheck(ctx); ok {
+			checks = append(checks, c)
+		}
 	}
 	// the old names of .env: none with the Helm chart, which has no .env
 	if c, ok := oldNamesCheck(os.Getenv("FFS_OLD_ENV_NAMES")); ok && a.deployment.Kubernetes() == nil {

@@ -172,6 +172,9 @@
           "pattern": "^([0-9a-f]{64})?$",
           "$comment": "the format oauth-clients.js enforces"
         },
+        "accessDbPassword": {
+          "type": "string"
+        },
         "extraCaCerts": {
           "type": "object",
           "properties": {
@@ -736,11 +739,17 @@
         "password": {
           "type": "string"
         },
+        "passwordSignIn": {
+          "type": "boolean"
+        },
         "alertEmail": {
           "type": "string"
         },
         "insecureCookie": {
           "type": ["string", "boolean", "integer"]
+        },
+        "accessExternal": {
+          "type": "boolean"
         },
         "oidc": {
           "type": "object",

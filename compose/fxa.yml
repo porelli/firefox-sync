@@ -136,6 +136,10 @@ services:
       FXA_MYSQL_USER: ${FXA_MYSQL_USER:-root}
       FXA_MYSQL_PASSWORD: ${FXA_MYSQL_PASSWORD}
       FXA_ADMIN_DB_PASSWORD: ${FXA_ADMIN_DB_PASSWORD:-}
+      # ffs_access, the user of a system that keeps the sign-up allowlist (empty: none)
+      FXA_ACCESS_DB_PASSWORD: ${FXA_ACCESS_DB_PASSWORD:-}
+      # that system keeps the sign-up allowlist's rows: FXA_SIGNUPS on every start, no FXA_SIGNUP_ALLOWLIST
+      ADMIN_ACCESS_EXTERNAL: ${ADMIN_ACCESS_EXTERNAL:-}
       FXA_SIGNUPS: ${FXA_SIGNUPS:-open}
       FXA_SIGNUP_ALLOWLIST: ${FXA_SIGNUP_ALLOWLIST:-}
       # the most accounts: N or unlimited (every start), initial:N (once, then the admin UI)

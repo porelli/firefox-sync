@@ -141,6 +141,8 @@ type App struct {
 	// SYNC_ALLOWED_ACCOUNTS=admin or initial:...: the allowlist of Sync is managed on the
 	// overview, otherwise by .env (allowlist.go)
 	allowlistEditable bool
+	// ADMIN_ACCESS_EXTERNAL: another system decides who may use the server, read-only here (access.go)
+	accessExternal bool
 	// BACKUP_TIME, BACKUP_KEEP of the backup service, for its help on the overview
 	backupTime string
 	backupKeep int
@@ -198,6 +200,10 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	accessExternal, err := loadAccessExternal()
+	if err != nil {
+		return err
+	}
 	eventsSetting, eventsSet := os.LookupEnv("FXA_ACCOUNT_EVENTS")
 	adminZone = loadZone()
 	syncDB, err := openSyncDB()
@@ -239,10 +245,10 @@ func serve(ctx context.Context) error {
 		}
 	}()
 	app := &App{sync: syncDB, storage: storageDB, fxa: fxaDB, rec: rec, auth: auth, sessions: map[string]*session{},
-		staleDays: staleDays, unconfirmedHours: unconfirmedHours, maxUsersEditable: maxUsersEditable(os.Getenv("MAX_USERS")),
-		maxAccountsEditable: limitEditable(os.Getenv("FXA_MAX_ACCOUNTS"), true),
-		allowlistEditable:   allowlistEditableEnv(),
-		backupTime:          env("BACKUP_TIME", "03:00"), backupKeep: envInt("BACKUP_KEEP", 7), deployment: deploy,
+		staleDays: staleDays, unconfirmedHours: unconfirmedHours, maxUsersEditable: maxUsersEditable(os.Getenv("MAX_USERS")) && !accessExternal,
+		maxAccountsEditable: limitEditable(os.Getenv("FXA_MAX_ACCOUNTS"), true) && !accessExternal,
+		allowlistEditable:   allowlistEditableEnv() && !accessExternal, accessExternal: accessExternal,
+		backupTime: env("BACKUP_TIME", "03:00"), backupKeep: envInt("BACKUP_KEEP", 7), deployment: deploy,
 		gateProbe: randomToken(), syncDomain: strings.TrimSuffix(env("SYNCSTORAGE_DOMAIN", ""), "/"),
 		emailDomain: strings.ToLower(env("FXA_EMAIL_DOMAIN", "")), pairingURL: env("FXA_PAIRING_URL", ""),
 		autoPurge: autoPurge, unconfirmedDays: unconfirmedDays, signupBurst: signupBurst,
@@ -585,7 +591,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	}
 	data["Sync"], data["MaxUsersEditable"] = status, a.maxUsersEditable
 	// the limit's form opens by itself once it is close
-	data["NearMaxUsers"] = nearMaxUsers(status)
+	data["NearMaxUsers"] = nearMaxUsers(status) && !a.accessExternal
 	// SYNC_ALLOWED_ACCOUNTS: the pending accounts, the allowed ones
 	pending := 0
 	var syncAllowlist *SyncAllowlist
@@ -663,7 +669,7 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	}
 
 	in := attentionInput{now: now, components: components, certs: certs, status: status, backups: backups, fxa: a.fxa != nil,
-		staleDays: a.staleDays, alerts: alerts, accountLimit: accountLimit, deployment: a.deployment, pending: pending}
+		staleDays: a.staleDays, alerts: alerts, accountLimit: accountLimit, deployment: a.deployment, pending: pending, external: a.accessExternal}
 	if a.health != nil {
 		in.setup = a.health.Setup()
 	}
@@ -767,7 +773,8 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, s *session) {
 	data["Attention"] = needsAttention(in)
 	// who may come in, when restricted on purpose: the badges of the summary
 	data["Restrictions"] = restrictions(restrictionInput{fxa: a.fxa != nil, policy: policy, accountLimit: accountLimit,
-		maxAccountsEditable: a.maxAccountsEditable, sync: status, maxUsersEditable: a.maxUsersEditable, allowlist: syncAllowlist, d: a.deployment})
+		maxAccountsEditable: a.maxAccountsEditable, sync: status, maxUsersEditable: a.maxUsersEditable, allowlist: syncAllowlist, d: a.deployment,
+		external: a.accessExternal})
 	data["Errors"] = errs
 	data["Kubernetes"] = a.deployment.Kubernetes()
 	a.render(w, "dashboard.html", data)
@@ -783,7 +790,8 @@ func (a *App) base(s *session) map[string]any {
 	status := a.healthSummary()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	data := map[string]any{"CSRF": s.csrf, "FxA": a.fxa != nil, "User": s.user, "Message": s.message, "Failed": s.failed, "Status": status}
+	data := map[string]any{"CSRF": s.csrf, "FxA": a.fxa != nil, "User": s.user, "Message": s.message, "Failed": s.failed, "Status": status,
+		"AccessExternal": a.accessExternal}
 	s.message, s.failed = "", ""
 	return data
 }
@@ -975,6 +983,9 @@ func (a *App) maxUsersReadOnly() error {
 }
 
 func (a *App) setMaxUsers(w http.ResponseWriter, r *http.Request, s *session) {
+	if a.refuseAccessChange(w, r, s, "/") {
+		return
+	}
 	if !a.maxUsersEditable {
 		// the init container sets MAX_USERS again on its next start
 		a.done(w, r, s, "", a.maxUsersReadOnly())
@@ -1012,6 +1023,9 @@ func (a *App) setMaxAccounts(w http.ResponseWriter, r *http.Request, s *session)
 		http.NotFound(w, r)
 		return
 	}
+	if a.refuseAccessChange(w, r, s, "/#signups") {
+		return
+	}
 	if !a.maxAccountsEditable {
 		// fxa-policy sets FXA_MAX_ACCOUNTS again on its next start
 		a.doneTo(w, r, s, "/#signups", "", a.maxAccountsReadOnly())
@@ -1032,6 +1046,9 @@ func (a *App) setMaxAccounts(w http.ResponseWriter, r *http.Request, s *session)
 func (a *App) setSignups(w http.ResponseWriter, r *http.Request, s *session) {
 	if a.fxa == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if a.refuseAccessChange(w, r, s, "/#signups") {
 		return
 	}
 	mode, err := ParseMode(r.PostFormValue("mode"))

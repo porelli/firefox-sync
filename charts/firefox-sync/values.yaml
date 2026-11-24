@@ -98,6 +98,10 @@ fxa:
   # keep it empty: the accounts refuse PKCE from clients with a secret)
   adminClientId: ""
   adminClientSecret: ""
+  # FXA_ACCESS_DB_PASSWORD, for integrators: the password of ffs_access, the database user of a
+  # system that keeps the sign-up allowlist itself (docs/admin/accounts.md#access-managed-elsewhere),
+  # into the Secret as the values say; empty: no such user
+  accessDbPassword: ""
   # a ConfigMap with the CA of your SMTP server or of your own HTTPS hosts (NODE_EXTRA_CA_CERTS
   # of the accounts' servers): its name and the key of the PEM file. Empty: the system CAs
   extraCaCerts:
@@ -428,6 +432,10 @@ admin:
   # ADMIN_PASSWORD: empty generates one into the Secret (kept on upgrades); read it with
   # kubectl get secret <release>-firefox-sync -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
   password: ""
+  # false: no password sign-in (docs/admin/signing-in.md#ways-to-sign-in): no ADMIN_PASSWORD
+  # generated, kept or passed (also not one of an existingSecret); needs oidc.issuer,
+  # fxaSignIn or trustedHeader.header, and password empty
+  passwordSignIn: true
   # ADMIN_ALERT_EMAIL: email alerts (refused sign-ups, components down, new releases, admin
   # sign-ins), sent with the SMTP server of smtp above
   alertEmail: ""
@@ -462,6 +470,12 @@ admin:
   # Ingress without TLS, an http:// oidc.redirectUrl: anybody on the way can take it); empty:
   # HTTPS and http://localhost only (kubectl port-forward)
   insecureCookie: ""
+  # ADMIN_ACCESS_EXTERNAL, for integrators: true when another system decides who may use the
+  # server (its rows in the allowlists, its own trigger): the limits, the allowlists and the
+  # sign-ups read-only in the admin UI, their rows left to it by the db-init and policy init
+  # containers (docs/admin/accounts.md#access-managed-elsewhere). allowedAccounts and
+  # fxa.signupAllowlist must stay empty then
+  accessExternal: false
   # ADMIN_NOTIFY: alerts also to Slack, Discord, Teams, ntfy, Gotify, Telegram, Matrix or
   # a webhook (docs/admin/alerts.md#destinations): a list of URLs, one per destination (or one string, the
   # URLs separated by commas, as in .env), e.g.

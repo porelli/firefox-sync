@@ -393,6 +393,47 @@ var fxaPolicySQL = []string{
 			v_reset + v_forgot + v_change AS account_tokens, v_sessions + v_more AS sessions,
 			v_codes AS oauth_codes, v_events AS security_events;
 	END`,
+	// The accounts by email, for a system that manages who may sign up (ffs_access,
+	// FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): the account whose
+	// primary email it is (normalized as the accounts do), through the procedures above, so that
+	// ffs_access needs nothing of fxa.*. Disable signs it out everywhere (ffs.disable_account);
+	// delete takes a disabled account only (ffs.delete_account), not its Sync data
+	"DROP PROCEDURE IF EXISTS ffs.disable_account_by_email",
+	`CREATE PROCEDURE ffs.disable_account_by_email(p_email VARCHAR(255))
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_uid BINARY(16) DEFAULT NULL;
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		IF v_uid IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
+		END IF;
+		CALL ffs.disable_account(v_uid);
+	END`,
+	"DROP PROCEDURE IF EXISTS ffs.enable_account_by_email",
+	`CREATE PROCEDURE ffs.enable_account_by_email(p_email VARCHAR(255))
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_uid BINARY(16) DEFAULT NULL;
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		IF v_uid IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
+		END IF;
+		CALL ffs.enable_account(v_uid);
+	END`,
+	"DROP PROCEDURE IF EXISTS ffs.delete_account_by_email",
+	`CREATE PROCEDURE ffs.delete_account_by_email(p_email VARCHAR(255))
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_uid BINARY(16) DEFAULT NULL;
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		IF v_uid IS NULL THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
+		END IF;
+		CALL ffs.delete_account(v_uid);
+	END`,
 	"DROP TRIGGER IF EXISTS fxa.ffs_signup_policy",
 	// the gate in front of the accounts API answers with a proper error first, this
 	// catches whatever reaches the auth server another way. With a limit, sign-ups wait
@@ -446,6 +487,21 @@ var fxaAdminGrants = []string{
 	"GRANT EXECUTE ON PROCEDURE ffs.delete_unconfirmed TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.prune TO 'ffs_admin'@'%'",
 	"GRANT SELECT (uid, email, emailVerified, createdAt, disabledAt) ON fxa.accounts TO 'ffs_admin'@'%'",
+}
+
+// fxaAccessUser: the user of a system that manages who may sign up (FXA_ACCESS_DB_PASSWORD,
+// docs/admin/accounts.md#access-managed-elsewhere): the rows of the sign-up allowlist, and the
+// accounts by email through the procedures above; nothing of fxa.*, not ffs.settings. Its grants
+// given again at every start, after the procedures are made again (dropping a procedure drops
+// its grants). The REVOKE must stay first
+const fxaAccessUser = "ffs_access"
+
+var fxaAccessGrants = []string{
+	"REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'ffs_access'@'%'",
+	"GRANT SELECT, INSERT, DELETE ON ffs.signup_allowlist TO 'ffs_access'@'%'",
+	"GRANT EXECUTE ON PROCEDURE ffs.disable_account_by_email TO 'ffs_access'@'%'",
+	"GRANT EXECUTE ON PROCEDURE ffs.enable_account_by_email TO 'ffs_access'@'%'",
+	"GRANT EXECUTE ON PROCEDURE ffs.delete_account_by_email TO 'ffs_access'@'%'",
 }
 
 // fxaObsoleteGrants: what the previous version granted, revoked one by one where
@@ -591,47 +647,17 @@ func fxaInit(ctx context.Context) error {
 	}
 
 	if password := env("FXA_ADMIN_DB_PASSWORD", ""); password != "" {
-		// created with the server's default plugin (mysql_native_password on MariaDB and on a
-		// pinned mysql:8 with --authentication-policy=mysql_native_password), see the ALTER below
-		grants := fxaAdminGrants
-		_, err := db.ExecContext(ctx, "CREATE USER IF NOT EXISTS 'ffs_admin'@'%' IDENTIFIED BY ?", password)
-		var myErr *mysql.MySQLError
-		switch {
-		case errors.As(err, &myErr) && myErr.Number == errSpecificAccessDenied:
-			// your own server: no CREATE USER for the policy user (it could change any
-			// account's password), the administrator created ffs_admin (docs/reference/database-users.md#the-accounts).
-			// Nothing earlier versions granted to revoke there, and REVOKE ALL needs it too
-			log.Printf("ffs_admin: created by the administrator of the database server, granting")
-			grants = grants[1:]
-			for _, stmt := range fxaObsoleteGrants {
-				if _, err := db.ExecContext(ctx, stmt); err != nil && !(errors.As(err, &myErr) && (myErr.Number == errNoSuchGrant || myErr.Number == errNoSuchTableGrant)) {
-					return fmt.Errorf("%s: %w", stmt, err)
-				}
-			}
-		case err != nil:
-			return fmt.Errorf("creating ffs_admin: %w", err)
-		default:
-			// on MySQL caching_sha2_password, whatever the server's default: this driver speaks
-			// it, and MySQL 9 has no mysql_native_password, which a pinned mysql:8 with
-			// --authentication-policy=mysql_native_password gives it (docs/upgrading.md#mysql-8-to-9).
-			// MariaDB has no caching_sha2_password: its default
-			alter := "ALTER USER 'ffs_admin'@'%' IDENTIFIED BY ?"
-			var version string
-			if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
-				return fmt.Errorf("the accounts database's version: %w", err)
-			}
-			if !strings.Contains(strings.ToLower(version), "mariadb") {
-				alter = "ALTER USER 'ffs_admin'@'%' IDENTIFIED WITH caching_sha2_password BY ?"
-			}
-			if _, err := db.ExecContext(ctx, alter, password); err != nil {
-				return fmt.Errorf("setting the ffs_admin password: %w", err)
-			}
+		if err := fxaUser(ctx, db, "ffs_admin", password, fxaAdminGrants, fxaObsoleteGrants); err != nil {
+			return err
 		}
-		for _, stmt := range grants {
-			if _, err := db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("%s: %w", stmt, err)
-			}
+	}
+	if password := env("FXA_ACCESS_DB_PASSWORD", ""); password != "" {
+		if err := fxaUser(ctx, db, fxaAccessUser, password, fxaAccessGrants, nil); err != nil {
+			return err
 		}
+		log.Printf("%s: the user of the system that manages who may sign up (FXA_ACCESS_DB_PASSWORD)", fxaAccessUser)
+	} else if err := dropFxaUser(ctx, db, fxaAccessUser); err != nil {
+		return err
 	}
 
 	policy, err := applyEnvPolicy(ctx, db)
@@ -640,6 +666,66 @@ func fxaInit(ctx context.Context) error {
 	}
 	log.Printf("sign-ups: %s", describePolicy(policy))
 	return applyEnvMaxAccounts(ctx, db)
+}
+
+// fxaUser: a user of the accounts database with exactly its grants (the first, a REVOKE ALL),
+// created with the policy user where it may (the stack's database), else made by the
+// administrator of the server (docs/reference/database-users.md#the-accounts): only granted
+// then, its obsolete grants revoked one by one
+func fxaUser(ctx context.Context, db *sql.DB, name, password string, grants, obsolete []string) error {
+	// created with the server's default plugin (mysql_native_password on MariaDB and on a
+	// pinned mysql:8 with --authentication-policy=mysql_native_password), see the ALTER below
+	_, err := db.ExecContext(ctx, "CREATE USER IF NOT EXISTS '"+name+"'@'%' IDENTIFIED BY ?", password)
+	var myErr *mysql.MySQLError
+	switch {
+	case errors.As(err, &myErr) && myErr.Number == errSpecificAccessDenied:
+		// your own server: no CREATE USER for the policy user (it could change any
+		// account's password), the administrator created the user (docs/reference/database-users.md#the-accounts).
+		// Nothing earlier versions granted to revoke there, and REVOKE ALL needs it too
+		log.Printf("%s: created by the administrator of the database server, granting", name)
+		grants = grants[1:]
+		for _, stmt := range obsolete {
+			if _, err := db.ExecContext(ctx, stmt); err != nil && !(errors.As(err, &myErr) && (myErr.Number == errNoSuchGrant || myErr.Number == errNoSuchTableGrant)) {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+	case err != nil:
+		return fmt.Errorf("creating %s: %w", name, err)
+	default:
+		// on MySQL caching_sha2_password, whatever the server's default: this driver speaks
+		// it, and MySQL 9 has no mysql_native_password, which a pinned mysql:8 with
+		// --authentication-policy=mysql_native_password gives it (docs/upgrading.md#mysql-8-to-9).
+		// MariaDB has no caching_sha2_password: its default
+		alter := "ALTER USER '" + name + "'@'%' IDENTIFIED BY ?"
+		var version string
+		if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+			return fmt.Errorf("the accounts database's version: %w", err)
+		}
+		if !strings.Contains(strings.ToLower(version), "mariadb") {
+			alter = "ALTER USER '" + name + "'@'%' IDENTIFIED WITH caching_sha2_password BY ?"
+		}
+		if _, err := db.ExecContext(ctx, alter, password); err != nil {
+			return fmt.Errorf("setting the %s password: %w", name, err)
+		}
+	}
+	for _, stmt := range grants {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+// dropFxaUser: without its password the user goes, its grants with it (a user left with the
+// grants of before would keep changing the allowlist). On your own server the policy user may
+// not drop users: the administrator does, as they made it
+func dropFxaUser(ctx context.Context, db *sql.DB, name string) error {
+	_, err := db.ExecContext(ctx, "DROP USER IF EXISTS '"+name+"'@'%'")
+	var myErr *mysql.MySQLError
+	if err != nil && !(errors.As(err, &myErr) && myErr.Number == errSpecificAccessDenied) {
+		return fmt.Errorf("dropping %s: %w", name, err)
+	}
+	return nil
 }
 
 // applyEnvMaxAccounts sets FXA_MAX_ACCOUNTS like MAX_USERS: N, fixed:N or unlimited on
@@ -729,6 +815,13 @@ func applyEnvPolicy(ctx context.Context, db *sql.DB) (*SignupPolicy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("FXA_SIGNUP_ALLOWLIST: %w", err)
 	}
+	external, err := envSwitch("ADMIN_ACCESS_EXTERNAL")
+	if err != nil {
+		return nil, err
+	}
+	if external {
+		return applyExternalPolicy(ctx, db, mode, allowlist)
+	}
 	if mode == SignupsAllowlist && len(allowlist) == 0 {
 		log.Printf("warning: FXA_SIGNUPS=allowlist with an empty FXA_SIGNUP_ALLOWLIST, nobody can sign up")
 	}
@@ -745,6 +838,28 @@ func applyEnvPolicy(ctx context.Context, db *sql.DB) (*SignupPolicy, error) {
 		return current.Policy(ctx)
 	}
 	return policy, setPolicy(ctx, db, policy, nil, snapshot)
+}
+
+// applyExternalPolicy: ADMIN_ACCESS_EXTERNAL, another system keeps the rows of the sign-up
+// allowlist (as ffs_access): FXA_SIGNUPS set on every start (the admin UI changes nothing
+// then), the rows left as they are. A FXA_SIGNUP_ALLOWLIST would be a second source: refused.
+// The snapshot is that of an empty list: turned off later with the same FXA_SIGNUPS, the rows
+// stay, for the admin UI to manage
+func applyExternalPolicy(ctx context.Context, db *sql.DB, mode string, allowlist []string) (*SignupPolicy, error) {
+	if len(allowlist) > 0 {
+		return nil, errors.New("ADMIN_ACCESS_EXTERNAL is on, so the sign-up allowlist is kept by the system that manages access: leave FXA_SIGNUP_ALLOWLIST empty (docs/admin/accounts.md#access-managed-elsewhere)")
+	}
+	for _, stmt := range []struct{ query, value string }{
+		{"INSERT INTO ffs.settings (name, value) VALUES ('signups', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", mode},
+		{"INSERT INTO ffs.settings (name, value) VALUES ('env', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", mode + " "},
+	} {
+		if _, err := db.ExecContext(ctx, stmt.query, stmt.value); err != nil {
+			return nil, err
+		}
+	}
+	log.Printf("ADMIN_ACCESS_EXTERNAL: sign-ups %s from FXA_SIGNUPS, the sign-up allowlist left to the system that manages access", mode)
+	current := &FxaDB{db: db}
+	return current.Policy(ctx)
 }
 
 func describePolicy(p *SignupPolicy) string {

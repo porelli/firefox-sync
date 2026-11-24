@@ -54,6 +54,9 @@ type attentionInput struct {
 	setup []SetupStatus
 	// SYNC_ALLOWED_ACCOUNTS: the accounts waiting for an approval
 	pending int
+	// ADMIN_ACCESS_EXTERNAL: no line that asks to change who may come in (raise a limit,
+	// approve an account): that is another system's (access.go)
+	external bool
 }
 
 // nearMaxUsers: 90% of max users or more are taken, full too (0: no new account at all,
@@ -87,6 +90,11 @@ func metricsRow(syncUp bool, lastWrite, last, from time.Time) (Component, bool) 
 	}
 	return Component{Name: metricsCheck, Warn: true, Checked: time.Now(),
 		Error: fmt.Sprintf("Sync data changed at %s but no metrics arrived since %s", formatTime(lastWrite, adminZone), since)}, true
+}
+
+// external: access is managed elsewhere (ADMIN_ACCESS_EXTERNAL)
+func (h *Health) external() bool {
+	return h.app != nil && h.app.accessExternal
 }
 
 // deployment: the App's, compose's without one (in the tests)
@@ -159,15 +167,15 @@ func needsAttention(in attentionInput) []attention {
 			add("#health", "Health", "The certificate of %s expires in %d days (%s): is its renewal running?", host, int(left/(24*time.Hour)), formatTime(in.certs[host], adminZone))
 		}
 	}
-	if in.status != nil {
+	if in.status != nil && !in.external {
 		if line := syncLimit.line(in.status.Limit()); line != "" {
 			add(syncLimit.href, syncLimit.link, "%s.", line)
 		}
 	}
-	if in.pending > 0 {
+	if in.pending > 0 && !in.external {
 		add("#sync-allowlist", "Pending accounts", "%s waiting for your approval to sync (SYNC_ALLOWED_ACCOUNTS).", plural(in.pending, "account"))
 	}
-	if in.accountLimit != nil {
+	if in.accountLimit != nil && !in.external {
 		if line := accountsLimit.line(*in.accountLimit); line != "" {
 			add(accountsLimit.href, accountsLimit.link, "%s.", line)
 		}
@@ -278,6 +286,10 @@ func (h *Health) logOnce(key string, err error) {
 func (h *Health) thresholdEvents(st *SyncStatus, accounts *Limit, syncUp bool, lastWrite, lastStatsd time.Time, alerts *SendStatus) []string {
 	var events []string
 	limit := func(k limitKind, l Limit) {
+		// (access managed elsewhere: a full limit is the other system's to raise)
+		if h.external() {
+			return
+		}
 		if h.changed(k.key, l.State()) {
 			events = append(events, k.event(l))
 		}
@@ -414,7 +426,7 @@ func (h *Health) thresholdRows() []Component {
 
 // setLimits: the rows of the limits, read in a round of checks or by the overview
 func (h *Health) setLimits(sync, accounts *Limit) {
-	rows := limitRows(sync, accounts)
+	rows := limitRows(sync, accounts, h.external())
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.limits = rows

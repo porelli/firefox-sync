@@ -1181,6 +1181,53 @@ fxa_sql "UPDATE ffs.settings SET value = '0' WHERE name = 'max_accounts'" > /dev
 check "$(fxa_sql "SELECT ffs.signup_refusal('nobody@example.com'), ffs.signup_allowed('nobody@example.com')" | tr '\t' ' ')" "full 0" "max accounts 0: ffs.signup_refusal says full"
 fxa_sql "UPDATE ffs.settings SET value = 'unlimited' WHERE name = 'max_accounts'" > /dev/null
 check "$(fxa_sql "SELECT COALESCE(ffs.signup_refusal('nobody@example.com'), 'allowed')")" allowed "max accounts unlimited: allowed (@example.com on the list)"
+if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
+  echo "== access managed elsewhere: ffs_access keeps the sign-up allowlist and disables accounts by email, the admin UI read-only"
+  ACCESS_PW="access$(date +%s)"
+  set_env FXA_ACCESS_DB_PASSWORD "${ACCESS_PW}"
+  set_env ADMIN_ACCESS_EXTERNAL 1
+  set_env FXA_SIGNUP_ALLOWLIST ""
+  dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-access.log" 2>&1
+  check "$? $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 @example.com" "fxa-policy with ADMIN_ACCESS_EXTERNAL: the allowlist's rows left as they are"
+  as_ffs_access() { dc exec -T -e MYSQL_PWD="${ACCESS_PW}" fxa-db "${DB_CLIENT}" -uffs_access -h 127.0.0.1 --protocol=tcp -sN -e "$1" < /dev/null 2>&1 | grep -v '^WARNING: '; }
+  access_grants() { as_ffs_access 'SHOW GRANTS' | grep -cE 'GRANT (SELECT, INSERT, DELETE ON `?ffs`?\.`?signup_allowlist`?|EXECUTE ON PROCEDURE `?ffs`?\.`?(disable|enable|delete)_account_by_email`?) '; }
+  check "$(access_grants) $(as_ffs_access 'SHOW GRANTS' | grep -c ' ON ')" "4 5" "ffs_access: the allowlist's rows and the three procedures by email, nothing else"
+  dc run --rm --no-deps tokenserver_db_init > /dev/null 2>&1
+  check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" "0 external" "the init container with ADMIN_ACCESS_EXTERNAL=1"
+  dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1
+  for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 5; done
+  check "$(state ffs-admin Health.Status)" healthy "the admin UI restarted with ADMIN_ACCESS_EXTERNAL=1"
+  dc run --rm -T --no-deps --user root \
+    -v "${TESTS}:/tests:ro" -v "${PROJECT}_caddy-ca:/caddy-ca:ro" \
+    -e REQUESTS_CA_BUNDLE=/caddy-ca/root.crt \
+    -e FXA_CONTENT_URL -e FXA_AUTH_URL -e FXA_PROFILE_URL -e SYNC_PUBLIC_URL -e MAILPIT_URL=http://mailpit:8025 \
+    -e ADMIN_URL=https://admin.fxa.test -e ADMIN_PASSWORD -e FXA_DIRECT_URL=http://fxa-auth:9000 -e ADMIN_FXA_CLIENT_ID \
+    "${ACCESS_RUN[@]}" -e PYTHONPATH=/app:/app/tools:/tests -e PYTHONDONTWRITEBYTECODE=1 \
+    -e FXA_TEST_DB_URL="mysql://${FXA_MYSQL_USER}:${FXA_MYSQL_PASSWORD}@${FXA_MYSQL_HOST}:${FXA_MYSQL_PORT}/fxa" \
+    -e FXA_ACCESS_DB_URL="mysql://ffs_access:${ACCESS_PW}@${FXA_MYSQL_HOST}:${FXA_MYSQL_PORT}/ffs" \
+    --entrypoint /bin/sh syncstorage \
+    -c "cd /app && $(pytest_sh "/tests/test_fxa_external.py")" < /dev/null
+  rc=$?
+  [ "${rc}" = 0 ] || admin_log
+  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI"
+  # the procedures made again at every start: their grants given again, the rows kept
+  dc run --rm --no-deps fxa-policy > /dev/null 2>&1
+  check "$? $(access_grants) $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 4 @example.com" "fxa-policy again: ffs_access keeps its grants, the rows stay"
+  set_env FXA_SIGNUP_ALLOWLIST alice@example.org
+  dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-access.log" 2>&1
+  check "$? $(grep -c 'leave FXA_SIGNUP_ALLOWLIST empty' "${WORK}/fxa-policy-access.log")" "1 1" "fxa-policy refuses a FXA_SIGNUP_ALLOWLIST with ADMIN_ACCESS_EXTERNAL, and says why"
+  # off again: no password, no ffs_access
+  set_env FXA_ACCESS_DB_PASSWORD ""
+  set_env ADMIN_ACCESS_EXTERNAL ""
+  set_env FXA_SIGNUP_ALLOWLIST @example.com
+  dc run --rm --no-deps fxa-policy > /dev/null 2>&1
+  check "$? $(fxa_sql "SELECT COUNT(*) FROM mysql.user WHERE user = 'ffs_access'")" "0 0" "FXA_ACCESS_DB_PASSWORD empty again: ffs_access removed"
+  dc run --rm --no-deps tokenserver_db_init > /dev/null 2>&1
+  check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" "0 off" "the init container without ADMIN_ACCESS_EXTERNAL"
+  dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1
+  for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 5; done
+  check "$(state ffs-admin Health.Status)" healthy "the admin UI restarted without ADMIN_ACCESS_EXTERNAL"
+fi
 if [ "${FXA_ACCOUNT_EVENTS}" = true ]; then
   echo "== the security history turned off again (the default): nothing more recorded"
   set_env FXA_ACCOUNT_EVENTS false

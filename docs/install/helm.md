@@ -135,7 +135,9 @@ kubectl get secret ffs-firefox-sync -o json \
   | jq '{apiVersion, kind, type, data, metadata: (.metadata | {name, labels, annotations})}' > ffs-secret.json
 ```
 
-The optional secrets of the admin UI come from the values alone: `smtp.password`, `admin.oidc.clientSecret`, `admin.metricsToken` and `admin.notify`. The chart writes them into the Secret on every install and upgrade (`FXA_SMTP_PASS`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `ADMIN_NOTIFY`). An empty value turns that feature off, whatever was put into the Secret by hand.
+The optional secrets of the admin UI come from the values alone: `smtp.password`, `admin.oidc.clientSecret`, `admin.metricsToken` and `admin.notify`, and with the accounts `fxa.accessDbPassword`. The chart writes them into the Secret on every install and upgrade (`FXA_SMTP_PASS`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `ADMIN_NOTIFY`, `FXA_ACCESS_DB_PASSWORD`). An empty value turns that feature off, whatever was put into the Secret by hand.
+
+With `admin.passwordSignIn: false` the Secret has no `ADMIN_PASSWORD`: none is generated, and one kept from before is removed at the next upgrade ([Signing in](../admin/signing-in.md#ways-to-sign-in)).
 
 ### existingSecret
 
@@ -155,10 +157,11 @@ Its keys:
 | `POSTGRES_PASSWORD` | `postgres` | the superuser of the bundled server; on your own server the owner, `database.external.postgresUser` |
 | `POSTGRES_SYNC_PASSWORD` | `postgres`, bundled | the Sync server's own role `syncserver_app` (`database.postgresSyncUser`), no superuser |
 | `SYNC_DB_BOOTSTRAP_PASSWORD` | your own server, a non-empty `database.external.bootstrap.user` | that account's password, which applies the [setup migrations](../databases.md#setup-migrations) your server lacks at every start, one replica at a time ([Let the stack apply them](../databases.md#let-the-stack-apply-them)). A `bootstrap.user` without `existingSecret`, or with the bundled database, is refused at render |
-| `ADMIN_PASSWORD` | optional | the admin UI's password. Missing or empty: no password form ([Signing in](../admin/signing-in.md)) |
+| `ADMIN_PASSWORD` | optional | the admin UI's password. Missing or empty: no password form ([Signing in](../admin/signing-in.md)). Not read with `admin.passwordSignIn: false` |
 | `FXA_SMTP_PASS`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_METRICS_TOKEN`, `ADMIN_NOTIFY` | optional | the admin UI's. Missing or empty: that feature is off |
 | `FXA_MYSQL_PASSWORD` | `fxa.enabled` | the accounts database's user: `root` of the bundled server, or `fxa.database.external.user` on your own |
 | `FXA_ADMIN_DB_PASSWORD` | `fxa.enabled` | the admin UI's user `ffs_admin` of the accounts database |
+| `FXA_ACCESS_DB_PASSWORD` | optional, `fxa.enabled` | `ffs_access`, the user of a system that keeps the sign-up allowlist ([Access managed elsewhere](../admin/accounts.md#access-managed-elsewhere)). Missing or empty: no such user |
 | `FXA_AUTH_SECRET`, `FXA_OAUTH_SECRET`, `FXA_PROFILE_SECRET`, `FXA_FLOW_ID_KEY`, `FXA_SESSION_TOKEN_HANDLE_KEY`, `FXA_CONTENT_SESSION_SECRET` | `fxa.enabled` | the accounts services' secrets, as in `.env` |
 | `FXA_REDIS_PASSWORD` | `fxa.enabled` | the password of the accounts' Redis. The chart's own: `.env` has none |
 | `FXA_MYSQL_POLICY_PASSWORD` | `fxa.enabled`, your own accounts database server, a non-empty `fxa.database.external.policyUser` | that user's password. The chart never generates it |
@@ -238,6 +241,8 @@ admin:
 ```
 
 Without `admin.ingress.tls.enabled` the NOTES warn: unless the controller adds TLS, the password and the session cookie cross the network in plain HTTP.
+
+Behind another system's sign-in, which also decides who may use the server: `admin.trustedHeader.*`, `admin.passwordSignIn: false` and `admin.accessExternal: true`, see [Access managed elsewhere](../admin/accounts.md#access-managed-elsewhere). With `admin.accessExternal`, `allowedAccounts` and `fxa.signupAllowlist` must stay empty: the render refuses them.
 
 ## Self-hosted accounts
 

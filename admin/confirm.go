@@ -263,6 +263,9 @@ func (a *App) confirmAllowlistRemove(w http.ResponseWriter, r *http.Request, s *
 		http.NotFound(w, r)
 		return
 	}
+	if a.refuseAccessChange(w, r, s, "/#signups") {
+		return
+	}
 	entry := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("entry")))
 	entries, err := a.fxa.AllowlistEntries(r.Context())
 	if err != nil {

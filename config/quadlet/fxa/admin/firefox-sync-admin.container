@@ -14,6 +14,8 @@ Environment="ADMIN_PASSWORD=%ADMIN_PASSWORD%"
 Environment="MAX_USERS=%SYNC_MAX_USERS%"
 # admin or initial:...: the admin UI manages the allowlist of Sync, otherwise .env does
 Environment="SYNC_ALLOWED_ACCOUNTS=%SYNC_ALLOWED_ACCOUNTS%"
+# who may use the server managed elsewhere: limits, allowlist and sign-ups read-only here
+Environment="ADMIN_ACCESS_EXTERNAL=%ADMIN_ACCESS_EXTERNAL%"
 # its own users and database, out of the Sync server's reach (docs/reference/database-users.md#the-admin-uis-own-database): one for its
 # database, one that reads the Sync data. It gets no password of the Sync users
 Environment="ADMIN_DB_USER=%ADMIN_DB_USER%"

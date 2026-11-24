@@ -276,6 +276,11 @@ spec:
             - name: SYNC_ALLOWED_ACCOUNTS
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.admin.accessExternal }}
+            # another system decides who may sync (docs/admin/accounts.md#access-managed-elsewhere)
+            - name: ADMIN_ACCESS_EXTERNAL
+              value: "1"
+            {{- end }}
             - name: DOMAIN
               value: {{ .Values.syncDomain | quote }}
             {{- if eq $backend "postgres" }}

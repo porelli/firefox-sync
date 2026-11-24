@@ -49,6 +49,8 @@ Spaces are dropped and the uids lowercased. Anything else, a uid that is not 32 
 - A refused account is pending: the admin UI lists it under Pending accounts, with its first and last try and their count, and in [Needs attention](admin/monitoring.md#needs-attention), and Prometheus counts it (`ffs_sync_pending_accounts`). Its first refusal is an event of the admin UI, `sign-up refused`, which alerts; the next tries do not. Approve lets its next try in, Reject takes it off the list of pending ones: see [Invite-only Sync](admin/accounts.md#invite-only-sync).
 - Turning it off keeps the list in the database, for the next time it is on. A change applies on the next start, as for the limits: [Switch between the forms](#switch-between-the-forms). From `admin` to a plain list, the list becomes the plain one; from a plain list to `admin`, the list stays and the admin UI manages it.
 
+When another system decides who may sync, with its own rows in `sync_allowed_accounts` and its own trigger, leave `SYNC_ALLOWED_ACCOUNTS` empty and see [Access managed elsewhere](admin/accounts.md#access-managed-elsewhere).
+
 With [self-hosted accounts](accounts.md) the sign-up policy decides who has an account at all (`FXA_SIGNUPS`, `FXA_SIGNUP_ALLOWLIST`, see [Who can sign up](accounts.md#who-can-sign-up)): that is the control there, and `prepare_environment.sh` does not ask for this one. `SYNC_ALLOWED_ACCOUNTS` works there too, with the uids of the account pages of the admin UI, to keep some of those accounts off Sync.
 
 ### Find the uid of an account

@@ -308,3 +308,78 @@ Each account has a note, up to 500 characters on one line: who it is, why it was
 - Notes are kept in the admin UI's database (`ffs_account_notes`), with who changed them last, and every change is in the event log.
 
 Like the event log, notes are personal data. Deleting an account for good removes its note: from its page, by the purge, or with the old unconfirmed accounts.
+
+## Access managed elsewhere
+
+For integrators: another system, with its own sign-in and its own list of people, decides who may use the server. The admin UI then shows who may come in and changes none of it. Turn it on with `ADMIN_ACCESS_EXTERNAL=1` (Helm: `admin.accessExternal: true`). It is not asked by `prepare_environment.sh`.
+
+The name: `ADMIN_` because it is a mode of the admin UI, as the other `ADMIN_*` settings (the init container also reads `ADMIN_DB_*`); `ACCESS` for who may use the server, the limits, the allowlists and the sign-ups, not who may use the admin UI, which is `ADMIN_AUTH_*` and `ADMIN_ALLOWED_*`; `EXTERNAL` because that is decided outside. It takes `1`, `true` or `yes`, as `ADMIN_INSECURE_COOKIE`.
+
+### What is read-only
+
+| Part | With the mode on |
+|---|---|
+| Max users, max accounts | shown, no form. No amber tile, row or alert when near or full |
+| Invite-only Sync | a **Who may sync** card: the rows of `sync_allowed_accounts`, no Approve, Reject, Allow a uid or Remove. No pending list, no `sign-up refused` alert |
+| Sign-ups, the sign-up allowlist | the policy and the list, without the form or Remove |
+| Invitations | the list of emails, no Invite |
+| The overview's badges | one notice, `Access managed elsewhere`, instead of `Sign-ups closed`, `Max users 3/5` and the like |
+
+Every form and confirm page of those refuses the change in its handler, whatever the page shows: `POST /sync/max-users`, `/sync/allowlist/{allow,reject,remove}` (and their confirm pages), `/accounts/signups`, `/accounts/max-accounts`, `/accounts/invite` and `/accounts/allowlist/remove` (and its confirm page). The message says that access is managed outside the admin UI, and nothing changes.
+
+The rest works as usual: health and monitoring, storage and purge, alerts, backups and the event log, the account pages, notes, signing out and disabling an account, and the reset and deletion of Sync data.
+
+### The objects you own
+
+On the tokenserver database:
+
+- **The rows of `sync_allowed_accounts`**: `uid` (the account id, 32 hexadecimal characters, lowercase), `note`, `added_at` (milliseconds since 1970) and `added_by`. The init container creates the table when it is missing and never writes a row with the mode on. You may create it first, with constraints of your own, as long as it has these columns: the admin UI reads them.
+- **Your own trigger on `users`**, with your own function, under names of your own. It sees every new row of the tokenserver: refuse those of accounts not on your list, for example with `RAISE EXCEPTION` (PostgreSQL) or `SIGNAL` (MySQL and MariaDB). The tokenserver then answers 500, issues no token, and Firefox tries again later.
+
+What stays firefox-sync's, made again or replaced at every start of the init container: the tables `config` and `sync_refused_accounts`, the triggers `before_insert_user` and `before_insert_allowed_user` (MySQL and MariaDB: `BeforeInsertUser` and `BeforeInsertAllowedUser`), the function `check_user_limit()` (procedure `CheckUserLimit`), and every function or procedure named `ffs_*`. Do not name anything of yours like these, nor change them.
+
+With the mode on, the init container:
+
+- refuses to start with a `SYNC_ALLOWED_ACCOUNTS`: that would be a second list;
+- writes no row of `sync_allowed_accounts`, and deletes none;
+- keeps its own invite-only trigger off: it drops `before_insert_allowed_user` (`BeforeInsertAllowedUser`) if a start without the mode had made it, and never makes it;
+- writes `allowed_accounts = external` in `config`. The admin UI's setup check **Access managed elsewhere** warns when only one of the two has the mode.
+
+Max users still applies, as `SYNC_MAX_USERS` says: set `SYNC_MAX_USERS=unlimited` if your system is the only limit. The init container still keeps one node and counts its load again at every start, as without the mode.
+
+### Reset and delete
+
+Both stay, and neither touches your list:
+
+- **Reset the Sync data** deletes the storage of the account's current row. With **also free the max users slot** it also deletes its rows of `users`.
+- **Delete** (with Mozilla's accounts, of an account id) deletes the rows of `users` and the storage of each.
+
+The next sign-in of an account without rows is a new `INSERT` into `users`, which your trigger checks. So to stop an account that syncs: take it off your list, then delete its Sync data, or reset it with the slot freed. Taking it off the list alone stops nothing for an account that has its rows already. Firefox's Sync token lasts up to an hour, and a second pass deletes what it wrote meanwhile ([Delete an account](#delete-an-account)).
+
+### Self-hosted accounts
+
+With [self-hosted accounts](../accounts.md), your system can keep the sign-up allowlist itself and act on the accounts by email, with a database user of its own, `ffs_access`. Give it a password with `FXA_ACCESS_DB_PASSWORD` (Helm: `fxa.accessDbPassword`, or the key `FXA_ACCESS_DB_PASSWORD` of an `existingSecret`). `fxa-policy` then creates it on the stack's accounts database, at every start, with only these grants:
+
+| Object | `ffs_access` |
+|---|---|
+| `ffs.signup_allowlist` (`entry`: an email or `@domain`, lowercase) | `SELECT, INSERT, DELETE` |
+| `ffs.disable_account_by_email(email)` | `EXECUTE`: disables the account and signs it out everywhere, as Disable in the admin UI |
+| `ffs.enable_account_by_email(email)` | `EXECUTE` |
+| `ffs.delete_account_by_email(email)` | `EXECUTE`: deletes a disabled account, as Delete in the admin UI |
+
+Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The email is the account's primary one, compared without case and spaces. An unknown email answers `no such account`.
+
+- Without `FXA_ACCESS_DB_PASSWORD`, `fxa-policy` drops the user. Give the password at every start: in `.env`, which `--upgrade` keeps, or in your values or `existingSecret` with Helm.
+- `fxa-policy` makes the procedures again at every start, which drops their grants, and then gives them again. The rows of `ffs.signup_allowlist` stay: its table is never made again.
+- A backup holds the `ffs` database, with the rows and the procedures, not the users. After a restore, the next start of `fxa-policy` creates `ffs_access` again.
+- On your own accounts server the policy user cannot create users: create `ffs_access` yourself (`CREATE USER 'ffs_access'@'%' IDENTIFIED BY '...'`), and `fxa-policy` gives it the grants.
+
+With the mode on, `fxa-policy` sets `FXA_SIGNUPS` at every start (`allowlist`, for this) and leaves the rows of the sign-up allowlist alone. It refuses a `FXA_SIGNUP_ALLOWLIST`, which would be a second list.
+
+An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`. The access tokens Firefox already holds stay valid until they expire (`FXA_ACCESS_TOKEN_LIFETIME`): the database cannot reach their copies in Redis, which Disable in the admin UI also removes. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
+
+With this, `SYNC_ALLOWED_ACCOUNTS` can stay off: every account of the server is one your system let sign up.
+
+### Sign-in to the admin UI
+
+The mode says nothing about who may use the admin UI. Behind your system's sign-in, use the [trusted header](signing-in.md#trusted-header): `ADMIN_AUTH_HEADER` (the email), `ADMIN_AUTH_GROUPS_HEADER`, `ADMIN_TRUSTED_PROXIES` (your proxy only) and `ADMIN_ALLOWED_GROUPS` or `ADMIN_ALLOWED_USERS`. Turn the password off with an empty `ADMIN_PASSWORD` (Helm: `admin.passwordSignIn: false`).

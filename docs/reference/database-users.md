@@ -71,6 +71,7 @@ Without `SYNC_POSTGRES_APP_USER` (an install from before it), the Sync server st
 | `FXA_MYSQL_USER` (`fxa`) | `ALL PRIVILEGES` on `fxa`, `fxa_oauth`, `fxa_profile` and `pushbox` | Mozilla's migrations create the four databases, their tables and about 400 procedures. The accounts services use them |
 | `FXA_MYSQL_POLICY_USER` (`ffs_policy`) | `ALL` on `ffs` with `GRANT OPTION`; `SELECT, UPDATE, DELETE, TRIGGER, EXECUTE` on `fxa` and `SELECT, DELETE` on `fxa_oauth`, both with `GRANT OPTION`; `SELECT, DELETE` on `fxa_profile` and `pushbox` | `fxa-policy` installs the [sign-up policy](../accounts.md#who-can-sign-up) and the admin UI's views and procedures at every start, and gives the admin UI's user its grants |
 | `ffs_admin` (`FXA_ADMIN_DB_PASSWORD`) | what `fxa-policy` gives it: `SELECT` on a few columns of `fxa.accounts` and on the views, `EXECUTE` on the procedures | the admin UI's user on the accounts database |
+| `ffs_access` (`FXA_ACCESS_DB_PASSWORD`, optional) | what `fxa-policy` gives it: `SELECT, INSERT, DELETE` on `ffs.signup_allowlist`, `EXECUTE` on `ffs.disable_account_by_email`, `ffs.enable_account_by_email` and `ffs.delete_account_by_email` | the user of a system that keeps the sign-up allowlist: [Access managed elsewhere](../admin/accounts.md#self-hosted-accounts). On your own server, create it yourself |
 
 How the accounts' user signs in:
 
@@ -88,6 +89,7 @@ What the policy user installs at every start ([admin/fxainit.go](/admin/fxainit.
 | a trigger on `fxa.accounts` | refuses the new account through `ffs.signup_refusal` | none |
 | views `ffs.sessions`, `ffs.devices`, `ffs.emails`, `ffs.account_security`, `ffs.security_events`, `ffs.schema_levels`, `ffs.database_sizes` | what the admin UI lists, without any secret or token id | `SELECT` |
 | procedures `ffs.disable_account`, `ffs.enable_account`, `ffs.sign_out_all`, `ffs.sign_out_device`, `ffs.sign_out_session`, `ffs.remove_totp`, `ffs.remove_recovery_key`, `ffs.confirm_email`, `ffs.confirm_session`, `ffs.delete_account`, `ffs.delete_unconfirmed`, `ffs.prune` | what the admin UI changes, run with the policy user's privileges | `EXECUTE` |
+| procedures `ffs.disable_account_by_email`, `ffs.enable_account_by_email`, `ffs.delete_account_by_email` | the same by email, through the three above, for `ffs_access` | none |
 | `fxa.accounts` | Mozilla's table | `SELECT` on `uid`, `email`, `emailVerified`, `createdAt` and `disabledAt` only |
 
 `ffs_admin` has nothing else: no `UPDATE` or `DELETE` on Mozilla's tables. `fxa-policy` revokes its grants first at every start, so grants from older releases go.

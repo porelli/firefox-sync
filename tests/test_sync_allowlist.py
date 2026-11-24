@@ -301,3 +301,87 @@ def test_read_only(db, recorded):
     assert f'<tr data-uid="{WHILE_FULL}">' in table_of(page, "sync-pending") and refused(db, WHILE_FULL)[1] is False
     page, done = admin.confirm(f"/sync/allowlist/reject?uid={WHILE_FULL}")
     assert f"Rejected Sync account {WHILE_FULL}" in done and refused(db, WHILE_FULL)[1] is True
+
+
+# ADMIN_ACCESS_EXTERNAL (docs/admin/accounts.md#access-managed-elsewhere): another system writes
+# sync_allowed_accounts and has its own trigger, stricter (it raises); tests/e2e.sh runs
+# -k external_setup, restarts the init container (which must leave both alone), then -k
+# 'external and not setup and not cleanup', then -k external_cleanup
+EXT_LISTED = "1a" * 16
+EXT_OTHER = "3c" * 16
+EXT_UNLISTED = "2b" * 16
+
+
+def test_external_setup(db):
+    for uid in (EXT_LISTED, EXT_OTHER):
+        db.execute(sqltext("INSERT INTO sync_allowed_accounts (uid, note, added_at, added_by) VALUES (:u, '', 1, 'another system')"), {"u": uid})
+    if os.environ["BACKEND"] == "mysql":
+        db.execute(sqltext("DROP TRIGGER IF EXISTS ext_allowed_account"))
+        db.execute(sqltext("""CREATE TRIGGER ext_allowed_account BEFORE INSERT ON users FOR EACH ROW
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM sync_allowed_accounts WHERE uid = LOWER(SUBSTRING_INDEX(NEW.email, '@', 1))) THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'not on the allowlist of the other system';
+                END IF;
+            END"""))
+    else:
+        db.execute(sqltext("""CREATE OR REPLACE FUNCTION ext_check_allowed_account() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM sync_allowed_accounts WHERE uid = lower(split_part(NEW.email, '@', 1))) THEN
+                    RAISE EXCEPTION 'not on the allowlist of the other system';
+                END IF;
+                RETURN NEW;
+            END $$"""))
+        db.execute(sqltext("DROP TRIGGER IF EXISTS ext_allowed_account ON users"))
+        db.execute(sqltext("CREATE TRIGGER ext_allowed_account BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION ext_check_allowed_account()"))
+
+
+def test_external_sync_and_refusal(db):
+    sync_now(EXT_LISTED)
+    assert rows(db, EXT_LISTED) == 1
+    # refused by the other system's trigger, not recorded by firefox-sync's (off)
+    refused_login(EXT_UNLISTED)
+    assert rows(db, EXT_UNLISTED) == 0 and refused(db, EXT_UNLISTED) is None
+
+
+def test_external_admin_read_only(db):
+    admin = Admin()
+    page = admin.get("/")
+    assert '<h2 id="sync-allowlist-title">Who may sync</h2>' in page, page[:5000]
+    assert f'<tr data-uid="{EXT_LISTED}">' in table_of(page, "sync-allowed")
+    for unwanted in ('id="allow-uid"', "/sync/allowlist/remove?", "/sync/allowlist/allow?", "/sync/allowlist/reject?", 'action="/sync/max-users"',
+                     "waiting for your approval"):
+        assert unwanted not in page, unwanted
+    csrf = re.search(r'name="csrf" value="([0-9a-f]+)"', page).group(1)
+    for path, form in (("/sync/allowlist/allow", {"uid": EXT_UNLISTED}), ("/sync/allowlist/remove", {"uid": EXT_LISTED}),
+                       ("/sync/max-users", {"max_users": "5"})):
+        res = admin.http.post(f"{ADMIN}{path}", data={"csrf": csrf, **form}, timeout=30)
+        assert "managed outside the admin UI (ADMIN_ACCESS_EXTERNAL): nothing changed here" in res.text, (path, res.text[:3000])
+    assert db.execute(sqltext("SELECT COUNT(*) FROM sync_allowed_accounts WHERE uid IN (:a, :b)"), {"a": EXT_LISTED, "b": EXT_OTHER}).scalar() == 2
+    assert "on: who may use the server is managed outside the admin UI" in admin.get("/config")
+
+
+def test_external_reset_and_delete(db):
+    admin = Admin()
+    # reset, its max users slot freed: its rows go, its next sign-in is a new row the other
+    # system's trigger lets in (it is listed)
+    _, done = admin.confirm(f"/users/{EXT_LISTED}/reset-sync", free_slot="1")
+    assert "freed its max users slot" in done and rows(db, EXT_LISTED) == 0
+    sync_now(EXT_LISTED)
+    assert rows(db, EXT_LISTED) == 1
+    # taken off the other system's list, its Sync data deleted: its next sign-in is refused there
+    db.execute(sqltext("DELETE FROM sync_allowed_accounts WHERE uid = :u"), {"u": EXT_LISTED})
+    _, done = admin.confirm(f"/users/{EXT_LISTED}/delete", confirm_email=EXT_LISTED)
+    assert f"Deleted the Sync data of account {EXT_LISTED}" in done and rows(db, EXT_LISTED) == 0
+    refused_login(EXT_LISTED)
+    assert rows(db, EXT_LISTED) == 0
+    # neither touched the list
+    assert db.execute(sqltext("SELECT added_by FROM sync_allowed_accounts WHERE uid = :u"), {"u": EXT_OTHER}).scalar() == "another system"
+
+
+def test_external_cleanup(db):
+    if os.environ["BACKEND"] == "mysql":
+        db.execute(sqltext("DROP TRIGGER IF EXISTS ext_allowed_account"))
+    else:
+        db.execute(sqltext("DROP TRIGGER IF EXISTS ext_allowed_account ON users"))
+        db.execute(sqltext("DROP FUNCTION IF EXISTS ext_check_allowed_account()"))
+    db.execute(sqltext("DELETE FROM sync_allowed_accounts WHERE uid IN (:a, :b)"), {"a": EXT_LISTED, "b": EXT_OTHER})

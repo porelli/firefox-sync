@@ -101,11 +101,11 @@ func TestLimitsOnTheOverview(t *testing.T) {
 
 func TestLimitRowsCountOnlyWhenNearOrFull(t *testing.T) {
 	rows := []Component{{Name: "Sync server", Up: true}}
-	rows = append(rows, limitRows(&Limit{Count: 1, Max: 10}, &Limit{Count: 5, Unlimited: true})...)
+	rows = append(rows, limitRows(&Limit{Count: 1, Max: 10}, &Limit{Count: 5, Unlimited: true}, false)...)
 	if s := summarize(rows); s.Total != 1 || s.Up != 1 || s.Warn != 0 {
 		t.Errorf("fine: %+v", s)
 	}
-	rows = append(rows[:1], limitRows(&Limit{Count: 10, Max: 10}, &Limit{Count: 9, Max: 10})...)
+	rows = append(rows[:1], limitRows(&Limit{Count: 10, Max: 10}, &Limit{Count: 9, Max: 10}, false)...)
 	if s := summarize(rows); s.Total != 3 || s.Up != 1 || s.Warn != 2 || s.FirstWarn != "Max users" {
 		t.Errorf("full and near: %+v", s)
 	}

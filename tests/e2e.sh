@@ -1480,6 +1480,30 @@ sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_us
 # (the admin UI recreated: settled, its checks seeing the Sync server, before the next phase)
 check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1')" "200 healthy yes" "/__heartbeat__ and the admin UI after the allowlist"
 
+echo "== access managed elsewhere (ADMIN_ACCESS_EXTERNAL): another system's rows and trigger, the admin UI read-only"
+set_env ADMIN_ACCESS_EXTERNAL 1
+redeploy_allowed ""
+MAX_BEFORE=$(max_users)
+sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users';" > /dev/null
+check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 external 1" "ADMIN_ACCESS_EXTERNAL=1: recorded by the init container, its own invite-only trigger off"
+admin_pytest "/tests/test_sync_allowlist.py -k external_setup"
+check "$?" 0 "the other system's rows in sync_allowed_accounts and its stricter trigger"
+check "$(rerun_init) $(allowed_on) $(users_triggers) $(allowed_list | wc -w)" "0 external 2 2" "a restart of the init container keeps the other system's rows and trigger"
+set_env SYNC_ALLOWED_ACCOUNTS admin
+check "$(rerun_init)" 1 "the init container refuses a SYNC_ALLOWED_ACCOUNTS with ADMIN_ACCESS_EXTERNAL"
+check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'ADMIN_ACCESS_EXTERNAL is on, so who may sync is decided outside firefox-sync: leave SYNC_ALLOWED_ACCOUNTS empty')" 1 "the init container says why"
+set_env SYNC_ALLOWED_ACCOUNTS ""
+check "$(rerun_init) $(allowed_list | wc -w)" "0 2" "and with it empty again, the rows as they were"
+admin_pytest "/tests/test_sync_allowlist.py -k 'external and not setup and not cleanup'"
+check "$?" 0 "the listed account syncs, the other refused by the other system's trigger; the admin UI read-only; reset and delete of Sync data work and leave the list alone"
+admin_pytest "/tests/test_sync_allowlist.py -k external_cleanup"
+check "$?" 0 "the other system's trigger and rows removed"
+set_env ADMIN_ACCESS_EXTERNAL ""
+redeploy_allowed ""
+sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_users';" > /dev/null
+check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 off 1" "ADMIN_ACCESS_EXTERNAL off again: allowed_accounts off"
+check "$(hb) $(admin_healthy)" "200 healthy" "/__heartbeat__ and the admin UI after access managed elsewhere"
+
 echo "== admin UI sees the Sync server go down and back up"
 health_events() { admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'health' AND detail LIKE '$1';"; }
 # more than before (the start has none: the admin UI starts first, the Sync server is in its startup grace)

@@ -266,6 +266,9 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, s *session) {
 		http.NotFound(w, r)
 		return
 	}
+	if a.refuseAccessChange(w, r, s, "/#invitations") {
+		return
+	}
 	ctx := r.Context()
 	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
 	// one plain address: it goes into the To header, and the allowlist takes emails only
@@ -311,6 +314,9 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, s *session) {
 func (a *App) removeFromAllowlist(w http.ResponseWriter, r *http.Request, s *session) {
 	if a.fxa == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if a.refuseAccessChange(w, r, s, "/#signups") {
 		return
 	}
 	entry := strings.ToLower(strings.TrimSpace(r.PostFormValue("entry")))

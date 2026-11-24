@@ -26,6 +26,8 @@ type restrictionInput struct {
 	maxUsersEditable    bool
 	allowlist           *SyncAllowlist
 	d                   deployment
+	// ADMIN_ACCESS_EXTERNAL: one notice instead, nothing to change here
+	external bool
 }
 
 // limitState: notice for a limit with room, its own state near or full
@@ -39,6 +41,11 @@ func limitState(l Limit) string {
 func restrictions(in restrictionInput) []restriction {
 	var list []restriction
 	d := in.d
+	if in.external {
+		setting := d.valueName("ADMIN_ACCESS_EXTERNAL")
+		return []restriction{{Text: "Access managed elsewhere", Href: "#sync-allowlist", Where: setting, State: "notice",
+			Title: "Who may use this server is decided outside the admin UI (" + setting + "): its limits, allowlist and sign-ups are read-only here"}}
+	}
 	// where a setting of .env (the chart's values) is
 	fixed := func(env, values string) string {
 		if d.Kubernetes() != nil {

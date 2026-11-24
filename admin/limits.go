@@ -173,14 +173,21 @@ func (k limitKind) event(l Limit) string {
 	return fmt.Sprintf("%d of %d %s are %s, under 90%% again", l.Count, l.Max, k.noun, k.verb)
 }
 
-// limitRows: the rows of the limits there are (nil: not read)
-func limitRows(sync, accounts *Limit) []Component {
+// limitRows: the rows of the limits there are (nil: not read); external (access managed
+// elsewhere, ADMIN_ACCESS_EXTERNAL): the count only, never a warning to raise them
+func limitRows(sync, accounts *Limit, external bool) []Component {
 	var rows []Component
-	if sync != nil {
-		rows = append(rows, syncLimit.row(*sync))
-	}
-	if accounts != nil {
-		rows = append(rows, accountsLimit.row(*accounts))
+	for _, l := range []struct {
+		k limitKind
+		l *Limit
+	}{{syncLimit, sync}, {accountsLimit, accounts}} {
+		switch {
+		case l.l == nil:
+		case external:
+			rows = append(rows, Component{Name: l.k.name, Limit: true, Up: true, Detail: l.k.detail(*l.l) + ", managed elsewhere"})
+		default:
+			rows = append(rows, l.k.row(*l.l))
+		}
 	}
 	return rows
 }

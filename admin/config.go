@@ -37,6 +37,8 @@ var configVars = map[string]bool{
 	"FXA_ADMIN_DB_PASSWORD": true,
 	"FXA_DB_ROOT_PASSWORD":  true,
 	"FXA_MYSQL_PASSWORD":    true,
+	// the user of a system that manages who may sign up (ffs_access)
+	"FXA_ACCESS_DB_PASSWORD": true,
 
 	// the Sync server and its databases
 	"SYNCSTORAGE_DOMAIN": false, "SYNCSTORAGE_URL": false, "SYNC_DB": false, "MAX_USERS": false, "SYNC_ALLOWED_ACCOUNTS": false,
@@ -62,6 +64,8 @@ var configVars = map[string]bool{
 	"ADMIN_OIDC_NAME": false, "ADMIN_OIDC_GROUPS_CLAIM": false, "ADMIN_OIDC_TRUST_UNVERIFIED_EMAIL": false,
 	"ADMIN_AUTH_HEADER": false, "ADMIN_AUTH_GROUPS_HEADER": false, "ADMIN_TRUSTED_PROXIES": false,
 	"ADMIN_ALLOWED_USERS": false, "ADMIN_ALLOWED_GROUPS": false, "ADMIN_INSECURE_COOKIE": false,
+	// who may use the server managed elsewhere (access.go)
+	"ADMIN_ACCESS_EXTERNAL": false,
 	// the admin UI itself
 	"ADMIN_LISTEN": false, "GATE_LISTEN": false, "METRICS_LISTEN": false, "ADMIN_EXPORT_PORT": false, "ADMIN_GATE_EXPORT_PORT": false,
 	"ADMIN_DEPLOYMENT": false, "ADMIN_K8S_RELEASE": false, "ADMIN_K8S_NAMESPACE": false,
@@ -479,8 +483,16 @@ func (a *App) configPage(w http.ResponseWriter, r *http.Request, s *session) {
 	limits := configGroup{ID: "limits", Title: "Limits", Intro: "In force now, as the databases have them."}
 	limits.Rows = append(limits.Rows, fact("Max users", limitValue(syncLimit),
 		limitNote("SYNC_MAX_USERS", configLookup("MAX_USERS"), "", "on the overview"), "SYNC_MAX_USERS"))
-	limits.Rows = append(limits.Rows, fact("Invite-only Sync", a.allowlistValue(), allowlistNote(a.deployment.valueName("SYNC_ALLOWED_ACCOUNTS"),
-		configLookup("SYNC_ALLOWED_ACCOUNTS")), "SYNC_ALLOWED_ACCOUNTS"))
+	allowNote := allowlistNote(a.deployment.valueName("SYNC_ALLOWED_ACCOUNTS"), configLookup("SYNC_ALLOWED_ACCOUNTS"))
+	if a.accessExternal {
+		allowNote = "the rows another system writes into sync_allowed_accounts, read-only on the overview"
+	}
+	limits.Rows = append(limits.Rows, fact("Invite-only Sync", a.allowlistValue(), allowNote, "SYNC_ALLOWED_ACCOUNTS"))
+	external := "off: the limits, the allowlist and the sign-ups are changed here as their settings allow"
+	if a.accessExternal {
+		external = "on: who may use the server is managed outside the admin UI, its limits, allowlist and sign-ups read-only here"
+	}
+	limits.Rows = append(limits.Rows, fact("Access managed elsewhere", external, "docs/admin/accounts.md#access-managed-elsewhere", "ADMIN_ACCESS_EXTERNAL").unset())
 	if fxa {
 		limits.Rows = append(limits.Rows, fact("Max accounts", limitValue(accountLimit),
 			limitNote(a.deployment.valueName("FXA_MAX_ACCOUNTS"), configLookup("FXA_MAX_ACCOUNTS"), "initial:unlimited", "on the overview"), "FXA_MAX_ACCOUNTS"))

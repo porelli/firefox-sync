@@ -109,9 +109,12 @@ behind your own sign-in (docs/admin/signing-in.md).
 {{- if not .Values.admin.ingress.tls.enabled }}
 WARNING: admin.ingress.tls.enabled is false: unless your controller adds TLS, the admin
 password and session cookie cross the network in plain HTTP.
-{{- end }} Its password, ADMIN_PASSWORD of the Secret {{ include "firefox-sync.secretName" . }}:
+{{- end }}{{ if .Values.admin.passwordSignIn }} Its password, ADMIN_PASSWORD of the Secret {{ include "firefox-sync.secretName" . }}:
 
   kubectl -n {{ .Release.Namespace }} get secret {{ include "firefox-sync.secretName" . }} -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+{{- else }} No password sign-in (admin.passwordSignIn false): sign in with single sign-on or
+your proxy's header.
+{{- end }}
 {{- else if .Values.admin.enabled }}
 
 The admin UI is not published: open it through
@@ -119,9 +122,13 @@ The admin UI is not published: open it through
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "firefox-sync.adminService" . }} 8090:8080
 
 at http://localhost:8090 (or give it its own Ingress, admin.ingress, behind your own sign-in),
+{{- if .Values.admin.passwordSignIn }}
 with ADMIN_PASSWORD of the Secret {{ include "firefox-sync.secretName" . }}:
 
   kubectl -n {{ .Release.Namespace }} get secret {{ include "firefox-sync.secretName" . }} -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+{{- else }}
+with single sign-on or your proxy's header (admin.passwordSignIn false: no password).
+{{- end }}
 {{- end }}
 {{- if .Values.backup.enabled }}
 
@@ -137,7 +144,7 @@ Restoring: https://github.com/porelli/firefox-sync/blob/main/docs/backups.md#res
 The secrets were generated into the Secret {{ include "firefox-sync.fullname" . }} and are read back on
 every helm upgrade. If you render this chart with `helm template` or a GitOps tool (Argo CD...),
 set existingSecret instead: there they cannot be read back and would change on every render.
-It must hold SYNC_MASTER_SECRET, METRICS_HASH_SECRET, ADMIN_PASSWORD, ADMIN_DB_PASSWORD and
+It must hold SYNC_MASTER_SECRET, METRICS_HASH_SECRET,{{ if .Values.admin.passwordSignIn }} ADMIN_PASSWORD,{{ end }} ADMIN_DB_PASSWORD and
 {{- if eq .Values.database.backend "postgres" }} POSTGRES_PASSWORD, POSTGRES_SYNC_PASSWORD.
 {{- else }} TOKENSERVER_DB_PASSWORD, STORAGE_DB_PASSWORD.
 {{- end }} The admin UI also reads, when there: FXA_SMTP_PASS,

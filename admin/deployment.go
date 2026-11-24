@@ -211,6 +211,8 @@ var chartValues = map[string]string{
 	"FXA_SMTP_SECURE": "smtp.secure", "FXA_SMTP_SENDER": "smtp.sender", "ADMIN_SMTP_INSECURE_AUTH": "smtp.insecureAuth",
 	// and invite-only Sync's
 	"SYNC_ALLOWED_ACCOUNTS": "allowedAccounts",
+	// and access managed elsewhere
+	"ADMIN_ACCESS_EXTERNAL": "admin.accessExternal",
 }
 
 // valueName: a variable of .env as this deployment sets it: with the chart, the accounts'

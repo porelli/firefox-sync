@@ -535,7 +535,34 @@ names are case-insensitive (and a trailing dot the same host) */ -}}
 {{- fail (printf "firefox-sync: admin.ingress.host %s is the Sync server's host: give the admin UI a host of its own" .Values.admin.ingress.host) }}
 {{- end }}
 {{- end }}
+{{- if .Values.admin.enabled }}
+{{- include "firefox-sync.checkAdminSignIn" . }}
+{{- end }}
+{{- if .Values.admin.accessExternal }}
+{{- if .Values.allowedAccounts }}
+{{- fail "firefox-sync: admin.accessExternal leaves who may sync to the system that manages access: leave allowedAccounts empty (docs/admin/accounts.md#access-managed-elsewhere)" }}
+{{- end }}
+{{- if and .Values.fxa.enabled .Values.fxa.signupAllowlist }}
+{{- fail "firefox-sync: admin.accessExternal leaves the sign-up allowlist to the system that manages access: leave fxa.signupAllowlist empty (docs/admin/accounts.md#access-managed-elsewhere)" }}
+{{- end }}
+{{- end }}
 {{- include "firefox-sync.checkFxaValues" . }}
+{{- end }}
+
+{{/*
+admin.passwordSignIn false: another way to sign in (OpenID Connect, the self-hosted accounts or
+the trusted header), or nobody could; and no admin.password, which would not be used
+*/}}
+{{- define "firefox-sync.checkAdminSignIn" -}}
+{{- $a := .Values.admin }}
+{{- if not $a.passwordSignIn }}
+{{- if $a.password }}
+{{- fail "firefox-sync: admin.password is set but admin.passwordSignIn is false: leave admin.password empty, or set admin.passwordSignIn: true" }}
+{{- end }}
+{{- if not (or $a.oidc.issuer (include "firefox-sync.fxaSignIn" .) $a.trustedHeader.header) }}
+{{- fail "firefox-sync: admin.passwordSignIn false needs another way to sign in: admin.oidc.issuer, admin.fxaSignIn or admin.trustedHeader.header (docs/admin/signing-in.md#ways-to-sign-in)" }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -625,7 +652,13 @@ of admin.yaml see the same generated values
 databases and the init container (compose's ADMIN_DB_PASSWORD, prepare_environment.sh
 generates it); POSTGRES_SYNC_PASSWORD: the Sync server's own role, POSTGRES_PASSWORD
 the superuser's */ -}}
-{{- $keys := list "SYNC_MASTER_SECRET" "METRICS_HASH_SECRET" "ADMIN_PASSWORD" "ADMIN_DB_PASSWORD" }}
+{{- $keys := list "SYNC_MASTER_SECRET" "METRICS_HASH_SECRET" "ADMIN_DB_PASSWORD" }}
+{{- /* admin.passwordSignIn false: none generated, and one kept from before is dropped */ -}}
+{{- if .Values.admin.passwordSignIn }}
+{{- $keys = append $keys "ADMIN_PASSWORD" }}
+{{- else }}
+{{- $_ := unset $data "ADMIN_PASSWORD" }}
+{{- end }}
 {{- if eq .Values.database.backend "postgres" }}
 {{- $keys = concat $keys (list "POSTGRES_PASSWORD" "POSTGRES_SYNC_PASSWORD") }}
 {{- else }}
@@ -654,8 +687,10 @@ there is empty here, the feature off (existingSecret to manage them out of band)
 {{- /* the values' with the accounts; without them none, also not an old copy the lookup found */ -}}
 {{- if .Values.fxa.enabled }}
 {{- $_ := set $data "ADMIN_FXA_CLIENT_SECRET" (.Values.fxa.adminClientSecret | default "" | toString | b64enc) }}
+{{- $_ := set $data "FXA_ACCESS_DB_PASSWORD" (.Values.fxa.accessDbPassword | default "" | toString | b64enc) }}
 {{- else }}
 {{- $_ := unset $data "ADMIN_FXA_CLIENT_SECRET" }}
+{{- $_ := unset $data "FXA_ACCESS_DB_PASSWORD" }}
 {{- end }}
 {{- $_ := set $ "ffsSecretData" $data }}
 {{- end }}

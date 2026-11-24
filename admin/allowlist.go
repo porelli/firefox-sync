@@ -66,7 +66,9 @@ type RefusedAccount struct {
 
 // SyncAllowlist: what the overview shows
 type SyncAllowlist struct {
-	Editable          bool
+	Editable bool
+	// ADMIN_ACCESS_EXTERNAL: the list another system wrote, read-only, no refusals (access.go)
+	External          bool
 	Allowed           []AllowedAccount
 	Pending, Rejected []RefusedAccount
 }
@@ -168,6 +170,9 @@ func (s *SyncDB) MarkRefusalReported(ctx context.Context, uid string) error {
 
 // syncAllowlist: the lists of the overview, nil when the allowlist is off
 func (a *App) syncAllowlist(ctx context.Context) (*SyncAllowlist, error) {
+	if a.accessExternal {
+		return a.externalAllowlist(ctx)
+	}
 	on, err := a.sync.AllowlistOn(ctx)
 	if err != nil || !on {
 		return nil, err
@@ -190,7 +195,7 @@ func (a *App) syncAllowlist(ctx context.Context) (*SyncAllowlist, error) {
 // pendingCount: the accounts waiting for an approval, -1 when the allowlist is off or not read
 func (a *App) pendingCount(ctx context.Context) int {
 	l, err := a.syncAllowlist(ctx)
-	if err != nil || l == nil {
+	if err != nil || l == nil || l.External {
 		return -1
 	}
 	return len(l.Pending)
@@ -225,6 +230,10 @@ func (a *App) allowlistTarget(ctx context.Context, action, raw string) (string, 
 	act, ok := allowlistActions[action]
 	if !ok {
 		return "", nil, nil, errNotFound
+	}
+	// rejecting too: the other system decides, and records its own refusals
+	if a.accessExternal {
+		return "", nil, nil, a.accessExternalErr()
 	}
 	l, err := a.syncAllowlist(ctx)
 	if err != nil {
@@ -362,7 +371,8 @@ func refusalEvent(uid string, id int64) string {
 // only marks it. At least once in the log, one alert.
 func (h *Health) watchRefusals(ctx context.Context) {
 	app := h.app
-	if app == nil || app.sync == nil {
+	// (access managed elsewhere: no "waiting for your approval" to alert)
+	if app == nil || app.sync == nil || app.accessExternal {
 		return
 	}
 	on, err := app.sync.AllowlistOn(ctx)
@@ -414,6 +424,9 @@ func (a *App) refusalLogged(ctx context.Context, detail string) (bool, error) {
 
 // droppedCheck: the setup check of refusals not recorded, for a week after the last one
 func (a *App) droppedCheck(ctx context.Context, now time.Time) (setupCheck, bool) {
+	if a.accessExternal {
+		return setupCheck{}, false
+	}
 	if on, err := a.sync.AllowlistOn(ctx); err != nil || !on {
 		return setupCheck{}, false
 	}
@@ -435,6 +448,8 @@ func (a *App) allowlistValue() string {
 		return "not read"
 	case l == nil:
 		return "off: every account can sync"
+	case l.External:
+		return fmt.Sprintf("managed elsewhere: %s in sync_allowed_accounts", plural(len(l.Allowed), "account"))
 	}
 	return fmt.Sprintf("on: %s allowed, %d pending", plural(len(l.Allowed), "account"), len(l.Pending))
 }

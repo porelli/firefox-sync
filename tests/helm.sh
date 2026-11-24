@@ -495,6 +495,41 @@ TPL
   [[ "$(notify)" == "ntfy://ntfy.sh/ci-topic,webhook://hooks.example.test/ci" ]] || fail "admin.notify as a list: $(notify)"
   [[ "$(notify --set-string admin.notify='ntfy://a.test/x\,slack://b.test/y')" == "ntfy://a.test/x,slack://b.test/y" ]] || fail "admin.notify as a string"
   check "admin.notify: a list joined by commas, or a string, into ADMIN_NOTIFY"
+  # admin.passwordSignIn false: no ADMIN_PASSWORD generated, kept or passed (an existingSecret's
+  # neither); refused without another way to sign in, and with an admin.password
+  header=(--set admin.enabled=true --set admin.passwordSignIn=false --set admin.trustedHeader.header=Remote-Email
+    --set admin.trustedHeader.trustedProxies=10.0.0.0/8 --set admin.allowed.groups=admins)
+  docs=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" "${header[@]}" | manifests)
+  [[ "$(echo "${docs}" | jq -r '.[] | select(.kind == "Secret") | .data | has("ADMIN_PASSWORD")')" == false ]] || fail "admin.passwordSignIn=false: ADMIN_PASSWORD in the Secret"
+  [[ "$(echo "${docs}" | jq '[.[] | select(.kind == "Deployment" and .metadata.name == "test-release-firefox-sync-admin") | .spec.template.spec.containers[0].env[] | select(.name == "ADMIN_PASSWORD")] | length')" == 0 ]] \
+    || fail "admin.passwordSignIn=false: ADMIN_PASSWORD passed to the admin UI"
+  docs=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" "${header[@]}" --set existingSecret=mine | manifests)
+  [[ "$(echo "${docs}" | jq '[.[] | select(.kind == "Deployment") | .spec.template.spec.containers[].env[]? | select(.valueFrom.secretKeyRef.key == "ADMIN_PASSWORD")] | length')" == 0 ]] \
+    || fail "admin.passwordSignIn=false: ADMIN_PASSWORD of an existingSecret passed"
+  out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set admin.enabled=true --set admin.passwordSignIn=false 2>&1) \
+    && fail "admin.passwordSignIn=false without another way to sign in rendered"
+  grep -qF "admin.passwordSignIn false needs another way to sign in: admin.oidc.issuer, admin.fxaSignIn or admin.trustedHeader.header" <<< "${out}" || fail "passwordSignIn=false alone: not the message: ${out}"
+  out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" "${header[@]}" --set admin.password=something-long 2>&1) \
+    && fail "admin.passwordSignIn=false with admin.password rendered"
+  grep -qF "admin.password is set but admin.passwordSignIn is false" <<< "${out}" || fail "passwordSignIn=false with a password: not the message: ${out}"
+  out=$(notes "${header[@]}")
+  grep -qF "admin.passwordSignIn false: no password" <<< "${out}" && ! grep -q "ADMIN_PASSWORD" <<< "${out}" \
+    || fail "admin.passwordSignIn=false: the NOTES still give ADMIN_PASSWORD: ${out}"
+  check "admin.passwordSignIn=false: no ADMIN_PASSWORD in the Secret or the admin UI's env (an existingSecret's neither), refused alone or with admin.password"
+  # admin.accessExternal: ADMIN_ACCESS_EXTERNAL=1 to the admin UI and the db-init container (and
+  # the policy init container with the accounts), only when on; allowedAccounts refused with it
+  ext() {
+    helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/$1" --set admin.enabled=true "${@:2}" | manifests \
+      | jq -r '[.[] | select(.kind == "Deployment") | .spec.template.spec | (.initContainers // []) + .containers | .[] | select(any(.env[]?; .name == "ADMIN_ACCESS_EXTERNAL" and .value == "1")) | .name] | sort | join(" ")'
+  }
+  [[ "$(ext default-values.yaml)" == "" ]] || fail "admin.accessExternal off: ADMIN_ACCESS_EXTERNAL rendered in $(ext default-values.yaml)"
+  [[ "$(ext default-values.yaml --set admin.accessExternal=true)" == "admin db-init" ]] || fail "admin.accessExternal: in $(ext default-values.yaml --set admin.accessExternal=true)"
+  [[ "$(ext fxa-values.yaml --set admin.accessExternal=true --set-string fxa.signupAllowlist=)" == "admin db-init policy" ]] \
+    || fail "admin.accessExternal with the accounts: in $(ext fxa-values.yaml --set admin.accessExternal=true --set-string fxa.signupAllowlist=)"
+  out=$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/default-values.yaml" --set admin.accessExternal=true --set allowedAccounts=admin 2>&1) \
+    && fail "admin.accessExternal with allowedAccounts rendered"
+  grep -qF "admin.accessExternal leaves who may sync to the system that manages access: leave allowedAccounts empty" <<< "${out}" || fail "accessExternal with allowedAccounts: not the message: ${out}"
+  check "admin.accessExternal: ADMIN_ACCESS_EXTERNAL=1 to the admin UI, db-init and the policy only when on, refused with allowedAccounts"
   # a new admin pod when the chart's Secret changes: the checksum is over all of its data,
   # the generated secrets with it (helm template generates new ones on every render), not
   # over the secrets of the values alone, which the pod spec would give away

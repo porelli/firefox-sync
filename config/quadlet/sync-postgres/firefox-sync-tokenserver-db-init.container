@@ -21,6 +21,8 @@ Environment=POSTGRES_PASSWORD=%SYNC_POSTGRES_PASSWORD%
 Environment=MAX_USERS=%SYNC_MAX_USERS%
 # invite-only Sync (docs/limits.md#sync_allowed_accounts): empty is off
 Environment="SYNC_ALLOWED_ACCOUNTS=%SYNC_ALLOWED_ACCOUNTS%"
+# another system decides who may sync (docs/admin/accounts.md#access-managed-elsewhere)
+Environment="ADMIN_ACCESS_EXTERNAL=%ADMIN_ACCESS_EXTERNAL%"
 Environment=DOMAIN=%SYNC_PUBLIC_URL%
 Environment=POSTGRES_SYNC_USER=%SYNC_POSTGRES_APP_USER%
 Environment=POSTGRES_SYNC_PASSWORD=%SYNC_POSTGRES_APP_PASSWORD%

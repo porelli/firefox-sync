@@ -137,6 +137,7 @@ echo "=========================================="
 echo "Domain: ${DOMAIN}"
 echo "Max Users: ${MAX_USERS:-}"
 echo "Allowed accounts: ${SYNC_ALLOWED_ACCOUNTS:-(everyone)}"
+[ -z "${ADMIN_ACCESS_EXTERNAL:-}" ] || echo "Access managed elsewhere (ADMIN_ACCESS_EXTERNAL): ${ADMIN_ACCESS_EXTERNAL}"
 echo "Database: ${POSTGRES_DATABASE}"
 echo "=========================================="
 
@@ -217,6 +218,29 @@ if ! parse_allowed_accounts "${SYNC_ALLOWED_ACCOUNTS:-}"; then
   exit 1
 fi
 
+# ADMIN_ACCESS_EXTERNAL (docs/admin/accounts.md#access-managed-elsewhere): another system decides
+# who may sync, with its own rows in sync_allowed_accounts and its own trigger on users. Then
+# this writes no row of the allowlist, keeps its own invite-only trigger off, and records
+# allowed_accounts = external (the admin UI's setup check compares it with its own setting). A
+# SYNC_ALLOWED_ACCOUNTS would be a second source of who may sync: refused. 1, true, yes or on;
+# empty, 0, false, no or off: off; anything else stops here, as the admin UI does
+case "$(printf '%s' "${ADMIN_ACCESS_EXTERNAL:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+  1|true|yes|on) ACCESS_EXTERNAL=1 ;;
+  ""|0|false|no|off) ACCESS_EXTERNAL=0 ;;
+  *) echo "✗ ERROR: ADMIN_ACCESS_EXTERNAL='${ADMIN_ACCESS_EXTERNAL}' is not valid: 1, true or yes to turn it on (empty, 0, false or no: off)"; exit 1 ;;
+esac
+if [ "${ACCESS_EXTERNAL}" = 1 ] && [ "${ALLOWED_MODE}" != off ]; then
+  echo "✗ ERROR: ADMIN_ACCESS_EXTERNAL is on, so who may sync is decided outside firefox-sync: leave SYNC_ALLOWED_ACCOUNTS empty"
+  echo "  (docs/admin/accounts.md#access-managed-elsewhere)"
+  exit 1
+fi
+
+# allowed_state: the allowed_accounts row, on, off or external (ADMIN_ACCESS_EXTERNAL: off for
+# this trigger, which then checks nothing and is not even there; the other system's decides)
+allowed_state() {
+  if [ "${ACCESS_EXTERNAL}" = 1 ]; then echo external; elif [ "${ALLOWED_MODE}" = off ]; then echo off; else echo on; fi
+}
+
 # allowed_sql: the statements of SYNC_ALLOWED_ACCOUNTS, after allowlist.sql (all in one
 # transaction): fixed: exactly these uids; initial: these uids once, the first time an
 # initial: list is applied (allowed_accounts_initial records it, as max_users' row does for
@@ -239,7 +263,7 @@ allowed_sql() {
   if [ "${ALLOWED_MODE}" = initial ] && [ -n "${rows}" ]; then
     echo "INSERT INTO config (config_key, config_value) VALUES ('allowed_accounts_initial', 'applied') ON CONFLICT (config_key) DO NOTHING;"
   fi
-  echo "INSERT INTO config (config_key, config_value) VALUES ('allowed_accounts', '$([ "${ALLOWED_MODE}" = off ] && echo off || echo on)')"
+  echo "INSERT INTO config (config_key, config_value) VALUES ('allowed_accounts', '$(allowed_state)')"
   echo "  ON CONFLICT (config_key) DO UPDATE SET config_value = EXCLUDED.config_value, updated_at = CURRENT_TIMESTAMP;"
   echo "DROP TRIGGER IF EXISTS before_insert_allowed_user ON users;"
   [ "${ALLOWED_MODE}" = off ] || echo "CREATE TRIGGER before_insert_allowed_user BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION ffs_check_allowed_account();"
@@ -432,7 +456,11 @@ echo "  docker compose up -d   (the init container and the admin UI)"
 echo "  (Quadlets: systemctl --user restart firefox-sync-tokenserver-db-init.service firefox-sync-admin.service)"
 allowed_in_db=$(sync_psql -tA -c 'SELECT COUNT(*) FROM sync_allowed_accounts;')
 case "${ALLOWED_MODE}" in
-  off) echo "SYNC_ALLOWED_ACCOUNTS empty: every account can sync (invite-only Sync is off)" ;;
+  off) if [ "${ACCESS_EXTERNAL}" = 1 ]; then
+         echo "ADMIN_ACCESS_EXTERNAL: who may sync is managed elsewhere: sync_allowed_accounts (${allowed_in_db} accounts) left to that system, the invite-only trigger of firefox-sync off"
+       else
+         echo "SYNC_ALLOWED_ACCOUNTS empty: every account can sync (invite-only Sync is off)"
+       fi ;;
   fixed) echo "SYNC_ALLOWED_ACCOUNTS: invite-only, the ${allowed_in_db} accounts listed (set on every start, read-only in the admin UI)" ;;
   initial) echo "SYNC_ALLOWED_ACCOUNTS=${SYNC_ALLOWED_ACCOUNTS//[[:space:]]/}: invite-only, ${allowed_in_db} accounts allowed, managed in the admin UI" ;;
 esac

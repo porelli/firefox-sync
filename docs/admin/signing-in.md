@@ -27,6 +27,8 @@ Each way is on when it is configured, and any combination works. With none of th
 
 With the Helm chart these are `admin.password` (or the Secret's `ADMIN_PASSWORD`), `admin.oidc.*`, `admin.trustedHeader.*` and `admin.allowed.*`, see [Settings](../reference/settings.md#admin-ui-sign-in).
 
+The chart generates a password when `admin.password` is empty. To turn password sign-in off there, set `admin.passwordSignIn: false`: no password is generated or passed to the admin UI, and one already in the Secret (or in an `existingSecret`) is not used. The render is refused unless another way is set (`admin.oidc.issuer`, `admin.fxaSignIn` or `admin.trustedHeader.header`), and with an `admin.password`. With docker compose and the Quadlets, leave `ADMIN_PASSWORD` empty.
+
 Whatever the way, you get the same [session](README.md#sessions). The [event log](monitoring.md#event-log) and the alerts record who signed in and how:
 
 ```text

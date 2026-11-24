@@ -8,6 +8,9 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Added
 
+- Access managed elsewhere, for integrators: with `ADMIN_ACCESS_EXTERNAL=1` (Helm: `admin.accessExternal`) another system decides who may use the server. The admin UI shows the limits, the allowlists and the sign-ups read-only, refuses every change of them, and asks nobody to approve an account or raise a limit. The init container and `fxa-policy` leave the rows of the allowlists to that system and refuse a `SYNC_ALLOWED_ACCOUNTS` or `FXA_SIGNUP_ALLOWLIST`. Reset and deletion of Sync data stay. With self-hosted accounts, `FXA_ACCESS_DB_PASSWORD` (Helm: `fxa.accessDbPassword`) gives that system a database user, `ffs_access`, for the sign-up allowlist and to disable, enable or delete accounts by email. See [Access managed elsewhere](docs/admin/accounts.md#access-managed-elsewhere).
+- Helm: `admin.passwordSignIn: false` turns the admin UI's password sign-in off, with single sign-on or a trusted header: no `ADMIN_PASSWORD` is generated or passed, one already in the Secret is not used. See [Ways to sign in](docs/admin/signing-in.md#ways-to-sign-in).
+
 ### Changed
 
 ### Fixed
