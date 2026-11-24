@@ -152,7 +152,7 @@ near or full in their amber; nothing when open and unlimited */}}
   {{/* FXA_MAX_ACCOUNTS: the count against it, the form folded until it is close */}}
   {{with .AccountLimit}}{{$state := .State}}{{if $.AccessExternal}}{{$state = "ok"}}{{end}}
   <h3 id="max-accounts-title">Max accounts</h3>
-  <p id="max-accounts-line">{{if .Unlimited}}<span id="fxa-accounts">{{.Count}}</span> {{if eq .Count 1}}account{{else}}accounts{{end}} created, no limit (<code>{{if $.Kubernetes}}fxa.maxAccounts: {{else}}FXA_MAX_ACCOUNTS={{end}}<span id="fxa-max-accounts">unlimited</span></code>).{{else}}<span id="fxa-accounts">{{.Count}}</span> of <span id="fxa-max-accounts">{{.Max}}</span> accounts created{{if eq .Max 0}}: nobody new can sign up{{else if eq $state "full"}}; sign-ups are refused now{{else}}; sign-ups are refused once all are{{end}}.{{if eq $state "full"}} <span class="pill warn">full</span>{{else if eq $state "near"}} <span class="pill warn">near the limit</span>{{end}}{{end}}</p>
+  <p id="max-accounts-line">{{if .Unlimited}}<span id="fxa-accounts">{{.Count}}</span> {{if eq .Count 1}}account{{else}}accounts{{end}} created, no limit (<code>{{if $.Kubernetes}}fxa.maxAccounts: {{else}}FXA_MAX_ACCOUNTS={{end}}<span id="fxa-max-accounts">unlimited</span></code>).{{else}}<span id="fxa-accounts">{{.Count}}</span> of <span id="fxa-max-accounts">{{.Max}}</span> accounts created{{if eq .Max 0}}: nobody new can sign up{{else if eq .State "full"}}; sign-ups are refused now{{else}}; sign-ups are refused once all are{{end}}.{{if eq $state "full"}} <span class="pill warn">full</span>{{else if eq $state "near"}} <span class="pill warn">near the limit</span>{{end}}{{end}}</p>
   {{if $.AccessExternal}}
   <p class="hint" id="max-accounts-mode">Read-only: managed outside the admin UI (<code>{{if $.Kubernetes}}admin.accessExternal{{else}}ADMIN_ACCESS_EXTERNAL{{end}}</code>). Every account of the accounts service counts, confirmed or not.</p>
   {{else}}
@@ -221,7 +221,7 @@ near or full in their amber; nothing when open and unlimited */}}
 </section>
 {{end}}
 
-{{with .SyncAllowlist}}{{if .External}}
+{{with .SyncAllowlist}}{{if .External}}{{if or .Allowed (not $.FxA)}}
 <section class="card" aria-labelledby="sync-allowlist-title" id="sync-allowlist">
   <div class="card-head"><h2 id="sync-allowlist-title">Who may sync</h2><span class="pill notice">managed elsewhere</span></div>
   <p class="hint access-external">Managed outside the admin UI (<code>{{if $.Kubernetes}}admin.accessExternal{{else}}ADMIN_ACCESS_EXTERNAL{{end}}</code>): another system decides who may use this server, and writes the accounts it allows into <code>sync_allowed_accounts</code>. The limits, this list{{if $.FxA}} and the sign-ups{{end}} are read-only here; the account pages, the reset and deletion of Sync data, and everything else work as usual. See docs/admin/accounts.md#access-managed-elsewhere.</p>
@@ -233,7 +233,7 @@ near or full in their amber; nothing when open and unlimited */}}
   </table></div>
   </details>
 </section>
-{{else}}
+{{end}}{{else}}
 <section class="card" aria-labelledby="sync-allowlist-title" id="sync-allowlist">
   <div class="card-head"><h2 id="sync-allowlist-title">Invite-only Sync</h2>{{with .Pending}}<span class="pill warn">{{len .}} pending</span>{{end}}</div>
   <p class="hint">Only the accounts on this list can start to sync (<code>{{if $.Kubernetes}}allowedAccounts{{else}}SYNC_ALLOWED_ACCOUNTS{{end}}</code>); the accounts that already sync keep working. {{if .Editable}}Managed here.{{else}}Read-only: {{if $.Kubernetes}}<code>allowedAccounts</code> in your values sets the list on every start; set <code>allowedAccounts: admin</code> and helm upgrade to manage it here.{{else}}<code>SYNC_ALLOWED_ACCOUNTS</code> in .env sets the list on every start; set <code>SYNC_ALLOWED_ACCOUNTS=admin</code> to manage it here.{{end}}{{end}} How the owner of an account finds its id: docs/limits.md#find-the-uid-of-an-account.</p>

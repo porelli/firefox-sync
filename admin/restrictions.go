@@ -43,7 +43,12 @@ func restrictions(in restrictionInput) []restriction {
 	d := in.d
 	if in.external {
 		setting := d.valueName("ADMIN_ACCESS_EXTERNAL")
-		return []restriction{{Text: "Access managed elsewhere", Href: "#sync-allowlist", Where: setting, State: "notice",
+		href := "#sync-allowlist"
+		if in.fxa {
+			// (the self-hosted accounts: their sign-ups decide, the Sync allowlist may be empty)
+			href = "#signups"
+		}
+		return []restriction{{Text: "Access managed elsewhere", Href: href, Where: setting, State: "notice",
 			Title: "Who may use this server is decided outside the admin UI (" + setting + "): its limits, allowlist and sign-ups are read-only here"}}
 	}
 	// where a setting of .env (the chart's values) is
