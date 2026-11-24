@@ -19,7 +19,7 @@ Environment=MYSQL_PASSWORD=%SYNC_TOKENSERVER_DB_PASSWORD%
 
 # the admin UI's users, created by db/mysql/admin-user.sh: ADMIN_DB_USER for its
 # own database (the event log, the audit trail...), ADMIN_DB_SYNC_USER with SELECT
-# and EXECUTE here
+# here (EXECUTE per procedure: the init container)
 Environment=ADMIN_DB_ROLE=tokenserver
 Environment=ADMIN_DB_USER=%ADMIN_DB_USER%
 Environment=ADMIN_DB_SYNC_USER=%ADMIN_DB_SYNC_USER%

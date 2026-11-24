@@ -91,7 +91,7 @@ services:
       FFS_MYSQL_SETTING: SYNC_MARIADB_IMAGE
       # the admin UI's users, created by db/mysql/admin-user.sh: ADMIN_DB_USER for its
       # own database (the event log, the audit trail...), ADMIN_DB_SYNC_USER with SELECT
-      # and EXECUTE here
+      # here (EXECUTE per procedure: the init container)
       ADMIN_DB_ROLE: tokenserver
       ADMIN_DB_USER: ${ADMIN_DB_USER:-ffs_admin_ui}
       ADMIN_DB_SYNC_USER: ${ADMIN_DB_SYNC_USER:-ffs_admin_sync}
@@ -122,6 +122,9 @@ services:
       MARIADB_PASSWORD: ${SYNC_TOKENSERVER_DB_PASSWORD:-${MARIADB_TOKENSERVER_PASSWORD:-}}
       # false with your own MySQL server: its certificate is self-signed
       MARIADB_TLS_VERIFY: ${SYNC_DB_TLS_VERIFY:-true}
+      # the admin UI's reader: EXECUTE on the procedures it calls, given at every start (none on
+      # those that change who may sync with ADMIN_ACCESS_EXTERNAL); none without ADMIN_DB_PASSWORD
+      ADMIN_DB_SYNC_USER: ${ADMIN_DB_PASSWORD:+${ADMIN_DB_SYNC_USER:-ffs_admin_sync}}
 
   ffs-admin:
     environment:

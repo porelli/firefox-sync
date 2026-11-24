@@ -65,8 +65,9 @@ BEGIN
 END //
 DELIMITER ;
 
--- What the admin UI changes, with the privileges of this user (its own has SELECT and
--- EXECUTE here, see db/mysql/admin-user.sh): with SYNC_ALLOWED_ACCOUNTS=admin or initial:
+-- What the admin UI changes, with the privileges of this user (its own has SELECT here, and
+-- EXECUTE on these procedures, given by db_init.sh after this file: none on the four that
+-- change the lists with ADMIN_ACCESS_EXTERNAL): with SYNC_ALLOWED_ACCOUNTS=admin or initial:
 -- allow an account (Approve, Allow a uid), remove it from the list, reject a pending one;
 -- and always: mark a refusal as alerted, recount the load of a node
 DROP PROCEDURE IF EXISTS ffs_allow_account;

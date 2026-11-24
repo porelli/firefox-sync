@@ -118,6 +118,9 @@ services:
       # the init container's MariaDB client checks the server's certificate by default, and
       # MySQL's is self-signed (ERROR 2026): TLS without the check, on the stack's own network
       MARIADB_TLS_VERIFY: "false"
+      # the admin UI's reader: EXECUTE on the procedures it calls, given at every start (none on
+      # those that change who may sync with ADMIN_ACCESS_EXTERNAL); none without ADMIN_DB_PASSWORD
+      ADMIN_DB_SYNC_USER: ${ADMIN_DB_PASSWORD:+${ADMIN_DB_SYNC_USER:-ffs_admin_sync}}
 
   ffs-admin:
     environment:

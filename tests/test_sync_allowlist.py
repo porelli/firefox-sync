@@ -359,6 +359,9 @@ def test_external_admin_page(db):
         assert "managed outside the admin UI (ADMIN_ACCESS_EXTERNAL): nothing changed here" in res.text, (path, res.text[:3000])
     assert db.execute(sqltext("SELECT COUNT(*) FROM sync_allowed_accounts WHERE uid IN (:a, :b)"), {"a": EXT_LISTED, "b": EXT_OTHER}).scalar() == 2
     assert "on: who may use the server is managed outside the admin UI" in admin.get("/config")
+    # the database refuses the admin UI's reader the changes too, and the setup check says so
+    # (docs/admin/accounts.md#the-database-enforces-it-too)
+    assert '<td>Access managed elsewhere: database grants</td><td><span class="ok">ok</span>' in page, page[page.find('<table id="setup"'):][:5000]
 
 
 def test_external_reset_and_delete(db):

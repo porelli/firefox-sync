@@ -672,6 +672,10 @@ else
   check "$(ts_sql "SELECT COUNT(*) FROM $(env_of ADMIN_DB_NAME).ffs_events" 2>&1 | grep -c denied)" 1 "the tokenserver user cannot read the event log (quadlets)"
   check "$(reader_sql firefox-sync-tokenserver-db "SELECT COUNT(*) > 0 FROM $(env_of SYNC_TOKENSERVER_DB_NAME).nodes") $(reader_sql firefox-sync-tokenserver-db "SELECT COUNT(*) FROM $(env_of ADMIN_DB_NAME).ffs_events" 2>&1 | grep -c denied) $(reader_sql firefox-sync-syncstorage-db "SELECT COUNT(*) >= 0 FROM $(env_of SYNC_STORAGE_DB_NAME).bso")" \
     "1 1 1" "the admin UI's reader reads the Sync databases, not the event log (quadlets)"
+  # its EXECUTE per procedure, from the init container's Quadlet (ADMIN_DB_SYNC_USER), none on the
+  # whole database (docs/reference/database-users.md#mariadb-and-mysql)
+  check "$(reader_sql firefox-sync-tokenserver-db 'SHOW GRANTS' | grep -c 'GRANT EXECUTE ON PROCEDURE') $(reader_sql firefox-sync-tokenserver-db 'SHOW GRANTS' | grep -cE 'EXECUTE.* ON `[^`]+`\.\*')" \
+    "8 0" "the admin UI's reader: EXECUTE on the init container's 8 procedures, not on the whole tokenserver database (quadlets)"
   SYNC_DUMPS="ffs_admin.sql.gz syncstorage.sql.gz tokenserver.sql.gz"
 fi
 # the setup migrations (docs/databases.md#setup-migrations): recorded by the init container with

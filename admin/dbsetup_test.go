@@ -36,6 +36,9 @@ func TestDBSetupPrivilegesOfTheTemplate(t *testing.T) {
 	for _, m := range grant.FindAllStringSubmatch(strings.Join(statements, " "), -1) {
 		got[m[3]+" "+m[2]] = strings.Split(m[1], ", ")
 	}
+	// the reader's EXECUTE on the tokenserver database: per procedure, the init container's
+	// (db/mysql/init/db_init.sh), checked by accessGrantsCheck, not here
+	got["ADMIN_SYNC_USER SYNC_TOKENSERVER_DATABASE"] = slices.DeleteFunc(got["ADMIN_SYNC_USER SYNC_TOKENSERVER_DATABASE"], func(p string) bool { return p == "EXECUTE" })
 	for key, want := range map[string][]string{
 		"ADMIN_USER ADMIN_DATABASE":                 ownDBPrivileges,
 		"ADMIN_SYNC_USER SYNC_TOKENSERVER_DATABASE": readerTokenserverPrivileges,
@@ -49,12 +52,16 @@ func TestDBSetupPrivilegesOfTheTemplate(t *testing.T) {
 
 func TestMissingGrant(t *testing.T) {
 	have := map[string]bool{"SELECT": true, "USAGE": true}
-	if got := missingGrant(have, readerTokenserverPrivileges, "tokenserver", "ffs_admin_sync"); got !=
-		"ffs_admin_sync lacks EXECUTE on tokenserver: GRANT SELECT, EXECUTE ON `tokenserver`.* TO 'ffs_admin_sync'@'%';" {
+	if got := missingGrant(have, readerStoragePrivileges, "syncstorage", "ffs_admin_sync"); got !=
+		"ffs_admin_sync lacks DELETE on syncstorage: GRANT SELECT, DELETE ON `syncstorage`.* TO 'ffs_admin_sync'@'%';" {
 		t.Errorf("missingGrant: %q", got)
 	}
-	have["EXECUTE"] = true
+	// (the tokenserver database: SELECT, the EXECUTE is per procedure)
 	if got := missingGrant(have, readerTokenserverPrivileges, "tokenserver", "ffs_admin_sync"); got != "" {
+		t.Errorf("SELECT on the tokenserver: %q", got)
+	}
+	have["DELETE"] = true
+	if got := missingGrant(have, readerStoragePrivileges, "syncstorage", "ffs_admin_sync"); got != "" {
 		t.Errorf("every privilege there: %q", got)
 	}
 }

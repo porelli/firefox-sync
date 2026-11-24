@@ -20,8 +20,11 @@ import (
 var (
 	// ADMIN_DB_USER on ADMIN_DB_NAME
 	ownDBPrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "INDEX", "DROP", "LOCK TABLES"}
-	// ADMIN_DB_SYNC_USER on the tokenserver and the storage databases
-	readerTokenserverPrivileges = []string{"SELECT", "EXECUTE"}
+	// ADMIN_DB_SYNC_USER on the tokenserver and the storage databases. On the tokenserver
+	// database not the EXECUTE of its GRANT line: the init container gives it per procedure
+	// (and takes that of the whole database back where it may), as ADMIN_ACCESS_EXTERNAL says;
+	// accessGrantsCheck checks it (access.go)
+	readerTokenserverPrivileges = []string{"SELECT"}
 	readerStoragePrivileges     = []string{"SELECT", "DELETE"}
 )
 
@@ -31,29 +34,8 @@ var (
 // information_schema shows misses them, and names a database by its grant's pattern
 // (fxa\_oauth, fx%)
 func mysqlPrivileges(ctx context.Context, db *sql.DB) (map[string]bool, string, error) {
-	var schema, version string
-	var role sql.NullString
-	if err := db.QueryRowContext(ctx, "SELECT DATABASE(), VERSION(), CURRENT_ROLE()").Scan(&schema, &version, &role); err != nil {
-		return nil, "", err
-	}
-	query := "SHOW GRANTS"
-	if !strings.Contains(strings.ToLower(version), "mariadb") && role.Valid && role.String != "" && role.String != "NONE" {
-		query = "SHOW GRANTS FOR CURRENT_USER() USING " + role.String
-	}
-	rows, err := db.QueryContext(ctx, query)
+	lines, schema, err := mysqlGrantLines(ctx, db)
 	if err != nil {
-		return nil, schema, err
-	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			return nil, schema, err
-		}
-		lines = append(lines, line)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, schema, err
 	}
 	return grantedOn(lines, schema), schema, nil

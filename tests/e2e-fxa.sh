@@ -1192,6 +1192,16 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
   as_ffs_access() { dc exec -T -e MYSQL_PWD="${ACCESS_PW}" fxa-db "${DB_CLIENT}" -uffs_access -h 127.0.0.1 --protocol=tcp -sN -e "$1" < /dev/null 2>&1 | grep -v '^WARNING: '; }
   access_grants() { as_ffs_access 'SHOW GRANTS' | grep -cE 'GRANT (SELECT, INSERT, DELETE ON `?ffs`?\.`?signup_allowlist`?|EXECUTE ON PROCEDURE `?ffs`?\.`?(disable|enable|delete)_account_by_email`?) '; }
   check "$(access_grants) $(as_ffs_access 'SHOW GRANTS' | grep -c ' ON ')" "4 5" "ffs_access: the allowlist's rows and the three procedures by email, nothing else"
+  # the database enforces it too (docs/admin/accounts.md#the-database-enforces-it-too): the admin
+  # UI's ffs_admin reads the sign-up policy and its allowlist, and changes neither
+  admin_writes() {
+    echo "$(as_ffs_admin "INSERT INTO ffs.signup_allowlist (entry) VALUES ('e2e-admin@example.net')" | grep -cE 'denied')" \
+      "$(as_ffs_admin "UPDATE ffs.settings SET value = value WHERE name = 'signups'" | grep -cE 'denied')" \
+      "$(as_ffs_admin "SELECT COUNT(*) > 0 FROM ffs.settings")"
+    fxa_sql "DELETE FROM ffs.signup_allowlist WHERE entry = 'e2e-admin@example.net'" > /dev/null
+  }
+  check "$(admin_writes) $(grep -c 'ffs_admin: SELECT only on ffs.settings and ffs.signup_allowlist' "${WORK}/fxa-policy-access.log")" "1 1 1 1" \
+    "ADMIN_ACCESS_EXTERNAL=1: ffs_admin reads ffs.settings, the database refuses it an INSERT into ffs.signup_allowlist and an UPDATE of ffs.settings"
   dc run --rm --no-deps tokenserver_db_init > /dev/null 2>&1
   check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" "0 external" "the init container with ADMIN_ACCESS_EXTERNAL=1"
   dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1
@@ -1222,6 +1232,7 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
   set_env FXA_SIGNUP_ALLOWLIST @example.com
   dc run --rm --no-deps fxa-policy > /dev/null 2>&1
   check "$? $(fxa_sql "SELECT COUNT(*) FROM mysql.user WHERE user = 'ffs_access'")" "0 0" "FXA_ACCESS_DB_PASSWORD empty again: ffs_access removed"
+  check "$(admin_writes)" "0 0 1" "ADMIN_ACCESS_EXTERNAL off again: ffs_admin writes the sign-up policy and its allowlist again"
   dc run --rm --no-deps tokenserver_db_init > /dev/null 2>&1
   check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" "0 off" "the init container without ADMIN_ACCESS_EXTERNAL"
   dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1

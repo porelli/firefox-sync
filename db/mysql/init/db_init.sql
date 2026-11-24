@@ -92,8 +92,9 @@ END //
 DELIMITER ;
 
 -- What the admin UI changes here, with the privileges of this user: its own user
--- (ADMIN_DB_USER) has SELECT and EXECUTE on this database, nothing that writes
--- (db/mysql/admin-user.sh, docs/reference/database-users.md#the-admin-uis-own-database)
+-- (ADMIN_DB_SYNC_USER) has SELECT on this database and EXECUTE on these procedures, nothing
+-- that writes (db_init.sh gives the EXECUTE after this file, none on ffs_set_max_users with
+-- ADMIN_ACCESS_EXTERNAL; docs/reference/database-users.md#mariadb-and-mysql)
 
 -- max users, from the admin UI (MAX_USERS=initial:N): a number or 'unlimited', as above
 DROP PROCEDURE IF EXISTS ffs_set_max_users;

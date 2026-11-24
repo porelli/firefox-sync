@@ -489,6 +489,39 @@ var fxaAdminGrants = []string{
 	"GRANT SELECT (uid, email, emailVerified, createdAt, disabledAt) ON fxa.accounts TO 'ffs_admin'@'%'",
 }
 
+// fxaAdminAccessGrants: what fxaAdminGrants gives ffs_admin on the sign-up policy
+// (FXA_SIGNUPS, FXA_MAX_ACCOUNTS: ffs.settings) and the sign-up allowlist, which the admin UI's
+// forms write. With ADMIN_ACCESS_EXTERNAL (docs/admin/accounts.md#access-managed-elsewhere)
+// another system decides who may sign up, through ffs_access: ffs_admin then reads them only,
+// and the database refuses the admin UI any change of them (fxaAdminGrantsFor)
+var fxaAdminAccessGrants = map[string]string{
+	"GRANT SELECT, INSERT, UPDATE, DELETE ON ffs.settings TO 'ffs_admin'@'%'":         "GRANT SELECT ON ffs.settings TO 'ffs_admin'@'%'",
+	"GRANT SELECT, INSERT, UPDATE, DELETE ON ffs.signup_allowlist TO 'ffs_admin'@'%'": "GRANT SELECT ON ffs.signup_allowlist TO 'ffs_admin'@'%'",
+}
+
+// fxaAdminExternalRevokes: with ADMIN_ACCESS_EXTERNAL on your own server, where the REVOKE ALL
+// of fxaAdminGrants is not allowed, the writes of a start without it revoked one by one (an
+// error for a grant that is not there is fine, as for fxaObsoleteGrants)
+var fxaAdminExternalRevokes = []string{
+	"REVOKE INSERT, UPDATE, DELETE ON ffs.settings FROM 'ffs_admin'@'%'",
+	"REVOKE INSERT, UPDATE, DELETE ON ffs.signup_allowlist FROM 'ffs_admin'@'%'",
+}
+
+// fxaAdminGrantsFor: ffs_admin's grants, and what to revoke where REVOKE ALL is not allowed,
+// as ADMIN_ACCESS_EXTERNAL says
+func fxaAdminGrantsFor(external bool) (grants, obsolete []string) {
+	if !external {
+		return fxaAdminGrants, fxaObsoleteGrants
+	}
+	for _, g := range fxaAdminGrants {
+		if read, ok := fxaAdminAccessGrants[g]; ok {
+			g = read
+		}
+		grants = append(grants, g)
+	}
+	return grants, append(append([]string{}, fxaObsoleteGrants...), fxaAdminExternalRevokes...)
+}
+
 // fxaAccessUser: the user of a system that manages who may sign up (FXA_ACCESS_DB_PASSWORD,
 // docs/admin/accounts.md#access-managed-elsewhere): the rows of the sign-up allowlist, and the
 // accounts by email through the procedures above; nothing of fxa.*, not ffs.settings. Its grants
@@ -647,8 +680,16 @@ func fxaInit(ctx context.Context) error {
 	}
 
 	if password := env("FXA_ADMIN_DB_PASSWORD", ""); password != "" {
-		if err := fxaUser(ctx, db, "ffs_admin", password, fxaAdminGrants, fxaObsoleteGrants); err != nil {
+		external, err := envSwitch("ADMIN_ACCESS_EXTERNAL")
+		if err != nil {
 			return err
+		}
+		grants, obsolete := fxaAdminGrantsFor(external)
+		if err := fxaUser(ctx, db, "ffs_admin", password, grants, obsolete); err != nil {
+			return err
+		}
+		if external {
+			log.Printf("ffs_admin: SELECT only on ffs.settings and ffs.signup_allowlist (ADMIN_ACCESS_EXTERNAL: the database refuses the admin UI a change of who may sign up)")
 		}
 	}
 	if password := env("FXA_ACCESS_DB_PASSWORD", ""); password != "" {

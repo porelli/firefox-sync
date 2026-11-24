@@ -11,7 +11,17 @@ Reference: the database users the stack uses on each backend, what each one can 
 | tokenserver (`SYNC_TOKENSERVER_DB_USER`, `tokenserver`) | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, CREATE ROUTINE, ALTER ROUTINE, EXECUTE, TRIGGER` on the tokenserver database | creates the tables (the migrations), the init container's `config` table, the `CheckUserLimit` procedure and the `BeforeInsertUser` trigger that enforce `SYNC_MAX_USERS`, the allowlist of `SYNC_ALLOWED_ACCOUNTS` (`sync_allowed_accounts`, `sync_refused_accounts`, the `BeforeInsertAllowedUser` trigger), and the procedures the admin UI calls: `ffs_set_max_users`, `ffs_delete_user_row`, `ffs_drop_admin_tables`, `ffs_allow_account`, `ffs_remove_allowed_account`, `ffs_reject_account`, `ffs_mark_refusal_reported` and `ffs_resync_node_load` |
 | storage (`SYNC_STORAGE_DB_USER`, `syncstorage`) | the same on the storage database, without `TRIGGER` | creates the tables (the migrations; one of them creates, calls and drops a procedure) |
 | `ffs_admin_ui` (`ADMIN_DB_USER`) | `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, LOCK TABLES` on `ffs_admin` only | the admin UI's own data. `DROP` and `LOCK TABLES` are for a restore of its dump |
-| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | `SELECT, EXECUTE` on the tokenserver database, `SELECT, DELETE` on the storage database | reads the Sync data. Changes max users, the allowlist and the nodes' load, and deletes rows of `users`, only through the procedures above. Deletes stored data for purges and resets |
+| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | `SELECT` on the tokenserver database and `EXECUTE` on the procedures above it calls, `SELECT, DELETE` on the storage database | reads the Sync data. Changes max users, the allowlist and the nodes' load, and deletes rows of `users`, only through the procedures above. Deletes stored data for purges and resets |
+
+The `EXECUTE` of `ffs_admin_sync` is given per procedure by the init container at every start, after it makes the procedures again (dropping a procedure drops its grants):
+
+| Procedure | Without `ADMIN_ACCESS_EXTERNAL` | With it ([Access managed elsewhere](../admin/accounts.md#the-database-enforces-it-too)) |
+|---|---|---|
+| `ffs_delete_user_row`, `ffs_drop_admin_tables`, `ffs_resync_node_load` | `EXECUTE` | `EXECUTE` |
+| `ffs_set_max_users`, `ffs_allow_account`, `ffs_remove_allowed_account`, `ffs_reject_account`, `ffs_mark_refusal_reported` | `EXECUTE` | none: revoked, the database refuses them |
+| `CheckUserLimit`, `ffs_check_allowed_account`, any other routine of the database | none | none |
+
+The setup migration's `EXECUTE` on the whole tokenserver database is taken back at the same time. For that, the tokenserver user needs `GRANT OPTION` on its database. The stack's containers give it (`GRANT EXECUTE ON tokenserver.* ... WITH GRANT OPTION`, from [db/mysql/admin-user.sh](/db/mysql/admin-user.sh)). On your own server the administrator gives it, once: see [The database enforces it too](../admin/accounts.md#the-database-enforces-it-too). Without it, `ffs_admin_sync` keeps the `EXECUTE` of the setup migration, the init container says so in its log, and `db-bootstrap` does not count it as drift either way.
 
 Notes:
 
@@ -30,7 +40,7 @@ Notes:
 |---|---|
 | `SYNC_POSTGRES_USER` (`syncserver`) | the owner of the Sync database. It creates the tables, the `post_bso` type, the `check_user_limit()` and `ffs_check_allowed_account()` functions and their triggers, the allowlist's tables, and the `ffs_drop_admin_tables()`, `ffs_allow_account()`, `ffs_remove_allowed_account()`, `ffs_reject_account()`, `ffs_mark_refusal_reported()` and `ffs_resync_node_load()` functions. At every start it gives `ffs_admin_sync` its grants on them. No superuser, `CREATEDB` or `CREATEROLE` |
 | `ffs_admin_ui` (`ADMIN_DB_USER`) | the owner of `ffs_admin`, which is closed to every other role. Nothing on the Sync database (no `CONNECT`) |
-| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | on the Sync database: `CONNECT`, `SELECT` on its tables, `UPDATE (config_value)` of `config` (max users), `DELETE` on `users`, `bsos`, `user_collections`, `batches` and `batch_bsos`, and `EXECUTE` on `ffs_drop_admin_tables()`, the four functions of the allowlist and `ffs_resync_node_load()`. Nothing on `ffs_admin` |
+| `ffs_admin_sync` (`ADMIN_DB_SYNC_USER`) | on the Sync database: `CONNECT`, `SELECT` on its tables, `UPDATE (config_value)` of `config` (max users), `DELETE` on `users`, `bsos`, `user_collections`, `batches` and `batch_bsos`, and `EXECUTE` on `ffs_drop_admin_tables()`, the four functions of the allowlist and `ffs_resync_node_load()`. With `ADMIN_ACCESS_EXTERNAL`, no `UPDATE` of `config` and no `EXECUTE` on the four functions of the allowlist ([The database enforces it too](../admin/accounts.md#the-database-enforces-it-too)). In both modes no `INSERT`, `UPDATE` or `DELETE` on `sync_allowed_accounts` and `sync_refused_accounts`. Nothing on `ffs_admin` |
 
 Running the file:
 
@@ -83,8 +93,8 @@ What the policy user installs at every start ([admin/fxainit.go](/admin/fxainit.
 
 | Object | What it is | `ffs_admin` |
 |---|---|---|
-| `ffs.settings` | the sign-up policy, `FXA_MAX_ACCOUNTS`, and the last policy read from `.env` | `SELECT, INSERT, UPDATE, DELETE` |
-| `ffs.signup_allowlist` | the emails and domains of the allowlist | `SELECT, INSERT, UPDATE, DELETE` |
+| `ffs.settings` | the sign-up policy, `FXA_MAX_ACCOUNTS`, and the last policy read from `.env` | `SELECT, INSERT, UPDATE, DELETE`; `SELECT` with `ADMIN_ACCESS_EXTERNAL` |
+| `ffs.signup_allowlist` | the emails and domains of the allowlist | `SELECT, INSERT, UPDATE, DELETE`; `SELECT` with `ADMIN_ACCESS_EXTERNAL` |
 | `ffs.signup_refusal()`, `ffs.signup_allowed()` | the functions that check an email against the policy and the max accounts | `EXECUTE` |
 | a trigger on `fxa.accounts` | refuses the new account through `ffs.signup_refusal` | none |
 | views `ffs.sessions`, `ffs.devices`, `ffs.emails`, `ffs.account_security`, `ffs.security_events`, `ffs.schema_levels`, `ffs.database_sizes` | what the admin UI lists, without any secret or token id | `SELECT` |
@@ -92,7 +102,7 @@ What the policy user installs at every start ([admin/fxainit.go](/admin/fxainit.
 | procedures `ffs.disable_account_by_email`, `ffs.enable_account_by_email`, `ffs.delete_account_by_email` | the same by email, through the three above, for `ffs_access` | none |
 | `fxa.accounts` | Mozilla's table | `SELECT` on `uid`, `email`, `emailVerified`, `createdAt` and `disabledAt` only |
 
-`ffs_admin` has nothing else: no `UPDATE` or `DELETE` on Mozilla's tables. `fxa-policy` revokes its grants first at every start, so grants from older releases go.
+`ffs_admin` has nothing else: no `UPDATE` or `DELETE` on Mozilla's tables. `fxa-policy` revokes its grants first at every start, so grants from older releases go. On your own server, where it may not revoke them all, it revokes the writes on `ffs.settings` and `ffs.signup_allowlist` one by one when `ADMIN_ACCESS_EXTERNAL` is on.
 
 The procedures call Mozilla's own, and `fxa-policy` checks at every start that these exist: `revokeAccountTokens_1`, `deleteTotpToken_4`, `deleteRecoveryKey_2`, `verifyEmail_9`, `verifyTokensWithMethod_3`, `verifyToken_3`, `deleteAccount_24` and `prune_10`. When one is missing (a newer accounts release renamed it, or the policy user has no `EXECUTE` on `fxa`), it logs a warning naming it, and the accounts keep working. What needs it in the admin UI then answers with an error: disabling and signing out, turning off two-step authentication, removing a recovery key, confirming an email or a sign-in, deleting accounts and pruning ([Sign out and disable](../admin/accounts.md#sign-out-and-disable)).
 
@@ -153,7 +163,7 @@ With one user, the Sync server's user could replace `ffs_set_max_users` with a p
 
 Who creates them:
 
-- **The stack's MariaDB and MySQL containers**: [db/mysql/admin-user.sh](/db/mysql/admin-user.sh) runs before the image's entrypoint. At every start it has the server run its statements with all privileges (`--init-file`): the database, the two users and their grants. That works on the first start and on the volumes of an existing install alike, whose root password is random: no administrator password is needed anywhere. The storage container gets only `ffs_admin_sync` and its `SELECT, DELETE`.
+- **The stack's MariaDB and MySQL containers**: [db/mysql/admin-user.sh](/db/mysql/admin-user.sh) runs before the image's entrypoint. At every start it has the server run its statements with all privileges (`--init-file`): the database, the two users and their grants. On the tokenserver's container also the tokenserver user's `GRANT OPTION`, and the revoke of an older `EXECUTE` of `ffs_admin_sync` on the whole database (the init container gives it per procedure). That works on the first start and on the volumes of an existing install alike, whose root password is random: no administrator password is needed anywhere. The storage container gets only `ffs_admin_sync` and its `SELECT, DELETE`.
 - **The stack's PostgreSQL container**: the init container, as the superuser, as described in [PostgreSQL](#postgresql).
 - **Your own server**: `database-setup.sql`, as its administrator, or the stack itself at every start ([Let the stack apply them](../databases.md#let-the-stack-apply-them)). Without them the start stops in `db-bootstrap`, which names them.
 

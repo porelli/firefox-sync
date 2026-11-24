@@ -657,6 +657,15 @@ mysql_check() {
     read -r -a server <<< "$(db_server "${db}")"
     signs_in "${user}" "${server[0]}" "${server[1]}" || continue
     key="${user} ${server[0]} ${server[1]}"
+    # the admin UI's reader on the tokenserver database: EXECUTE per procedure, which the init
+    # container gives at every start (and takes back on the whole database, with GRANT OPTION
+    # for the tokenserver user; none with ADMIN_ACCESS_EXTERNAL on those that change who may
+    # sync, docs/reference/database-users.md#mariadb-and-mysql): not checked here, the admin UI
+    # checks what it calls
+    if [ "${MAIN}" = sync ] && [ "${user}" = "${ADMIN_DB_SYNC_USER:-ffs_admin_sync}" ] && [ "${db}" = "${SYNC_TOKENSERVER_DB_NAME:-}" ]; then
+      privs=$(printf '%s\n' "${privs}" | tr ',' '\n' | sed -e 's/^ *//; s/ *$//' | grep -vx EXECUTE | paste -sd ',' -)
+      [ -n "${privs}" ] || continue
+    fi
     lack=$(lacks "${grants[${key}]}" "${db}" "${privs}" "${grantable}")
     if [ -n "${lack}" ]; then
       problem_of "${user}" "'${user}' lacks ${lack} on \`${db}\`: ${shown[i]}"

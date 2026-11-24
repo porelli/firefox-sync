@@ -393,6 +393,75 @@ else
   exit 1
 fi
 
+# The admin UI's reader of the Sync data (ADMIN_DB_SYNC_USER, docs/reference/database-users.md#mariadb-and-mysql):
+# EXECUTE per procedure, given here at every start after the procedures were made again
+# (dropping one drops its grants), never on the whole database (that of before is taken back):
+# always those of the Sync data (a row of users deleted: resets that free the slot, deletions,
+# purges; the admin UI's tables of before; the recount of a node's load), and those that change
+# who may sync (max users, the allowlist, the refusals) only without ADMIN_ACCESS_EXTERNAL: with
+# it they are revoked, and the database refuses them. Granting needs GRANT OPTION on this
+# database for this user: the stack's database containers give it (db/mysql/admin-user.sh), on
+# your own server the administrator. Without it nothing changes here: the reader keeps what
+# database-setup.sql gave it (EXECUTE on the whole database), which this says. No reader (an
+# install without ADMIN_DB_PASSWORD, the admin UI connects as this user; ADMIN_DB_SYNC_USER set
+# and empty, as compose sets it then): nothing to give.
+readonly ADMIN_SYNC_ROUTINES=(ffs_delete_user_row ffs_drop_admin_tables ffs_resync_node_load)
+readonly ADMIN_ACCESS_ROUTINES=(ffs_set_max_users ffs_allow_account ffs_remove_allowed_account ffs_reject_account ffs_mark_refusal_reported)
+# admin_grant_sql <external 0|1> <database> <reader>: the statements, one per line, in order:
+# the GRANTs first, then the REVOKEs (a reader of the admin UI never without what it calls)
+admin_grant_sql() {
+  local external=$1 database=$2 reader=$3 r
+  for r in "${ADMIN_SYNC_ROUTINES[@]}"; do
+    echo "GRANT EXECUTE ON PROCEDURE \`${database}\`.\`${r}\` TO '${reader}'@'%';"
+  done
+  for r in "${ADMIN_ACCESS_ROUTINES[@]}"; do
+    if [ "${external}" = 1 ]; then
+      echo "REVOKE EXECUTE ON PROCEDURE \`${database}\`.\`${r}\` FROM '${reader}'@'%';"
+    else
+      echo "GRANT EXECUTE ON PROCEDURE \`${database}\`.\`${r}\` TO '${reader}'@'%';"
+    fi
+  done
+  echo "REVOKE EXECUTE ON \`${database}\`.* FROM '${reader}'@'%';"
+}
+# admin_grants: run them one by one. A REVOKE of what is not granted (ERROR 1141, 1147, 1403) is
+# done; a reader that does not exist (1133 MariaDB, 1410 MySQL) stops it, quietly; anything
+# else (no GRANT OPTION: 1044, 1142, 1370...) stops it with a note, or a warning with
+# ADMIN_ACCESS_EXTERNAL (the database does not enforce it then)
+admin_grants() {
+  local reader=${ADMIN_DB_SYNC_USER-ffs_admin_sync} stmt out error
+  [ -n "${reader}" ] || return 0
+  [[ "${reader}" =~ ^[a-z_][a-z0-9_]{0,31}$ ]] || { echo "✗ ERROR: ADMIN_DB_SYNC_USER is not a user name (a-z, 0-9, _): '${reader}'"; exit 1; }
+  [ "${reader}" != "${MARIADB_USER}" ] || return 0
+  echo ""
+  echo "Granting the admin UI's reader ${reader} its procedures..."
+  while IFS= read -r stmt; do
+    out=$(db "${MARIADB_DATABASE}" -e "${stmt}" 2>&1) && continue
+    error=$(printf '%s\n' "${out}" | grep -m 1 '^ERROR' || printf '%s\n' "${out}" | head -n 1)
+    case "${error}" in
+      "ERROR 1141 "*|"ERROR 1147 "*|"ERROR 1403 "*) [[ "${stmt}" == REVOKE* ]] && continue ;;
+      "ERROR 1133 "*|"ERROR 1410 "*)
+        echo "  no user ${reader} (no ADMIN_DB_PASSWORD, or not created yet): nothing to grant"
+        return 0 ;;
+    esac
+    if [ "${ACCESS_EXTERNAL}" = 1 ]; then
+      echo "WARNING: ADMIN_ACCESS_EXTERNAL is on, but the database does not enforce it: ${MARIADB_USER} cannot set the grants"
+      echo "  of ${reader} (${error}), which may still have EXECUTE on the procedures that change who may sync."
+      echo "  As the administrator of the server: GRANT EXECUTE ON \`${MARIADB_DATABASE}\`.* TO '${MARIADB_USER}'@'%' WITH GRANT OPTION;"
+      echo "  then start this again (docs/admin/accounts.md#the-database-enforces-it-too)"
+    else
+      echo "  ${MARIADB_USER} cannot set the grants of ${reader} (${error}): it keeps EXECUTE on the whole database, as"
+      echo "  database-setup.sql gave it. Per procedure with GRANT OPTION for ${MARIADB_USER} (docs/reference/database-users.md#mariadb-and-mysql)"
+    fi
+    return 0
+  done < <(admin_grant_sql "${ACCESS_EXTERNAL}" "${MARIADB_DATABASE}" "${reader}")
+  if [ "${ACCESS_EXTERNAL}" = 1 ]; then
+    echo "✓ ${reader}: EXECUTE on ${ADMIN_SYNC_ROUTINES[*]}; none on ${ADMIN_ACCESS_ROUTINES[*]} (ADMIN_ACCESS_EXTERNAL: the database refuses them)"
+  else
+    echo "✓ ${reader}: EXECUTE on ${ADMIN_SYNC_ROUTINES[*]} ${ADMIN_ACCESS_ROUTINES[*]}"
+  fi
+}
+admin_grants
+
 # Display current status
 current_users=$(db "${MARIADB_DATABASE}" -sN -e 'SELECT COUNT(DISTINCT email) FROM users;')
 

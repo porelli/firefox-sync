@@ -530,6 +530,13 @@ TPL
     && fail "admin.accessExternal with allowedAccounts rendered"
   grep -qF "admin.accessExternal leaves who may sync to the system that manages access: leave allowedAccounts empty" <<< "${out}" || fail "accessExternal with allowedAccounts: not the message: ${out}"
   check "admin.accessExternal: ADMIN_ACCESS_EXTERNAL=1 to the admin UI, db-init and the policy only when on, refused with allowedAccounts"
+  # db-init with MariaDB and MySQL: the admin UI's reader, to give it its EXECUTE per procedure
+  for values in default-values.yaml mysql-values.yaml; do
+    [[ "$(helm template test-release "${CHART_DIR}" -f "${CHART_DIR}/ci/${values}" | manifests \
+      | jq -r '[.[] | select(.kind == "Deployment") | .spec.template.spec.initContainers // [] | .[] | select(.name == "db-init") | .env[]? | select(.name == "ADMIN_DB_SYNC_USER") | .value] | join(" ")')" == ffs_admin_sync ]] \
+      || fail "${values}: db-init without ADMIN_DB_SYNC_USER"
+  done
+  check "db-init with MariaDB and MySQL: ADMIN_DB_SYNC_USER, the reader it gives its EXECUTE per procedure"
   # a new admin pod when the chart's Secret changes: the checksum is over all of its data,
   # the generated secrets with it (helm template generates new ones on every render), not
   # over the secrets of the values alone, which the pod spec would give away
@@ -1748,6 +1755,13 @@ database_users() {
     kubectl exec -i "${FULL}-tokenserver-db-0" -- sh -c 'MYSQL_PWD=$(cat) "$0" -h 127.0.0.1 -u ffs_admin_ui ffs_admin -e "SELECT 1"' "${client}" \
       <<< "$(secret ADMIN_DB_PASSWORD)" > /dev/null || fail "ffs_admin_ui cannot reach ffs_admin"
     check "admin-user.sh created ffs_admin_ui (ffs_admin) and ffs_admin_sync (both databases)"
+    # its EXECUTE per procedure, from db-init (ADMIN_DB_SYNC_USER), none on the whole database
+    # (admin-user.sh gave the tokenserver's user GRANT OPTION for it)
+    grants=$(kubectl exec -i "${FULL}-tokenserver-db-0" -- sh -c 'MYSQL_PWD=$(cat) "$0" -h 127.0.0.1 -u ffs_admin_sync -sN -e "SHOW GRANTS"' "${client}" \
+      <<< "$(secret ADMIN_DB_PASSWORD)")
+    [[ "$(grep -c 'GRANT EXECUTE ON PROCEDURE' <<< "${grants}") $(grep -cE 'EXECUTE.* ON `[^`]+`\.\*' <<< "${grants}")" == "8 0" ]] \
+      || fail "ffs_admin_sync: not EXECUTE on the 8 procedures of db-init alone: ${grants}"
+    check "ffs_admin_sync: EXECUTE on db-init's procedures, not on the whole tokenserver database"
   fi
 }
 

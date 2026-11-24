@@ -23,6 +23,9 @@ Environment="SYNC_ALLOWED_ACCOUNTS=%SYNC_ALLOWED_ACCOUNTS%"
 # another system decides who may sync (docs/admin/accounts.md#access-managed-elsewhere)
 Environment="ADMIN_ACCESS_EXTERNAL=%ADMIN_ACCESS_EXTERNAL%"
 Environment=DOMAIN=%SYNC_PUBLIC_URL%
+# the admin UI's reader: EXECUTE on the procedures it calls, given at every start (none on
+# those that change who may sync with ADMIN_ACCESS_EXTERNAL)
+Environment=ADMIN_DB_SYNC_USER=%ADMIN_DB_SYNC_USER%
 
 AutoUpdate=registry
 

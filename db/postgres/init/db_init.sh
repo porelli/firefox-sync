@@ -418,8 +418,13 @@ if [ -n "${ADMIN_DB_PASSWORD:-}" ]; then
   if role_exists "${ADMIN_SYNC_USER}"; then
     sed -e "s|@ADMIN_SYNC_USER@|${ADMIN_SYNC_USER}|g" -e "s|@POSTGRES_DATABASE@|${POSTGRES_DATABASE}|g" \
         /scripts/admin_grants.sql > /tmp/admin_grants.sql
-    if admin_psql -v ON_ERROR_STOP=1 -q --single-transaction -f /tmp/admin_grants.sql; then
-      echo "✓ Admin UI grants on the Sync tables (${ADMIN_SYNC_USER})"
+    # (ADMIN_ACCESS_EXTERNAL: none on what changes who may sync, the database refuses it)
+    if admin_psql -v ON_ERROR_STOP=1 -v ffs_external="$([ "${ACCESS_EXTERNAL}" = 1 ] && echo on || echo off)" -q --single-transaction -f /tmp/admin_grants.sql; then
+      if [ "${ACCESS_EXTERNAL}" = 1 ]; then
+        echo "✓ Admin UI grants on the Sync tables (${ADMIN_SYNC_USER}); none on max users and the allowlist's functions (ADMIN_ACCESS_EXTERNAL: the database refuses them)"
+      else
+        echo "✓ Admin UI grants on the Sync tables (${ADMIN_SYNC_USER})"
+      fi
     else
       echo "✗ ERROR: Failed to grant the admin UI's role ${ADMIN_SYNC_USER} its access to the Sync tables"
       exit 1

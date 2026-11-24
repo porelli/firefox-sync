@@ -323,9 +323,14 @@ for ENGINE in "$@"; do
   else
     # a grant of the admin UI's reader revoked by hand: a warning, the start goes on (the admin
     # UI's own users alone), the record says it is the admin UI's
+    # (its EXECUTE on the tokenserver database is not checked: per procedure, the init
+    # container's, which takes the one of the whole database back where it may)
     admin -e "REVOKE EXECUTE ON tokenserver.* FROM 'ffs_admin_sync'@'%'" < /dev/null
     db_setup sync
-    check "$? $(saidF "'ffs_admin_sync' lacks EXECUTE on \`tokenserver\`: GRANT SELECT, EXECUTE ON \`tokenserver\`.* TO 'ffs_admin_sync'@'%';") $(said "WARNING: the Sync databases on .*: the admin UI's users or database lack") $(state)" "0 1 1 admin" \
+    check "$? $(said "lacks") $(state)" "0 0 ok" "${ENGINE}: the reader's EXECUTE on the whole tokenserver database revoked: no drift (per procedure, the init container's)"
+    admin -e "REVOKE SELECT ON tokenserver.* FROM 'ffs_admin_sync'@'%'" < /dev/null
+    db_setup sync
+    check "$? $(saidF "'ffs_admin_sync' lacks SELECT on \`tokenserver\`: GRANT SELECT, EXECUTE ON \`tokenserver\`.* TO 'ffs_admin_sync'@'%';") $(said "WARNING: the Sync databases on .*: the admin UI's users or database lack") $(state)" "0 1 1 admin" \
       "${ENGINE}: the admin UI's reader lacks a grant: a warning naming its GRANT, the start goes on, the record says admin"
     # one of the Sync server's user: the check stops naming its GRANT, the record says drift
     admin -e "REVOKE REFERENCES ON tokenserver.* FROM 'tokenserver'@'%'" < /dev/null

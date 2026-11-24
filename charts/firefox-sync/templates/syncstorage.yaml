@@ -269,6 +269,10 @@ spec:
             {{- include "firefox-sync.secretEnv" (dict "root" . "name" "MARIADB_PASSWORD" "key" "TOKENSERVER_DB_PASSWORD") | nindent 12 }}
             - name: MARIADB_TLS_VERIFY
               value: {{ include "firefox-sync.tlsVerify" . | quote }}
+            # the admin UI's reader: EXECUTE on the procedures it calls, given at every start
+            # (none on those that change who may sync with admin.accessExternal)
+            - name: ADMIN_DB_SYNC_USER
+              value: {{ include "firefox-sync.adminDbSyncUser" . }}
             {{- end }}
             - name: MAX_USERS
               value: {{ include "firefox-sync.maxUsers" . | quote }}

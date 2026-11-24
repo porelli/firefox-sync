@@ -329,6 +329,33 @@ Every form and confirm page of those refuses the change in its handler, whatever
 
 The rest works as usual: health and monitoring, storage and purge, alerts, backups and the event log, the account pages, notes, signing out and disabling an account, and the reset and deletion of Sync data.
 
+### The database enforces it too
+
+The admin UI's handlers refuse the changes, and its database users lack the grants for them. At every start the init container and `fxa-policy` take those grants back, and give them again once the mode is off. The admin UI's users then cannot change who may use the server, whether through the admin UI or with a database client:
+
+| Engine | `ADMIN_DB_SYNC_USER` (`ffs_admin_sync`) with the mode on | without it |
+|---|---|---|
+| MariaDB, MySQL | `SELECT`; `EXECUTE` on `ffs_delete_user_row`, `ffs_drop_admin_tables` and `ffs_resync_node_load` only | also `EXECUTE` on `ffs_set_max_users`, `ffs_allow_account`, `ffs_remove_allowed_account`, `ffs_reject_account` and `ffs_mark_refusal_reported` |
+| PostgreSQL | `SELECT`; `DELETE` on `users` and the storage tables; `EXECUTE` on `ffs_drop_admin_tables()` and `ffs_resync_node_load()` only | also `UPDATE (config_value)` of `config` (max users) and `EXECUTE` on `ffs_allow_account()`, `ffs_remove_allowed_account()`, `ffs_reject_account()` and `ffs_mark_refusal_reported()` |
+
+In both modes, `ADMIN_DB_SYNC_USER` has no `INSERT`, `UPDATE` or `DELETE` on `sync_allowed_accounts` or `sync_refused_accounts`, and no `EXECUTE` on the whole tokenserver database. On PostgreSQL, `PUBLIC` has no `EXECUTE` on these functions either. Calling one of them, or an `INSERT` into the list, fails with the database's permission error. The admin UI never calls them with the mode on. Everything else keeps working: monitoring, storage and purges, **Reset the Sync data** with its slot freed, **Delete**, notes, the event log, and reading the lists.
+
+With [self-hosted accounts](../accounts.md), `ffs_admin` gets only `SELECT` on `ffs.settings` (the sign-up policy, max accounts) and on `ffs.signup_allowlist`. Without the mode it gets `SELECT, INSERT, UPDATE, DELETE` on both. Its procedures for an account (disable, enable, sign out, delete) stay in both modes. `ffs_access` keeps exactly its own grants.
+
+The setup check **Access managed elsewhere: database grants** reads what the admin UI's users hold. It warns when they can still change who may use the server with the mode on. It also warns, in either mode, when they lack what the admin UI calls. It is shown whenever the mode is on, and without it only when something is missing.
+
+Where it needs more from you:
+
+- **Your own MariaDB or MySQL server**: the init container sets these grants as the tokenserver's user, and that user needs `GRANT OPTION` on its database for it. The stack's database containers give it. On your own server the setup migrations give `ffs_admin_sync` `EXECUTE` on the whole tokenserver database, and the init container cannot narrow that by itself. It says so in its log, with the mode on as a warning, and so does the setup check. Run this once, as the server's administrator, with your names:
+
+  ```sql
+  GRANT EXECUTE ON `tokenserver`.* TO 'tokenserver'@'%' WITH GRANT OPTION;
+  ```
+
+  The next start of the init container then gives `EXECUTE` per procedure and takes back the database-wide grant. Running `database-setup.sql` again gives that grant back. The next start of the init container takes it back again. With `GRANT OPTION`, the tokenserver's user can grant what it holds on its own database to other users of the server. That is what owning the tables gives on PostgreSQL.
+- **PostgreSQL**: nothing more. The init container sets the grants as the owner of the Sync tables, on the stack's container and on your own server alike.
+- **An install without `ADMIN_DB_PASSWORD`**: the admin UI connects as the Sync server's own user, which the database cannot tell apart from the Sync server. Only the admin UI refuses the changes there, and the setup check says so. Give the admin UI users of its own: [The admin UI's own database](../upgrading.md#the-admin-uis-own-database).
+
 ### The objects you own
 
 On the tokenserver database:
@@ -344,6 +371,7 @@ With the mode on, the init container:
 - writes no row of `sync_allowed_accounts`, and deletes none;
 - keeps its own invite-only trigger off: it drops `before_insert_allowed_user` (`BeforeInsertAllowedUser`) if a start without the mode had made it, and never makes it;
 - writes `allowed_accounts = external` in `config`. The admin UI's setup check **Access managed elsewhere** warns when only one of the two has the mode.
+- takes back the admin UI's grants on max users and the allowlist: [The database enforces it too](#the-database-enforces-it-too).
 
 Max users still applies, as `SYNC_MAX_USERS` says: set `SYNC_MAX_USERS=unlimited` if your system is the only limit. The init container still keeps one node and counts its load again at every start, as without the mode.
 
@@ -374,7 +402,7 @@ Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their de
 - A backup holds the `ffs` database, with the rows and the procedures, not the users. After a restore, the next start of `fxa-policy` creates `ffs_access` again.
 - On your own accounts server the policy user cannot create users: create `ffs_access` yourself (`CREATE USER 'ffs_access'@'%' IDENTIFIED BY '...'`), and `fxa-policy` gives it the grants.
 
-With the mode on, `fxa-policy` sets `FXA_SIGNUPS` at every start (`allowlist`, for this) and leaves the rows of the sign-up allowlist alone. It refuses a `FXA_SIGNUP_ALLOWLIST`, which would be a second list.
+With the mode on, `fxa-policy` sets `FXA_SIGNUPS` at every start (`allowlist`, for this) and leaves the rows of the sign-up allowlist alone. It refuses a `FXA_SIGNUP_ALLOWLIST`, which would be a second list. It gives the admin UI's `ffs_admin` only `SELECT` on `ffs.settings` and `ffs.signup_allowlist` ([The database enforces it too](#the-database-enforces-it-too)).
 
 An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`. The access tokens Firefox already holds stay valid until they expire (`FXA_ACCESS_TOKEN_LIFETIME`): the database cannot reach their copies in Redis, which Disable in the admin UI also removes. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
 

@@ -709,15 +709,16 @@ if [ -n "${EXTDB}" ]; then
   # drift: what the admin UI's users have, changed by hand, seen by the admin UI's own check:
   # its metric, its event (an alert); then put back
   if [ "${BACKEND}" = mysql ]; then
-    extdb_admin -e "REVOKE EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* FROM '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
+    # (not its EXECUTE on the tokenserver database: per procedure, the init container's)
+    extdb_admin -e "REVOKE DELETE ON \`${SYNC_STORAGE_DB_NAME}\`.* FROM '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
   else
     extdb_admin -c "GRANT CONNECT ON DATABASE ${ADMIN_DB_NAME} TO PUBLIC" < /dev/null > /dev/null
   fi
   check "$(metrics_show 'ffs_db_setup_drift{scope="sync"} 1')" yes "a $([ "${BACKEND}" = mysql ] && echo "grant revoked" || echo "CONNECT given to PUBLIC") by hand: ffs_db_setup_drift 1"
-  check "$([ "$(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'attention' AND detail LIKE 'The setup migrations of the Sync database server: something they give is missing: %$([ "${BACKEND}" = mysql ] && echo "lacks EXECUTE" || echo "every role may connect")%';")" -ge 1 ] && echo yes)" yes \
+  check "$([ "$(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'attention' AND detail LIKE 'The setup migrations of the Sync database server: something they give is missing: %$([ "${BACKEND}" = mysql ] && echo "lacks DELETE" || echo "every role may connect")%';")" -ge 1 ] && echo yes)" yes \
     "and its event (an alert): the setup migrations of the Sync database server, something missing"
   if [ "${BACKEND}" = mysql ]; then
-    extdb_admin -e "GRANT SELECT, EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* TO '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
+    extdb_admin -e "GRANT SELECT, DELETE ON \`${SYNC_STORAGE_DB_NAME}\`.* TO '${ADMIN_DB_SYNC_USER}'@'%';" < /dev/null
   else
     extdb_admin -c "REVOKE ALL ON DATABASE ${ADMIN_DB_NAME} FROM PUBLIC" < /dev/null > /dev/null
   fi
@@ -820,6 +821,9 @@ if [ "${BACKEND}" = mysql ]; then
   sql "DROP PROCEDURE ffs_set_max_users;" > /dev/null
   sql "CREATE PROCEDURE ffs_set_max_users(IN v VARCHAR(255)) SQL SECURITY INVOKER DELETE FROM ${ADMIN_DB_NAME}.ffs_events WHERE kind = 'admin';"
   check "$?" 0 "the tokenserver user replaces ffs_set_max_users with its own, SQL SECURITY INVOKER"
+  # (dropping it dropped the reader's EXECUTE on it: given again, as the init container would,
+  # where the tokenserver user may grant; your own server's reader has it on the whole database)
+  sql "GRANT EXECUTE ON PROCEDURE \`${SYNC_TOKENSERVER_DB_NAME}\`.\`ffs_set_max_users\` TO '${ADMIN_DB_SYNC_USER}'@'%';" > /dev/null 2>&1
   check "$(denied "$(admin_sync_sql "CALL ffs_set_max_users('1');" 2>&1)") $(admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'admin';")" "denied ${AUDIT}" \
     "a procedure of the Sync server's user, run by the admin UI, cannot delete the audit trail"
   check "$(init_again) $(sql "SELECT security_type FROM information_schema.routines WHERE routine_schema = DATABASE() AND routine_name = 'ffs_set_max_users';")" "0 DEFINER" \
@@ -1486,6 +1490,42 @@ redeploy_allowed ""
 MAX_BEFORE=$(max_users)
 sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users';" > /dev/null
 check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 external 1" "ADMIN_ACCESS_EXTERNAL=1: recorded by the init container, its own invite-only trigger off"
+# the database enforces it too (docs/admin/accounts.md#the-database-enforces-it-too): as the
+# admin UI's reader (ADMIN_DB_SYNC_USER), what changes who may sync. verdict: allowed, refused
+# (the database's permission error), or error(<its first line>)
+verdict() { local out; if out=$("$@" 2>&1); then echo allowed; elif grep -qiE 'denied|permission' <<< "${out}"; then echo refused; else echo "error($(head -n 1 <<< "${out}" | tr ' ' _))"; fi; }
+EXT_E2E_UID=$(printf '4d%.0s' $(seq 16))
+# reader_access: ffs_allow_account, an INSERT into sync_allowed_accounts (never the reader's:
+# only through the function), and max users (ffs_set_max_users; PostgreSQL: UPDATE of config),
+# set to what it is; the row left by an allowed call taken away again
+reader_access() {
+  local call=CALL max
+  max="CALL ffs_set_max_users('$(max_users)');"
+  if [ "${BACKEND}" = postgres ]; then call=SELECT; max="UPDATE config SET config_value = config_value WHERE config_key = 'max_users';"; fi
+  echo "$(verdict admin_sync_sql "${call} ffs_allow_account('${EXT_E2E_UID}', 'e2e', 'e2e');")" \
+    "$(verdict admin_sync_sql "INSERT INTO sync_allowed_accounts (uid, note, added_at, added_by) VALUES ('${EXT_E2E_UID}', '', 1, 'e2e');")" \
+    "$(verdict admin_sync_sql "${max}")"
+  sql "DELETE FROM sync_allowed_accounts WHERE uid = '${EXT_E2E_UID}';" > /dev/null
+}
+init_says() { dc logs --no-log-prefix tokenserver_db_init 2>&1 | grep -c "$1"; }
+if [ -n "${EXTDB}" ] && [ "${BACKEND}" = mysql ]; then
+  # your own server, its SQL alone: the tokenserver's user cannot grant, the reader keeps its
+  # EXECUTE on the whole database; the init container and the admin UI say so. Then the grant
+  # the docs give, and the next start of the init container takes it back
+  check "$(reader_access) $(init_says 'ADMIN_ACCESS_EXTERNAL is on, but the database does not enforce it')" "allowed refused allowed 1" \
+    "your own MySQL server without GRANT OPTION for ${SYNC_TOKENSERVER_DB_USER}: not enforced by the database, the init container warns"
+  extdb_admin -e "GRANT EXECUTE ON \`${SYNC_TOKENSERVER_DB_NAME}\`.* TO '${SYNC_TOKENSERVER_DB_USER}'@'%' WITH GRANT OPTION;" < /dev/null
+  check "$(rerun_init) $(init_says 'the database refuses them')" "0 1" "the grant of the docs given: the init container sets the reader's grants"
+fi
+check "$(reader_access) $(init_says 'the database refuses them')" "refused refused refused 1" \
+  "ADMIN_ACCESS_EXTERNAL=1: ${ADMIN_DB_SYNC_USER} cannot run ffs_allow_account, INSERT into sync_allowed_accounts nor change max users: the database refuses it"
+if [ "${BACKEND}" = mysql ]; then
+  check "$(verdict admin_sync_sql "CALL ffs_delete_user_row(0);") $(verdict admin_sync_sql "CALL ffs_resync_node_load(NULL);")" "allowed allowed" \
+    "and still runs what the Sync data needs (a row of users deleted, the recount of the load)"
+else
+  check "$(verdict admin_sync_sql "DELETE FROM users WHERE uid = 0;") $(verdict admin_sync_sql "SELECT ffs_resync_node_load(NULL);")" "allowed allowed" \
+    "and still does what the Sync data needs (a row of users deleted, the recount of the load)"
+fi
 admin_pytest "/tests/test_sync_allowlist.py -k external_setup"
 check "$?" 0 "the other system's rows in sync_allowed_accounts and its stricter trigger"
 check "$(rerun_init) $(allowed_on) $(users_triggers) $(allowed_list | grep -oE "(1a){16}|(3c){16}" | wc -l)" "0 external 2 2" "a restart of the init container keeps the other system's rows and trigger"
@@ -1502,6 +1542,8 @@ set_env ADMIN_ACCESS_EXTERNAL ""
 redeploy_allowed ""
 sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_users';" > /dev/null
 check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 off 1" "ADMIN_ACCESS_EXTERNAL off again: allowed_accounts off"
+check "$(reader_access)" "allowed refused allowed" \
+  "ADMIN_ACCESS_EXTERNAL off again: ${ADMIN_DB_SYNC_USER} runs ffs_allow_account and changes max users again (an INSERT into the list still only through the function)"
 # (the admin UI recreated: settled, its checks seeing the Sync server, before the next phase)
 check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1')" "200 healthy yes" "/__heartbeat__ and the admin UI after access managed elsewhere"
 
