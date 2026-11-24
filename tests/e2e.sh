@@ -1425,7 +1425,7 @@ no_pending=0
 [ "${refused_engine:-}" = InnoDB ] && no_pending=1
 check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'accounts refused by SYNC_ALLOWED_ACCOUNTS are refused but not listed')" "${no_pending}" \
   "the init container warns when the refusals cannot be recorded (here: ${no_pending})"
-admin_pytest "/tests/test_sync_allowlist.py -k 'not read_only and not sync_while_off'"
+admin_pytest "/tests/test_sync_allowlist.py -k 'not read_only and not sync_while_off and not external'"
 check "$?" 0 "invite-only Sync tests (listed, refused and pending, approved, keys change, from before, reject, allow and remove, max users, the node's load)"
 # initial: kept what the page changed
 rerun_init > /dev/null
@@ -1442,7 +1442,7 @@ check "$(node_load) $(rerun_init) $(node_load)" "3 0 0" "the init container coun
 # a plain list: set on every start, the others go; read-only in the admin UI
 redeploy_allowed "${LISTED_UID}"
 check "${INIT_CODE} $(allowed_on) $(allowed_list)" "0 on ${LISTED_UID}" "SYNC_ALLOWED_ACCOUNTS=<uid>: exactly that list, set on every start"
-admin_pytest "/tests/test_sync_allowlist.py -k read_only"
+admin_pytest "/tests/test_sync_allowlist.py -k 'read_only and not external'"
 check "$?" 0 "admin UI: the allowlist read-only with a plain list, Reject works"
 echo "== SYNC_ALLOWED_ACCOUNTS not valid: the init container fails, nothing changes"
 for bad in "fixed:" "xyz" "${LISTED_UID},12345" "initial:${LISTED_UID}0" "admin,${LISTED_UID}"; do
@@ -1488,12 +1488,12 @@ sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users'
 check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 external 1" "ADMIN_ACCESS_EXTERNAL=1: recorded by the init container, its own invite-only trigger off"
 admin_pytest "/tests/test_sync_allowlist.py -k external_setup"
 check "$?" 0 "the other system's rows in sync_allowed_accounts and its stricter trigger"
-check "$(rerun_init) $(allowed_on) $(users_triggers) $(allowed_list | wc -w)" "0 external 2 2" "a restart of the init container keeps the other system's rows and trigger"
+check "$(rerun_init) $(allowed_on) $(users_triggers) $(allowed_list | grep -oE "(1a){16}|(3c){16}" | wc -l)" "0 external 2 2" "a restart of the init container keeps the other system's rows and trigger"
 set_env SYNC_ALLOWED_ACCOUNTS admin
 check "$(rerun_init)" 1 "the init container refuses a SYNC_ALLOWED_ACCOUNTS with ADMIN_ACCESS_EXTERNAL"
 check "$(dc logs tokenserver_db_init 2>&1 | grep -c 'ADMIN_ACCESS_EXTERNAL is on, so who may sync is decided outside firefox-sync: leave SYNC_ALLOWED_ACCOUNTS empty')" 1 "the init container says why"
 set_env SYNC_ALLOWED_ACCOUNTS ""
-check "$(rerun_init) $(allowed_list | wc -w)" "0 2" "and with it empty again, the rows as they were"
+check "$(rerun_init) $(allowed_list | grep -oE "(1a){16}|(3c){16}" | wc -l)" "0 2" "and with it empty again, the rows as they were"
 admin_pytest "/tests/test_sync_allowlist.py -k 'external and not setup and not cleanup'"
 check "$?" 0 "the listed account syncs, the other refused by the other system's trigger; the admin UI read-only; reset and delete of Sync data work and leave the list alone"
 admin_pytest "/tests/test_sync_allowlist.py -k external_cleanup"

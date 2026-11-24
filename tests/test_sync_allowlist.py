@@ -1,7 +1,8 @@
 """Invite-only Sync (SYNC_ALLOWED_ACCOUNTS, docs/limits.md#sync_allowed_accounts) through the
 tokenserver, with the mock FxA (whose accounts have the uids chosen here), and the admin UI.
 
-Runs in the syncstorage-rs image like test_admin_sync.py, see tests/e2e.sh: the stack has
+Runs in the syncstorage-rs image like test_admin_sync.py, see tests/e2e.sh (the external tests at the end, by
+their own -k): the stack has
 SYNC_ALLOWED_ACCOUNTS=initial:<LISTED> and max users unlimited. tests/e2e.sh runs -k
 sync_while_off first, with the allowlist off (an account from before it), -k read_only
 at the end with a plain list (read-only in the admin UI), and the rest between them.
@@ -343,7 +344,7 @@ def test_external_sync_and_refusal(db):
     assert rows(db, EXT_UNLISTED) == 0 and refused(db, EXT_UNLISTED) is None
 
 
-def test_external_admin_read_only(db):
+def test_external_admin_page(db):
     admin = Admin()
     page = admin.get("/")
     assert '<h2 id="sync-allowlist-title">Who may sync</h2>' in page, page[:5000]
