@@ -912,7 +912,9 @@ fxa_base_parity() {
   # to it are not a change of the chart's objects; the same for PostgreSQL's keep-major.sh, a
   # copy of db/postgres/keep-major.sh, and the checksum of its ConfigMap, db-scripts; and the
   # bundled MySQL's --myisam-recover-options=BACKUP,FORCE, since 0.2.0: the refusals of allowedAccounts
-  # are MyISAM, checked and repaired after a crash)
+  # are MyISAM, checked and repaired after a crash; and db/mysql/admin-user.sh's text, a copy
+  # tests/helm_parity.py checks, with db-init's ADMIN_DB_SYNC_USER, since 0.2.0: the admin UI's
+  # reader gets EXECUTE per procedure there, docs/admin/accounts.md#the-database-enforces-it-too)
   mask='walk(if type == "string" and test("^MYSQL_PWD=[$][{]MYSQL_PASSWORD[}] mysqladmin ping |^mysqladmin ping .* -p\"[$][{]MYSQL_PASSWORD[}]\" ") then "mysqladmin ping (masked)"
     elif type == "object" then
       (if has("helm.sh/chart") then .["helm.sh/chart"] = "masked" else . end)
@@ -922,6 +924,8 @@ fxa_base_parity() {
       | (if .kind? == "Secret" and has("data") then .data = (.data | map_values("masked")) else . end)
       | (if .kind? == "ConfigMap" and (.data? | type) == "object" and (.data | has("backup.sh")) then .data["backup.sh"] = "masked" else . end)
       | (if .kind? == "ConfigMap" and (.data? | type) == "object" and (.data | has("keep-major.sh")) then .data["keep-major.sh"] = "masked" else . end)
+      | (if .kind? == "ConfigMap" and (.data? | type) == "object" and (.data | has("admin-user.sh")) then .data["admin-user.sh"] = "masked" else . end)
+      | (if .name? == "db-init" and (.env? | type) == "array" then .env = [.env[] | select(.name != "ADMIN_DB_SYNC_USER")] else . end)
       | (if has("checksum/db-scripts") then .["checksum/db-scripts"] = "masked" else . end)
     elif type == "array" then map(select(. != "--myisam-recover-options=BACKUP,FORCE"))
     else . end)'
@@ -938,7 +942,7 @@ fxa_base_parity() {
   done
   rm -rf "${base}"
   [[ -z "${diffs}" ]] || fail "with the accounts off, not what chart 0.1.0 renders:${diffs}"
-  check "accounts off: the same objects as chart 0.1.0 (${PARITY_BASE}) for every ci/*.yaml it had (but helm.sh/chart, app.kubernetes.io/version (set when published), ADMIN_K8S_CHART_VERSION, the Secret's values and their checksum, backup.sh's and PostgreSQL's keep-major.sh's text and the latter's checksum, MySQL's --myisam-recover-options=BACKUP,FORCE)"
+  check "accounts off: the same objects as chart 0.1.0 (${PARITY_BASE}) for every ci/*.yaml it had (but helm.sh/chart, app.kubernetes.io/version (set when published), ADMIN_K8S_CHART_VERSION, the Secret's values and their checksum, backup.sh's, PostgreSQL's keep-major.sh's and admin-user.sh's text and their checksum, db-init's ADMIN_DB_SYNC_USER, MySQL's --myisam-recover-options=BACKUP,FORCE)"
 }
 
 # e2e <mysql|mariadb>: the chart with the accounts (their database on that backend, the Sync
