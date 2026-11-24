@@ -1502,7 +1502,8 @@ set_env ADMIN_ACCESS_EXTERNAL ""
 redeploy_allowed ""
 sql "UPDATE config SET config_value = '${MAX_BEFORE}' WHERE config_key = 'max_users';" > /dev/null
 check "${INIT_CODE} $(allowed_on) $(users_triggers)" "0 off 1" "ADMIN_ACCESS_EXTERNAL off again: allowed_accounts off"
-check "$(hb) $(admin_healthy)" "200 healthy" "/__heartbeat__ and the admin UI after access managed elsewhere"
+# (the admin UI recreated: settled, its checks seeing the Sync server, before the next phase)
+check "$(hb) $(admin_healthy) $(metrics_show 'ffs_up{component="Sync server"} 1')" "200 healthy yes" "/__heartbeat__ and the admin UI after access managed elsewhere"
 
 echo "== admin UI sees the Sync server go down and back up"
 health_events() { admin_sql "SELECT COUNT(*) FROM ffs_events WHERE kind = 'health' AND detail LIKE '$1';"; }
