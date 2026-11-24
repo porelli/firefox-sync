@@ -134,7 +134,8 @@ fxa_lint() {
   on=$(secret_data -f "${fxa}" --set fxa.adminClientSecret="$(printf 'b%.0s' $(seq 1 64))")
   off=$(secret_data -f "${fxa}" --set fxa.enabled=false)
   added=$(jq -r --argjson off "${off}" 'keys - ($off | keys) | join(" ")' <<< "${on}")
-  [[ "${added}" == "ADMIN_FXA_CLIENT_SECRET ${generated}" ]] || fail "fxa.enabled adds to the Secret: ${added}"
+  # (and the optional ones of the values: ADMIN_FXA_CLIENT_SECRET, FXA_ACCESS_DB_PASSWORD)
+  [[ "${added}" == "$(printf '%s\n' ADMIN_FXA_CLIENT_SECRET FXA_ACCESS_DB_PASSWORD ${generated} | LC_ALL=C sort | paste -sd' ' -)" ]] || fail "fxa.enabled adds to the Secret: ${added}"
   jq -e 'has("ADMIN_FXA_CLIENT_SECRET") | not' <<< "$(secret_data -f "${fxa}" --set fxa.enabled=false --set fxa.adminClientSecret="$(printf 'b%.0s' $(seq 1 64))")" > /dev/null \
     || fail "accounts off: ADMIN_FXA_CLIENT_SECRET in the Secret"
   grep -qF '{{- $_ := unset $data "ADMIN_FXA_CLIENT_SECRET" }}' "${CHART_DIR}/templates/_helpers.tpl" \
