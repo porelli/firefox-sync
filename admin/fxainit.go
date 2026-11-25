@@ -482,11 +482,15 @@ var externalPolicySQL = map[string]string{
 	BEGIN
 		DECLARE v_found INT DEFAULT 0;
 		DECLARE v_email VARCHAR(255) DEFAULT NULL;
+		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
 		SELECT COUNT(*), MAX(normalizedEmail) INTO v_found, v_email FROM fxa.accounts WHERE uid = p_uid;
 		IF v_found = 0 THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
-		IF ffs.signup_refusal(v_email) <=> 'policy' THEN
+		-- a variable, as in the trigger: the function's value and a literal may have two
+		-- collations (the database's, the connection's), which MySQL refuses to compare
+		SET v_refusal = ffs.signup_refusal(v_email);
+		IF v_refusal <=> 'policy' THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errAccessElsewhere + `';
 		END IF;
 		UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid;

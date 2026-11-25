@@ -346,8 +346,8 @@ func TestExternalProcedures(t *testing.T) {
 		t.Errorf("external delete: %s", del)
 	}
 	enable := policyStmt(t, ext, "ffs.enable_account")
-	r, u := strings.Index(enable, "IF ffs.signup_refusal(v_email) <=> 'policy' THEN"), strings.Index(enable, "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid")
-	if r < 0 || u < r || strings.Contains(enable, "'full'") || !strings.Contains(enable, "SQL SECURITY DEFINER") ||
+	r, u := strings.Index(enable, "IF v_refusal <=> 'policy' THEN"), strings.Index(enable, "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid")
+	if r < 0 || u < r || !strings.Contains(enable, "SET v_refusal = ffs.signup_refusal(v_email);") || strings.Contains(enable, "'full'") || !strings.Contains(enable, "SQL SECURITY DEFINER") ||
 		!strings.Contains(enable, "MESSAGE_TEXT = '"+errAccessElsewhere+"'") || !strings.Contains(enable, "MESSAGE_TEXT = 'no such account'") {
 		t.Errorf("external enable: %s", enable)
 	}
