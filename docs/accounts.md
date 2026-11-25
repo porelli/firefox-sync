@@ -63,6 +63,25 @@ With the Helm chart there is no `prepare_environment.sh`: the values do it, see 
 
 Every setting: [Settings](reference/settings.md#accounts).
 
+## Email
+
+The accounts send their codes, password resets and notices through the SMTP server of `FXA_SMTP_*` (with Helm, `smtp.*`). The admin UI uses the same server for its alerts and invitations, see [Alerts](admin/alerts.md#by-email).
+
+- **Port 465**: `FXA_SMTP_SECURE=true`, TLS from the start. Nothing else to set.
+- **Port 587**: `FXA_SMTP_SECURE=false`, and the connection turns to TLS with STARTTLS. By itself STARTTLS is optional: anyone on the way to the server can remove it from the server's answer, and then get `FXA_SMTP_PASS` and the emails in clear. `FXA_SMTP_REQUIRE_TLS` decides:
+
+| `FXA_SMTP_REQUIRE_TLS` (Helm `smtp.requireTLS`) | The accounts |
+|---|---|
+| empty (the default) | require STARTTLS when they send a password: `FXA_SMTP_USER` and `FXA_SMTP_PASS` set, `FXA_SMTP_SECURE=false`, `ADMIN_SMTP_INSECURE_AUTH` not on. Otherwise as `false` |
+| `1`, `true` or `yes` | always STARTTLS before the password and the email. A server that offers no STARTTLS, or one that fails it, gets nothing: the email is not sent |
+| `0`, `false` or `no` | STARTTLS only when the server offers it, else the password and the email in clear |
+
+The empty default is the admin UI's rule: it sends the password over TLS only, unless `ADMIN_SMTP_INSECURE_AUTH` is on. With a relay that has no TLS and no password (on the host, on port 25, no `FXA_SMTP_USER`) nothing changes. A relay that takes a password and has no TLS: set `ADMIN_SMTP_INSECURE_AUTH=1` (both send it in clear then) or `FXA_SMTP_REQUIRE_TLS=false` (the accounts only), a relay you trust only.
+
+When it is on, the start of `fxa-auth` logs `SMTP: STARTTLS required`, and its log has `Warning: configuration param 'smtp.requireTLS' not declared in the schema`. That is expected: Mozilla's auth server uses the setting, but does not list it yet. The stack writes it into the auth server's config file (`config/fxa/oauth-clients.js`), so it works with every accounts image, Mozilla's too. A wrong value stops `fxa-auth` at its start with the values it takes.
+
+If the emails stop after you turn it on, the server does not offer STARTTLS: the auth server's log has `Error upgrading connection with STARTTLS`, and the admin UI's Email (SMTP) row is down too ([Alerts](admin/alerts.md#by-email)).
+
 ## MySQL or MariaDB
 
 Mozilla runs and supports its accounts on MySQL only, so `fxa-db` is MySQL by default. The stack can run the accounts on MariaDB instead, if you would rather run only MariaDB. Every release is tested here on both, with the same tests: sign-up, Sync, the sign-up policy, the admin UI and a real Firefox. Which versions: [Supported versions](databases.md#supported-versions).

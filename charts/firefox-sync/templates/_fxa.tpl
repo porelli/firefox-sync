@@ -414,11 +414,15 @@ and database.external.bootstrap.user, SYNC_DB_BOOTSTRAP_PASSWORD. Accepts a dict
 
 {{/*
 smtp.*, compose's FXA_SMTP_* of the accounts and the admin UI, as compose's strings (JSON):
-host, port, user, secure, sender (the password is FXA_SMTP_PASS of the Secret)
+host, port, user, secure, sender (the password is FXA_SMTP_PASS of the Secret), requireTLS
+and insecureAuth (unset: empty; a false stays "false", not empty as with default)
 */}}
 {{- define "firefox-sync.smtp" -}}
 {{- $s := merge (deepCopy (.Values.smtp | default dict)) (dict "host" "" "port" 587 "user" "" "secure" false "sender" "") }}
-{{- toJson (dict "host" ($s.host | default "" | toString) "port" (include "firefox-sync.number" $s.port) "user" ($s.user | default "" | toString) "secure" ($s.secure | toString) "sender" ($s.sender | default "" | toString)) }}
+{{- $v := .Values.smtp | default dict }}
+{{- $requireTLS := ternary "" (toString $v.requireTLS) (kindIs "invalid" $v.requireTLS) }}
+{{- $insecureAuth := ternary "" (toString $v.insecureAuth) (kindIs "invalid" $v.insecureAuth) }}
+{{- toJson (dict "host" ($s.host | default "" | toString) "port" (include "firefox-sync.number" $s.port) "user" ($s.user | default "" | toString) "secure" ($s.secure | toString) "sender" ($s.sender | default "" | toString) "requireTLS" $requireTLS "insecureAuth" $insecureAuth) }}
 {{- end }}
 
 {{/*

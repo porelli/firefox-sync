@@ -259,8 +259,15 @@ fxa_lint() {
   out=$(helpers -f "${CHART_DIR}/ci/default-values.yaml")
   [[ "$(jq -r '[.oauth, .email] | join("|")' <<< "${out}")" == "https://oauth.accounts.firefox.com/v1|api.accounts.firefox.com" ]] \
     || fail "accounts off: fxaOauthServerUrl, fxaEmailDomain not fxa.oauthServerUrl, fxa.emailDomain: ${out}"
-  [[ "$(jq -r '.smtp' <<< "${out}")" == '{"host":"","port":"587","secure":"false","sender":"","user":""}' ]] || fail "firefox-sync.smtp: $(jq -r '.smtp' <<< "${out}")"
-  check "helpers: fxaImage (the pairing server's following the accounts' repository, fxa.pairing.repository, .tag, .image; Mozilla's fxa-mono refused), fxaDb*, fxaHost, fxaOauthServerUrl, fxaEmailDomain (derived with the accounts), fxaAllowlist, fxaMysqlEnv, smtp, security contexts"
+  [[ "$(jq -r '.smtp' <<< "${out}")" == '{"host":"","insecureAuth":"","port":"587","requireTLS":"","secure":"false","sender":"","user":""}' ]] || fail "firefox-sync.smtp: $(jq -r '.smtp' <<< "${out}")"
+  # smtp.requireTLS false stays "false" (default would make it empty: inferred, maybe on)
+  for c in "--set smtp.requireTLS=false --set smtp.insecureAuth=1|false 1" "--set smtp.requireTLS=true|true " "--set-string smtp.requireTLS=yes|yes "; do
+    args=${c%|*} want=${c#*|}
+    # shellcheck disable=SC2086 # (its words)
+    out=$(helpers -f "${CHART_DIR}/ci/default-values.yaml" ${args} | jq -r '.smtp | fromjson | "\(.requireTLS) \(.insecureAuth)"')
+    [[ "${out}" == "${want}" ]] || fail "firefox-sync.smtp with ${args}: ${out}, not ${want}"
+  done
+  check "helpers: fxaImage (the pairing server's following the accounts' repository, fxa.pairing.repository, .tag, .image; Mozilla's fxa-mono refused), fxaDb*, fxaHost, fxaOauthServerUrl, fxaEmailDomain (derived with the accounts), fxaAllowlist, fxaMysqlEnv, smtp (requireTLS false kept), security contexts"
 
   fxa_objects_lint
   fxa_ingress_lint

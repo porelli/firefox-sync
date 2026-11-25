@@ -47,8 +47,14 @@ smtp:
   # e.g. "Mozilla accounts <no-reply@example.com>"
   sender: ""
   # ADMIN_SMTP_INSECURE_AUTH (the admin UI's emails only): 1, true or yes sends the password also
-  # to a server that offers no TLS, in clear (a relay you trust only); empty: refused
+  # to a server that offers no TLS, in clear (a relay you trust only); empty: refused. With
+  # requireTLS empty, the accounts then send it in clear too
   insecureAuth: ""
+  # FXA_SMTP_REQUIRE_TLS (the self-hosted accounts' emails): true always STARTTLS before the
+  # password and the mail, a server without it gets no email; false: STARTTLS only when the
+  # server offers it. Empty: true with a user and password over STARTTLS (secure false),
+  # unless insecureAuth
+  requireTLS: ""
 
 # The Mozilla accounts Firefox signs in with: Mozilla's (the default), or your own with
 # fxa.enabled (compose's compose/fxa.yml, see docs/accounts.md), with the names of .env below

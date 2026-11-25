@@ -238,6 +238,11 @@ services:
       SMTP_PASS: ${FXA_SMTP_PASS}
       SMTP_SECURE: ${FXA_SMTP_SECURE}
       SMTP_SENDER: ${FXA_SMTP_SENDER}
+      # smtp.requireTLS, written by config/fxa/oauth-clients.js: STARTTLS before the password and
+      # the mail, or no email (empty: when the password goes over STARTTLS, unless
+      # ADMIN_SMTP_INSECURE_AUTH), see docs/accounts.md#email
+      FXA_SMTP_REQUIRE_TLS: ${FXA_SMTP_REQUIRE_TLS:-}
+      SMTP_INSECURE_AUTH: ${ADMIN_SMTP_INSECURE_AUTH:-}
       # Mozilla/Google cloud services this deployment does not have
       FIRESTORE_ENABLED: "false"
       SNS_TOPIC_ARN: disabled

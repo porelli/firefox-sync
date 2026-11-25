@@ -1676,7 +1676,7 @@ setup_summary() {
         else
             echo "     database: ${FXA_DB}, in a container of the stack"
         fi
-        echo "     emails: ${FXA_SMTP_HOST:-no SMTP server}:${FXA_SMTP_PORT}$([ -n "${FXA_SMTP_USER}" ] && echo " as ${FXA_SMTP_USER}")$([ -n "${FXA_SMTP_PASS}" ] && echo " (password as typed, not shown)"), from ${FXA_SMTP_SENDER}"
+        echo "     emails: ${FXA_SMTP_HOST:-no SMTP server}:${FXA_SMTP_PORT}$([ -n "${FXA_SMTP_USER}" ] && echo " as ${FXA_SMTP_USER}")$([ -n "${FXA_SMTP_PASS}" ] && echo " (password as typed, not shown)")$([ -n "${FXA_SMTP_USER}" ] && [ -n "${FXA_SMTP_PASS}" ] && [ "${FXA_SMTP_PORT}" != 465 ] && echo ", STARTTLS required (FXA_SMTP_REQUIRE_TLS)"), from ${FXA_SMTP_SENDER}"
         echo "     sign-ups: $([ -n "${FXA_SIGNUP_ALLOWLIST}" ] && echo "only ${FXA_SIGNUP_ALLOWLIST}" || echo anybody); max accounts: ${FXA_MAX_ACCOUNTS_ANSWER}; security history: $([ "${FXA_ACCOUNT_EVENTS}" = true ] && echo on || echo off)"
         echo "     pairing server: $([ "${PAIRING}" = yes ] && echo "your own, ${FXA_PAIRING_URL_V}" || echo "Mozilla's")"
     fi

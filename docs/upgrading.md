@@ -63,6 +63,8 @@ To move from Mozilla's image to the builds of this repository, or back, change `
 
 Accounts releases from v1.349.0 on need this repository from the same time or later, Mozilla's images too: the auth server then refuses to start without its key `mfa.jwt.secretKey` (`Config 'mfa.jwt.secretKey' must be set in production`), which `config/fxa/oauth-clients.js` now derives from `FXA_OAUTH_SECRET` at every start. Update the checkout (or the chart) before the image. Older releases get the key too: until then they signed those tokens, which guard the password, email, 2-step, recovery key and passkey changes, with Mozilla's published default.
 
+The accounts send the SMTP password over STARTTLS only, from this repository's release after v2026.11.23 on: with `FXA_SMTP_USER` and `FXA_SMTP_PASS` set and `FXA_SMTP_SECURE=false`, a server that offers no STARTTLS gets no email. Before, they sent the password in clear to such a server. If yours is a relay without TLS that you trust, set `ADMIN_SMTP_INSECURE_AUTH=1` (the admin UI already needed it there) or `FXA_SMTP_REQUIRE_TLS=false`, see [Email](accounts.md#email). With Helm: `smtp.insecureAuth` or `smtp.requireTLS: false`.
+
 Don't stay too far behind: Firefox refuses to sign in to accounts servers that are too old for it. For example Firefox 154 needs a recent release, because it switched to Bearer tokens.
 
 ## Quadlets

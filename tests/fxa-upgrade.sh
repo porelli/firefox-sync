@@ -105,6 +105,7 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "s|^FXA_SMTP_PORT=.*|FXA_SMTP_PORT=1025|" \
     -e "s|^FXA_SMTP_USER=.*|FXA_SMTP_USER=test|" \
     -e "s|^FXA_SMTP_PASS=.*|FXA_SMTP_PASS=test|" \
+    -e "s|^FXA_SMTP_REQUIRE_TLS=.*|FXA_SMTP_REQUIRE_TLS=false|" \
     -e "s|^FXA_SMTP_SENDER=.*|FXA_SMTP_SENDER=\"Mozilla accounts <no-reply@fxa.test>\"|" \
     -e "s|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=admin,backup|" \
     -e "s|^BACKUP_KEEP=.*|BACKUP_KEEP=1|" \

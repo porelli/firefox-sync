@@ -6,6 +6,8 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 
 ### Breaking
 
+- Self-hosted accounts with an SMTP user and password on port 587: they now need the server to offer STARTTLS, see Security below. A relay without TLS gets no email until you set `ADMIN_SMTP_INSECURE_AUTH=1` or `FXA_SMTP_REQUIRE_TLS=false`.
+
 ### Added
 
 - Access managed elsewhere, for integrators: with `ADMIN_ACCESS_EXTERNAL=1` (Helm: `admin.accessExternal`) another system decides who may use the server. The admin UI shows the limits, the allowlists and the sign-ups read-only, refuses every change of them, and asks nobody to approve an account or raise a limit. The init container and `fxa-policy` leave the rows of the allowlists to that system and refuse a `SYNC_ALLOWED_ACCOUNTS` or `FXA_SIGNUP_ALLOWLIST`. Reset and deletion of Sync data stay. With self-hosted accounts, `FXA_ACCESS_DB_PASSWORD` (Helm: `fxa.accessDbPassword`) gives that system a database user, `ffs_access`, for the sign-up allowlist and to disable, enable or delete accounts by email. The database enforces the mode too: at every start the init container and `fxa-policy` take back the admin UI's database grants on max users, the allowlists and the sign-up policy, and give them again once it is off, and a setup check compares the grants with the mode. On MariaDB and MySQL the admin UI's reader now gets `EXECUTE` per procedure instead of on the whole tokenserver database, in both modes. On your own MariaDB or MySQL server that takes `GRANT OPTION` for the tokenserver's user, once: without it the init container keeps the database-wide grant, and with `ADMIN_ACCESS_EXTERNAL` on it does not start, see [The database enforces it too](docs/admin/accounts.md#the-database-enforces-it-too). See [Access managed elsewhere](docs/admin/accounts.md#access-managed-elsewhere).
@@ -18,6 +20,8 @@ What changed for those who run firefox-sync. A release gets the entries of Unrel
 - Admin UI, PostgreSQL: the Event log setup check no longer warns when the Sync tables belong to a superuser that only runs the migrations: it checks the role the Sync server connects as. See [Setup checks](docs/admin/monitoring.md).
 
 ### Security
+
+- Self-hosted accounts: the SMTP password and the emails go over STARTTLS only. Until now the accounts used STARTTLS only when the server offered it, so anyone between them and the SMTP server could remove it and read `FXA_SMTP_PASS` and the sign-in codes. `FXA_SMTP_REQUIRE_TLS` (Helm: `smtp.requireTLS`) decides. Empty, the default: required with `FXA_SMTP_USER` and `FXA_SMTP_PASS` over STARTTLS, unless `ADMIN_SMTP_INSECURE_AUTH`, as the admin UI already does. `true` requires it also without a password. It works with every accounts image, through the auth server's config file. See [Email](docs/accounts.md#email).
 
 ## v2026.11.23 — 2026-11-23
 

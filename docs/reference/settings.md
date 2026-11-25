@@ -168,8 +168,9 @@ The alerts and the emails of the admin UI: [Alerts](../admin/alerts.md). The sam
 | `FXA_SMTP_USER` | `smtp.user` | empty: none | its user | |
 | `FXA_SMTP_PASS` | `smtp.password` (Secret: `FXA_SMTP_PASS`) | empty | its password | |
 | `FXA_SMTP_SECURE` | `smtp.secure` | `false` | `true`: TLS from the start (port 465); `false`: STARTTLS | |
+| `FXA_SMTP_REQUIRE_TLS` | `smtp.requireTLS` | empty: on when the accounts send a password over STARTTLS, unless `ADMIN_SMTP_INSECURE_AUTH` | `1`, `true` or `yes`: the accounts always use STARTTLS before the password and the email, a server without it gets no email; `0`, `false` or `no`: STARTTLS only when the server offers it. See [Email](../accounts.md#email) | |
 | `FXA_SMTP_SENDER` | `smtp.sender` | `"Mozilla accounts <no-reply@<your domain>>"` | the From of the emails. Empty, the admin UI uses `ADMIN_ALERT_EMAIL` | |
-| `ADMIN_SMTP_INSECURE_AUTH` | `smtp.insecureAuth` | empty: refused | `1`, `true` or `yes` (as `ADMIN_INSECURE_COOKIE`): the admin UI sends `FXA_SMTP_PASS` also to an SMTP server that offers no TLS, in clear (a relay on the host or a network you trust only) | |
+| `ADMIN_SMTP_INSECURE_AUTH` | `smtp.insecureAuth` | empty: refused | `1`, `true` or `yes` (as `ADMIN_INSECURE_COOKIE`): the admin UI sends `FXA_SMTP_PASS` also to an SMTP server that offers no TLS, in clear (a relay on the host or a network you trust only). With `FXA_SMTP_REQUIRE_TLS` empty, the self-hosted accounts too | |
 
 `admin.password`, `smtp.password`, `admin.oidc.clientSecret`, `admin.metricsToken` and `admin.notify` end up in a Secret: how, with and without `existingSecret`, is in [The Secret](../install/helm.md#the-secret).
 

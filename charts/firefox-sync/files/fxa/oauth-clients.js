@@ -14,6 +14,12 @@
 // from $OAUTH_SERVER_SECRET_KEY (an HMAC-SHA256, the same on every start and replica), unless
 // $MFA__JWT__KEY is set. Without it the auth server used the published default ("foxes");
 // since v1.349.0 it refuses to start in production with that or a key under 32 bytes.
+// It also sets smtp.requireTLS (STARTTLS before the password and the mail, or no email) from
+// $FXA_SMTP_REQUIRE_TLS: 1, true or yes on; 0, false or no off; empty: on when the password is
+// sent ($SMTP_USER and $SMTP_PASS) over STARTTLS ($SMTP_SECURE not true), unless
+// $SMTP_INSECURE_AUTH (ADMIN_SMTP_INSECURE_AUTH of .env) allows the password in clear. The
+// auth server reads it (the senders pass it to nodemailer) but does not declare it yet: it
+// logs "configuration param 'smtp.requireTLS' not declared in the schema" (docs/accounts.md#email).
 // Run from the fxa-auth-server directory, before the key scripts (gen_keys.js...: they load
 // the config, which needs that key) and bin/key_server.js.
 const crypto = require('crypto');
@@ -58,6 +64,29 @@ if (scopes.length !== SCOPES.length) {
 // sha256 of the secret's bytes, what the auth server compares at /v1/token
 function hashSecret(hex) {
   return crypto.createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
+}
+
+// a switch as the admin UI reads it: 1, true, yes or on; 0, false, no, off or empty; else null
+function switchValue(name) {
+  const value = (process.env[name] || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+  if (['', '0', 'false', 'no', 'off'].includes(value)) return false;
+  return null;
+}
+
+function smtpRequireTLS() {
+  const raw = (process.env.FXA_SMTP_REQUIRE_TLS || '').trim();
+  if (raw) {
+    const on = switchValue('FXA_SMTP_REQUIRE_TLS');
+    if (on === null) {
+      console.error(`FXA_SMTP_REQUIRE_TLS must be 1, true or yes, 0, false or no, or empty (on when the password goes over STARTTLS), not ${JSON.stringify(raw)}`);
+      process.exit(1);
+    }
+    return on;
+  }
+  const auth = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+  const startTLS = (process.env.SMTP_SECURE || '').trim().toLowerCase() !== 'true';
+  return auth && startTLS && switchValue('SMTP_INSECURE_AUTH') !== true;
 }
 
 function adminClient() {
@@ -106,7 +135,9 @@ if (!process.env.MFA__JWT__KEY) {
   const key = crypto.createHmac('sha256', secret).update('firefox-sync mfa.jwt.secretKey').digest('hex');
   config.mfa = { jwt: { secretKey: key } };
 }
+const requireTLS = smtpRequireTLS();
+if (requireTLS) config.smtp = { requireTLS: true };
 // (it holds a secret now: this user only, as the other keys of /fxa-keys)
 fs.writeFileSync(process.argv[2], JSON.stringify(config, null, 2), { mode: 0o600 });
 fs.chmodSync(process.argv[2], 0o600);
-console.log(`Wrote ${clients.length} OAuth clients${admin ? ` (with the admin UI, ${admin.publicClient ? 'public' : 'confidential'})` : ''} and ${scopes.length} scopes for ${contentUrl}`);
+console.log(`Wrote ${clients.length} OAuth clients${admin ? ` (with the admin UI, ${admin.publicClient ? 'public' : 'confidential'})` : ''} and ${scopes.length} scopes for ${contentUrl}${requireTLS ? ', SMTP: STARTTLS required' : ''}`);

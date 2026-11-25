@@ -35,7 +35,7 @@ The alerts go by email (`ADMIN_ALERT_EMAIL`), to the destinations of `ADMIN_NOTI
 
 1. Start the stack again, then send a test email (below).
 
-The password is sent over TLS only: STARTTLS, or `FXA_SMTP_SECURE=true` on port 465.
+The password is sent over TLS only: STARTTLS, or `FXA_SMTP_SECURE=true` on port 465. The self-hosted accounts do the same by default, see [Email](../accounts.md#email) (`FXA_SMTP_REQUIRE_TLS`).
 
 What the admin UI does with it:
 

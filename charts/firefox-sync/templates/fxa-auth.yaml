@@ -418,6 +418,12 @@ spec:
               value: {{ $smtp.secure | quote }}
             - name: SMTP_SENDER
               value: {{ $smtp.sender | quote }}
+            # smtp.requireTLS, written by files/fxa/oauth-clients.js: STARTTLS before the password
+            # and the mail (empty: when the password goes over STARTTLS, unless smtp.insecureAuth)
+            - name: FXA_SMTP_REQUIRE_TLS
+              value: {{ $smtp.requireTLS | quote }}
+            - name: SMTP_INSECURE_AUTH
+              value: {{ $smtp.insecureAuth | quote }}
             # Mozilla/Google cloud services this deployment does not have
             - name: FIRESTORE_ENABLED
               value: "false"

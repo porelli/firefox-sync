@@ -98,6 +98,7 @@ done | sed -e "s|^SYNC_PUBLIC_URL=.*|SYNC_PUBLIC_URL=https://sync.fxa.test|" \
     -e "s|^FXA_SMTP_PORT=.*|FXA_SMTP_PORT=1025|" \
     -e "s|^FXA_SMTP_USER=.*|FXA_SMTP_USER=test|" \
     -e "s|^FXA_SMTP_PASS=.*|FXA_SMTP_PASS=test|" \
+    -e "s|^FXA_SMTP_REQUIRE_TLS=.*|FXA_SMTP_REQUIRE_TLS=false|" \
     -e "s|^FXA_SMTP_SENDER=.*|FXA_SMTP_SENDER=\"Mozilla accounts <no-reply@fxa.test>\"|" \
     -e "s|^# COMPOSE_PROFILES=.*|COMPOSE_PROFILES=pairing,admin,backup|" \
     -e "s|^BACKUP_KEEP=.*|BACKUP_KEEP=1|" \
@@ -405,6 +406,7 @@ check "$(grep -cx "COMPOSE_PROJECT_NAME=${setup_project}" "${SETUP}/.env") $(set
   "1 ${setup_project} 1" "COMPOSE_PROJECT_NAME written: the project and its volumes named after the directory, as before"
 password='p@ss|w&rd\#1 $x'
 check "$(grep -cxF "FXA_SMTP_PASS='${password}'" "${SETUP}/.env")" 1 "SMTP password written as typed"
+check "$(grep -cx 'FXA_SMTP_REQUIRE_TLS=' "${SETUP}/.env")" 1 "FXA_SMTP_REQUIRE_TLS left empty: STARTTLS required with the SMTP password (docs/accounts.md#email)"
 check "$(sed -n 's/^SYNC_MARIADB_IMAGE=//p' "${SETUP}/.env")" mariadb:lts "the Sync MariaDB containers on mariadb:lts for a new install"
 # the accounts on MySQL: lts when the accounts image of .env has mozilla/fxa#21709, else MySQL 8
 # with mysql_native_password, as prepare_environment.sh reads its label (here, else the registry)
@@ -925,6 +927,27 @@ hooks=$(dc exec -T syncstorage curl -s http://notify-sink:8000/_received)
 startup_alerts=$(grep -oE '[A-Z][A-Za-z ]+( \([A-Z_]+\))? is down' <<< "${hooks}" | sort -u | paste -sd, -)
 check "${signed_in} ${startup_down:-none} ${startup_up} ${startup_alerts:-none}" "yes none yes none" \
   "within 60 s of the stack healthy: no public check or sign-in keys down on the overview, all up, nothing of the start alerted"
+echo "== FXA_SMTP_REQUIRE_TLS: smtp.requireTLS of the auth server's config file (config/fxa/oauth-clients.js)"
+# Mailpit takes a password and offers no STARTTLS: the stack has FXA_SMTP_REQUIRE_TLS=false, so
+# no smtp.requireTLS in its config file. Then oauth-clients.js again in fxa-auth, aside: empty
+# (a user and password over STARTTLS: on), the auth server's config as it reads it with that
+# file, and a nodemailer transport of that config (the senders pass requireTLS and ignoreTLS
+# to it) against Mailpit: refused at STARTTLS before AUTH (ETLS); without it Mailpit gets AUTH
+smtp_probe='const {config} = require("./config"); const s = config.getProperties().smtp;
+require("nodemailer").createTransport({host: s.host, port: s.port, secure: s.secure, requireTLS: s.requireTLS, ignoreTLS: s.ignoreTLS, auth: {user: s.user, pass: s.password}})
+  .verify().then(() => console.log("SMTP-PROBE", s.requireTLS === true, "sent"), (e) => console.log("SMTP-PROBE", s.requireTLS === true, e.code));'
+smtp_tls() {
+  dc exec -T -e FXA_SMTP_REQUIRE_TLS="$1" -e SMTP_INSECURE_AUTH="$2" fxa-auth sh -c \
+    'node /fxa-config/oauth-clients.js /tmp/ffs-require-tls.json > /dev/null && CONFIG_FILES=/tmp/ffs-require-tls.json node -e "$0"; rm -f /tmp/ffs-require-tls.json' \
+    "${smtp_probe}" 2>&1 | sed -n 's/^SMTP-PROBE //p'
+}
+check "$(dc exec -T fxa-auth printenv FXA_SMTP_REQUIRE_TLS) $(dc exec -T fxa-auth node -e 'console.log(JSON.stringify(require("/fxa-keys/oauth-clients.json").smtp || null))') $(dc logs fxa-auth 2>&1 | grep -c 'SMTP: STARTTLS required')" \
+  "false null 0" "FXA_SMTP_REQUIRE_TLS=false: in fxa-auth's environment, no smtp.requireTLS in its config file"
+check "$(smtp_tls '' '')|$(smtp_tls true 1)|$(smtp_tls '' 1)|$(smtp_tls false '')" "true ETLS|true ETLS|false sent|false sent" \
+  "smtp.requireTLS: on with a password over STARTTLS (empty) or true, the auth server's config has it and a server without STARTTLS gets no AUTH; off with ADMIN_SMTP_INSECURE_AUTH (SMTP_INSECURE_AUTH) or false"
+bad_tls=$(dc exec -T -e FXA_SMTP_REQUIRE_TLS=maybe fxa-auth node /fxa-config/oauth-clients.js /tmp/ffs-require-tls.json 2>&1)
+check "$? $(grep -c '^FXA_SMTP_REQUIRE_TLS must be 1, true or yes, 0, false or no, or empty' <<< "${bad_tls}")" "1 1" \
+  "FXA_SMTP_REQUIRE_TLS=maybe: fxa-auth's start stops with the values it takes"
 echo "== a part that crash-loops: down within a minute, never starting or waiting"
 # fxa-profile with an entrypoint that exits at once, restarted by Docker: it answered before,
 # so it is down at the next round; then as it was, healthy, up again on the overview
