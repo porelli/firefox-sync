@@ -1,6 +1,7 @@
 """Access managed elsewhere with the self-hosted accounts (ADMIN_ACCESS_EXTERNAL,
 FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): another system keeps
-the sign-up allowlist as ffs_access, and disables, enables or deletes accounts by email.
+the sign-up allowlist as ffs_access, and disables, enables or deletes accounts by email. The
+admin UI's Enable and Delete leave who has access to that system.
 
 Runs in the syncstorage-rs image like test_fxa_admin.py, see tests/e2e-fxa.sh, which starts
 fxa-policy and the admin UI with ADMIN_ACCESS_EXTERNAL=1 and FXA_SIGNUPS=allowlist first.
@@ -19,9 +20,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql import text as sqltext
 
-from test_fxa_admin import ADMIN, Admin, create, exists
+from test_fxa_admin import ADMIN, Admin, create, exists, failed
 
 ADDRESS = f"ffs-external-{uuid.uuid4().hex[:10]}@example.org"
+# left disabled and off the list: tests/e2e-fxa.sh enables it once the mode is off
+LEFT = f"ffs-external-left-{uuid.uuid4().hex[:10]}@example.org"
+MEMBER = f"ffs-external-member-{uuid.uuid4().hex[:10]}@example.org"
+# ffs.enable_account's refusal (errAccessElsewhere of admin/fxainit.go)
+ELSEWHERE = "not on the access list managed elsewhere: the system that manages access enables this account"
 
 
 def connect(url):
@@ -67,8 +73,12 @@ def test_signup_refused_then_allowed(access):
     assert exists(ADDRESS)
 
 
-def disabled(fxa):
-    return fxa.execute(sqltext("SELECT disabledAt IS NOT NULL FROM fxa.accounts WHERE normalizedEmail = :e"), {"e": ADDRESS}).scalar()
+def disabled(fxa, address=ADDRESS):
+    return fxa.execute(sqltext("SELECT disabledAt IS NOT NULL FROM fxa.accounts WHERE normalizedEmail = :e"), {"e": address}).scalar()
+
+
+def listed(access, address):
+    return access.execute(sqltext("SELECT COUNT(*) FROM ffs.signup_allowlist WHERE entry = :e"), {"e": address}).scalar()
 
 
 def sessions(fxa):
@@ -91,6 +101,52 @@ def test_disable_enable_delete_by_email(access, fxa):
     access.execute(sqltext("CALL ffs.delete_account_by_email(:e)"), {"e": ADDRESS})
     assert not exists(ADDRESS)
     assert "no such account" in refused(access, f"CALL ffs.disable_account_by_email('{ADDRESS}')")
+
+
+def test_admin_ui_leaves_access_alone(access, fxa):
+    admin = Admin()
+    for address in (LEFT, MEMBER):
+        access.execute(sqltext("INSERT INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": address})
+        res = create(address)
+        assert res.status_code == 200, res.text
+    left, member = admin.uid(LEFT), admin.uid(MEMBER)
+    # disabling stays the admin UI's, for incident response
+    admin.confirm(f"/accounts/{left}/disable")
+    assert disabled(fxa, LEFT) == 1
+    # taken off the other system's list: Enable refused, in words, and the account stays disabled
+    access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": LEFT})
+    res = admin.http.post(f"{ADMIN}/accounts/{left}/enable", data={"csrf": admin.csrf(), "back": f"/users/{left}"}, timeout=30)
+    assert res.status_code == 200 and failed(res.text) == [ELSEWHERE], failed(res.text)
+    assert disabled(fxa, LEFT) == 1
+    # on the list again: enabled, a full server too (the account is already counted, none added)
+    access.execute(sqltext("INSERT INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": LEFT})
+    before = fxa.execute(sqltext("SELECT value FROM ffs.settings WHERE name = 'max_accounts'")).scalar()
+    fxa.execute(sqltext("INSERT INTO ffs.settings (name, value) VALUES ('max_accounts', '0') ON DUPLICATE KEY UPDATE value = '0'"))
+    try:
+        assert fxa.execute(sqltext("SELECT ffs.signup_refusal(:e)"), {"e": LEFT}).scalar() == "full"
+        admin.post(f"/accounts/{left}/enable")
+    finally:
+        if before is None:
+            fxa.execute(sqltext("DELETE FROM ffs.settings WHERE name = 'max_accounts'"))
+        else:
+            fxa.execute(sqltext("UPDATE ffs.settings SET value = :v WHERE name = 'max_accounts'"), {"v": before})
+    assert disabled(fxa, LEFT) == 0
+    # left disabled and off the list for tests/e2e-fxa.sh
+    admin.confirm(f"/accounts/{left}/disable")
+    access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": LEFT})
+
+    # deleted in the admin UI: the member's row stays, it can sign up again
+    admin.confirm(f"/accounts/{member}/disable")
+    _, done = admin.confirm(f"/users/{member}/delete", confirm_email=MEMBER)
+    assert f"Deleted {MEMBER} (uid {member})" in done, done[:3000]
+    assert not exists(MEMBER) and listed(access, MEMBER) == 1
+    res = create(MEMBER)
+    assert res.status_code == 200, res.text
+    # gone for good once the other system says so
+    access.execute(sqltext("CALL ffs.disable_account_by_email(:e)"), {"e": MEMBER})
+    access.execute(sqltext("CALL ffs.delete_account_by_email(:e)"), {"e": MEMBER})
+    assert not exists(MEMBER) and listed(access, MEMBER) == 1
+    access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": MEMBER})
 
 
 def test_admin_signups_read_only():

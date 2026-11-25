@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // externalFake: the tokenserver of an install whose access another system manages: the init
@@ -292,7 +294,7 @@ func TestAccessUserGrants(t *testing.T) {
 	var found int
 	for _, stmt := range fxaPolicySQL {
 		for name, inner := range map[string]string{"disable_account_by_email": "CALL ffs.disable_account(v_uid)",
-			"enable_account_by_email": "CALL ffs.enable_account(v_uid)", "delete_account_by_email": "CALL ffs.delete_account(v_uid)"} {
+			"enable_account_by_email": "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = v_uid", "delete_account_by_email": "CALL ffs.delete_account(v_uid)"} {
 			if strings.HasPrefix(stmt, "CREATE PROCEDURE ffs."+name+"(") {
 				found++
 				if !strings.Contains(stmt, "SQL SECURITY DEFINER") || !strings.Contains(stmt, inner) || !strings.Contains(stmt, "normalizedEmail = LOWER(TRIM(p_email))") {
@@ -305,10 +307,89 @@ func TestAccessUserGrants(t *testing.T) {
 		t.Errorf("%d procedures by email", found)
 	}
 	// with FxA's revokeAccountTokens_1 gone, disable by email refuses too (it calls disable_account)
-	for _, stmt := range policySQL([]string{"fxa.revokeAccountTokens_1"}) {
+	for _, stmt := range policySQL(fxaPolicySQL, []string{"fxa.revokeAccountTokens_1"}) {
 		if strings.HasPrefix(stmt, "CREATE PROCEDURE ffs.disable_account_by_email(") && !strings.Contains(stmt, "SIGNAL SQLSTATE '45000'") {
 			t.Errorf("not a stand-in: %s", stmt)
 		}
+	}
+}
+
+// ADMIN_ACCESS_EXTERNAL: the admin UI's Enable asks the sign-up policy, its Delete leaves the
+// allowlist alone; ffs_access's enable never asks; without the mode, the procedures of before
+func TestExternalProcedures(t *testing.T) {
+	before := strings.Join(fxaPolicySQL, "\x00")
+	if got := fxaPolicySQLFor(false); strings.Join(got, "\x00") != before {
+		t.Error("without the mode: not fxaPolicySQL")
+	}
+	if del := policyStmt(t, fxaPolicySQL, "ffs.delete_account"); !strings.Contains(del, "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email);") {
+		t.Errorf("without the mode, delete takes the email off the allowlist: %s", del)
+	}
+	if enable := policyStmt(t, fxaPolicySQL, "ffs.enable_account"); strings.Contains(enable, "signup_refusal") {
+		t.Errorf("without the mode, enable asks the policy: %s", enable)
+	}
+
+	ext := fxaPolicySQLFor(true)
+	if strings.Join(fxaPolicySQL, "\x00") != before || len(ext) != len(fxaPolicySQL) {
+		t.Fatal("fxaPolicySQL changed, or statements added or lost")
+	}
+	changed := 0
+	for i := range ext {
+		if ext[i] != fxaPolicySQL[i] {
+			changed++
+		}
+	}
+	if changed != 2 {
+		t.Errorf("%d statements differ in external mode, want enable_account and delete_account", changed)
+	}
+	del := policyStmt(t, ext, "ffs.delete_account")
+	if strings.Contains(del, "signup_allowlist") || !strings.Contains(del, "CALL fxa.deleteAccount_24(p_uid, 'fxa_admin_requested_account_delete')") {
+		t.Errorf("external delete: %s", del)
+	}
+	enable := policyStmt(t, ext, "ffs.enable_account")
+	r, u := strings.Index(enable, "IF ffs.signup_refusal(v_email) <=> 'policy' THEN"), strings.Index(enable, "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid")
+	if r < 0 || u < r || strings.Contains(enable, "'full'") || !strings.Contains(enable, "SQL SECURITY DEFINER") ||
+		!strings.Contains(enable, "MESSAGE_TEXT = '"+errAccessElsewhere+"'") || !strings.Contains(enable, "MESSAGE_TEXT = 'no such account'") {
+		t.Errorf("external enable: %s", enable)
+	}
+	if len(errAccessElsewhere) > 128 || strings.ContainsAny(errAccessElsewhere, "'\\") {
+		t.Errorf("not a MESSAGE_TEXT: %q", errAccessElsewhere)
+	}
+	// ffs_access's enable: the same in both modes, never through the policy
+	if a, b := policyStmt(t, ext, "ffs.enable_account_by_email"), policyStmt(t, fxaPolicySQL, "ffs.enable_account_by_email"); a != b || strings.Contains(a, "CALL ffs.enable_account(") {
+		t.Errorf("enable by email: %s", a)
+	}
+	// the stand-ins still apply to the external procedures
+	for _, stmt := range policySQL(ext, []string{"fxa.deleteAccount_24"}) {
+		if strings.HasPrefix(stmt, "CREATE PROCEDURE ffs.delete_account(") && !strings.Contains(stmt, "is missing from the accounts database") {
+			t.Errorf("not a stand-in: %s", stmt)
+		}
+	}
+}
+
+// the admin UI's Enable refused in external mode: the procedure's words, not an SQL error
+func TestEnableRefusedElsewhere(t *testing.T) {
+	fake := &fakeFxa{disabled: true}
+	redis, _ := fakeRedis(t)
+	app := testApp()
+	app.fxa = fake.db(redis)
+	app.accessExternal = true
+	h := app.routes()
+	c, s := passwordSession(t, app, h)
+	fake.execErr = func(query string, _ []driver.Value) error {
+		if query == "CALL ffs.enable_account(?)" {
+			return &mysql.MySQLError{Number: 1644, SQLState: [5]byte{'4', '5', '0', '0', '0'}, Message: errAccessElsewhere}
+		}
+		return nil
+	}
+	w := post(h, "/accounts/"+fakeUID+"/enable", url.Values{"csrf": {s.csrf}, "back": {"/users/" + fakeUID}}, c, nil)
+	if w.Header().Get("Location") != "/users/"+fakeUID || s.message != "" || s.failed != errAccessElsewhere {
+		t.Errorf("enable: %s %q %q", w.Header().Get("Location"), s.message, s.failed)
+	}
+	// disabling stays allowed
+	fake.execErr = nil
+	post(h, "/accounts/"+fakeUID+"/disable", url.Values{"csrf": {s.csrf}, "back": {"/users/" + fakeUID}}, c, nil)
+	if s.failed != "" || !strings.HasPrefix(s.message, "Disabled ") {
+		t.Errorf("disable: %q %q", s.message, s.failed)
 	}
 }
 

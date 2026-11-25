@@ -292,8 +292,9 @@ var fxaPolicySQL = []string{
 	END`,
 	// deleting an account for good, disabled first (two steps, never one slip): what the
 	// auth server's own deletion removes (deleteAccount_24), then what lives in the other
-	// databases, and the exact email from the allowlist so that it cannot sign up again.
-	// Ours first: a failure leaves a disabled account, not one half deleted
+	// databases, and the exact email from the allowlist so that it cannot sign up again
+	// (not with ADMIN_ACCESS_EXTERNAL: externalPolicySQL). Ours first: a failure leaves a
+	// disabled account, not one half deleted
 	"DROP PROCEDURE IF EXISTS ffs.delete_account",
 	`CREATE PROCEDURE ffs.delete_account(p_uid BINARY(16))
 	MODIFIES SQL DATA
@@ -325,7 +326,7 @@ var fxaPolicySQL = []string{
 		DELETE FROM pushbox.pushboxv1 WHERE user_id IN (LOWER(HEX(p_uid)), HEX(p_uid));
 		COMMIT;
 		CALL fxa.deleteAccount_24(p_uid, 'fxa_admin_requested_account_delete');
-		DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email);
+		` + deleteAllowlistRow + `
 	END`,
 	// an account that never confirmed its email: the same deletion, the reason the auth
 	// server gives its own cleanup of them. One account per call (the admin UI lists them
@@ -397,7 +398,10 @@ var fxaPolicySQL = []string{
 	// FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): the account whose
 	// primary email it is (normalized as the accounts do), through the procedures above, so that
 	// ffs_access needs nothing of fxa.*. Disable signs it out everywhere (ffs.disable_account);
-	// delete takes a disabled account only (ffs.delete_account), not its Sync data
+	// delete takes a disabled account only (ffs.delete_account), not its Sync data. Enable is
+	// its own UPDATE, not ffs.enable_account: with ADMIN_ACCESS_EXTERNAL that one asks the
+	// sign-up policy, and the system that decides who has access must not be refused by it
+	// (FXA_SIGNUPS=closed, an email it enables before adding it again)
 	"DROP PROCEDURE IF EXISTS ffs.disable_account_by_email",
 	`CREATE PROCEDURE ffs.disable_account_by_email(p_email VARCHAR(255))
 	MODIFIES SQL DATA
@@ -420,7 +424,7 @@ var fxaPolicySQL = []string{
 		IF v_uid IS NULL THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
-		CALL ffs.enable_account(v_uid);
+		UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = v_uid;
 	END`,
 	"DROP PROCEDURE IF EXISTS ffs.delete_account_by_email",
 	`CREATE PROCEDURE ffs.delete_account_by_email(p_email VARCHAR(255))
@@ -452,6 +456,62 @@ var fxaPolicySQL = []string{
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sign-up refused by the firefox-sync sign-up policy';
 		END IF;
 	END`,
+}
+
+// deleteAllowlistRow: the last statement of ffs.delete_account without ADMIN_ACCESS_EXTERNAL
+const deleteAllowlistRow = "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email);"
+
+// errAccessElsewhere: ffs.enable_account's refusal with ADMIN_ACCESS_EXTERNAL, which the admin
+// UI shows as it is (procedureError)
+const errAccessElsewhere = "not on the access list managed elsewhere: the system that manages access enables this account"
+
+// externalPolicySQL: with ADMIN_ACCESS_EXTERNAL (docs/admin/accounts.md#access-managed-elsewhere)
+// another system decides who has access, and the admin UI's own procedures must not undo it.
+// ffs.enable_account refuses an account whose email the sign-up policy refuses ('policy': not on
+// the allowlist, FXA_SIGNUPS=closed), as a sign-up of it would be. Not 'full': the account is one
+// of fxa.accounts, which FXA_MAX_ACCOUNTS counts disabled or not, enabling it adds none. Disable
+// stays as it is (incident response), and ffs.enable_account_by_email of that system does not
+// call this one. ffs.delete_account leaves the allowlist alone: a member deleted can sign up
+// again, the system removes the row if it wants to. Generated per start rather than read from
+// ffs.settings: fxa-policy makes the procedures again at every start, so a start without the
+// mode has today's again, and nothing ffs_admin may write changes them
+var externalPolicySQL = map[string]string{
+	"ffs.enable_account": `CREATE PROCEDURE ffs.enable_account(p_uid BINARY(16))
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_found INT DEFAULT 0;
+		DECLARE v_email VARCHAR(255) DEFAULT NULL;
+		SELECT COUNT(*), MAX(normalizedEmail) INTO v_found, v_email FROM fxa.accounts WHERE uid = p_uid;
+		IF v_found = 0 THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
+		END IF;
+		IF ffs.signup_refusal(v_email) <=> 'policy' THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errAccessElsewhere + `';
+		END IF;
+		UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid;
+	END`,
+}
+
+// fxaPolicySQLFor: fxaPolicySQL as ADMIN_ACCESS_EXTERNAL says (externalPolicySQL)
+func fxaPolicySQLFor(external bool) []string {
+	if !external {
+		return fxaPolicySQL
+	}
+	stmts := make([]string, len(fxaPolicySQL))
+	for i, stmt := range fxaPolicySQL {
+		header, _, _ := strings.Cut(stmt, "\n")
+		name, _, _ := strings.Cut(strings.TrimPrefix(header, "CREATE PROCEDURE "), "(")
+		switch {
+		case !strings.HasPrefix(header, "CREATE PROCEDURE "):
+		case externalPolicySQL[name] != "":
+			stmt = externalPolicySQL[name]
+		case name == "ffs.delete_account":
+			stmt = strings.Replace(stmt, deleteAllowlistRow, "-- ADMIN_ACCESS_EXTERNAL: the allowlist is the other system's", 1)
+		}
+		stmts[i] = stmt
+	}
+	return stmts
 }
 
 // The admin UI connects as ffs_admin: it reads the accounts, and changes them only
@@ -565,9 +625,9 @@ var fxaPinnedProcedures = []string{"revokeAccountTokens_1", "deleteTotpToken_4",
 
 var procedureCall = regexp.MustCompile(`CALL (ffs|fxa)\.(\w+)\(`)
 
-// policySQL is fxaPolicySQL with the procedures that call a missing one (directly, or
-// through another of ffs) replaced by procedures that only refuse
-func policySQL(missing []string) []string {
+// policySQL is the procedures (fxaPolicySQLFor) with those that call a missing one (directly,
+// or through another of ffs) replaced by procedures that only refuse
+func policySQL(base, missing []string) []string {
 	msg := strings.Join(missing, ", ") + " is missing from the accounts database: see the log of fxa-policy"
 	if len(msg) > 128 { // the limit of MESSAGE_TEXT
 		msg = "procedures of FxA are missing from the accounts database: see the log of fxa-policy"
@@ -576,8 +636,8 @@ func policySQL(missing []string) []string {
 	for _, name := range missing {
 		unusable[name] = true
 	}
-	stmts := make([]string, len(fxaPolicySQL))
-	for i, stmt := range fxaPolicySQL {
+	stmts := make([]string, len(base))
+	for i, stmt := range base {
 		header, _, _ := strings.Cut(stmt, "\n")
 		if name, ok := strings.CutPrefix(header, "CREATE PROCEDURE "); ok {
 			name, _, _ = strings.Cut(name, "(")
@@ -650,17 +710,25 @@ func fxaInit(ctx context.Context) error {
 		}
 	}
 
+	// ADMIN_ACCESS_EXTERNAL: the procedures of the admin UI leave who has access alone (externalPolicySQL)
+	external, err := envSwitch("ADMIN_ACCESS_EXTERNAL")
+	if err != nil {
+		return err
+	}
 	// information_schema lists only the routines this user may run: without EXECUTE on
 	// fxa.* (your own server, docs/reference/database-users.md#the-accounts) they look missing too
 	missing, err := missingProcedures(ctx, db)
 	if err != nil {
 		return err
 	}
-	stmts := fxaPolicySQL
+	stmts := fxaPolicySQLFor(external)
+	if external {
+		log.Printf("ADMIN_ACCESS_EXTERNAL: the admin UI's Enable refuses an email the sign-up policy refuses, its Delete leaves the sign-up allowlist alone")
+	}
 	if len(missing) > 0 {
 		log.Printf("WARNING: %s missing from the accounts database (a newer FxA release renamed it, or %s has no EXECUTE on fxa.*, docs/reference/database-users.md#the-accounts): what the admin UI does with it answers with an error (docs/admin/accounts.md)",
 			strings.Join(missing, ", "), user)
-		stmts = policySQL(missing)
+		stmts = policySQL(stmts, missing)
 	}
 
 	for _, stmt := range stmts {
@@ -680,10 +748,6 @@ func fxaInit(ctx context.Context) error {
 	}
 
 	if password := env("FXA_ADMIN_DB_PASSWORD", ""); password != "" {
-		external, err := envSwitch("ADMIN_ACCESS_EXTERNAL")
-		if err != nil {
-			return err
-		}
 		grants, obsolete := fxaAdminGrantsFor(external)
 		if err := fxaUser(ctx, db, "ffs_admin", password, grants, obsolete); err != nil {
 			return err

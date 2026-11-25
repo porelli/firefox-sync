@@ -95,7 +95,7 @@ Three actions, from the strongest:
 
 | Action | Where | What it does |
 |---|---|---|
-| **Disable** | the accounts list or the account page, then the confirm page | signs the account out of every device, refuses new sign-ins, and revokes its OAuth tokens, in the accounts database and in Redis. **Enable** gives the account back, with its data, after a new sign-in |
+| **Disable** | the accounts list or the account page, then the confirm page | signs the account out of every device, refuses new sign-ins, and revokes its OAuth tokens, in the accounts database and in Redis. **Enable** gives the account back, with its data, after a new sign-in. With [access managed elsewhere](#enable-and-delete), Enable refuses an account whose email the sign-up policy refuses |
 | **Sign out everywhere** | the account page | the same for the devices, sessions and tokens, but the account stays active: its owner can sign in again right away. Use it after a lost laptop, or a leaked password (with a new password) |
 | **Sign out** a device or a session | next to it, on the account page | removes that device and the session or refresh token it signed in with, so it cannot get new access tokens |
 
@@ -286,7 +286,7 @@ Deleting is for a disabled account only:
 What goes:
 
 - **In the accounts databases**, in one transaction: its recovery phone; its OAuth codes, refresh and access tokens, activity and consents (`fxa_oauth`); its profile and avatars (`fxa_profile`); its push messages (`pushbox`). Then Mozilla's own deletion (`deleteAccount_24`, reason `fxa_admin_requested_account_delete`): sessions, keys, devices, emails, two-step authentication, recovery key and codes, security events.
-- **On the allowlist**: its exact email, so that with sign-ups on an allowlist it cannot sign up again unless invited.
+- **On the allowlist**: its exact email, so that with sign-ups on an allowlist it cannot sign up again unless invited. Not with [access managed elsewhere](#enable-and-delete): the list is the other system's.
 - **In Redis**: its access tokens, the cache of its sessions and refresh tokens, its profile.
 - **On the Sync side**: every tokenserver row of `<uid>@<FXA_EMAIL_DOMAIN>`, with the storage of each, which frees its max users slot.
 - **Its note.**
@@ -327,7 +327,20 @@ The name: `ADMIN_` because it is a mode of the admin UI, as the other `ADMIN_*` 
 
 Every form and confirm page of those refuses the change in its handler, whatever the page shows: `POST /sync/max-users`, `/sync/allowlist/{allow,reject,remove}` (and their confirm pages), `/accounts/signups`, `/accounts/max-accounts`, `/accounts/invite` and `/accounts/allowlist/remove` (and its confirm page). The message says that access is managed outside the admin UI, and nothing changes.
 
-The rest works as usual: health and monitoring, storage and purge, alerts, backups and the event log, the account pages, notes, signing out and disabling an account, and the reset and deletion of Sync data.
+The rest works as usual: health and monitoring, storage and purge, alerts, backups and the event log, the account pages, notes, signing out and disabling an account, and the reset and deletion of Sync data. Enable and Delete work too, but leave who has access to the other system.
+
+### Enable and delete
+
+With self-hosted accounts, two of the admin UI's account actions would otherwise change who has access:
+
+| Action | With the mode on | Without it |
+|---|---|---|
+| **Enable** | refused when the sign-up policy refuses the account's email, as a new sign-up of it would be: off the allowlist with `FXA_SIGNUPS=allowlist`, everyone with `closed`. The page says `not on the access list managed elsewhere: the system that manages access enables this account`, and the account stays disabled. Max accounts does not refuse it: the account is already counted, enabling adds none | enables the account |
+| **Delete** | deletes the account and leaves `ffs.signup_allowlist` as it is: a current member can sign up again, and your system removes the row if it wants to | also removes the account's exact email from the allowlist |
+
+**Disable** stays as it is in both modes, for incident response. An account the admin UI disabled whose email is still on the list can be enabled there again. Your system's `ffs.enable_account_by_email` never asks the policy: it enables whatever your list says, even before you add the email again or with `FXA_SIGNUPS=closed`.
+
+`fxa-policy` makes these procedures again at every start, as the mode says: the first start without it gives back the behaviour of before. `ffs_admin` gets the same procedures either way, and the database refuses the enable to a database client too.
 
 ### The database enforces it too
 
@@ -340,7 +353,7 @@ The admin UI's handlers refuse the changes, and its database users lack the gran
 
 In both modes, `ADMIN_DB_SYNC_USER` has no `INSERT`, `UPDATE` or `DELETE` on `sync_allowed_accounts` or `sync_refused_accounts`, and no `EXECUTE` on the whole tokenserver database. On PostgreSQL, `PUBLIC` has no `EXECUTE` on these functions either. Calling one of them, or an `INSERT` into the list, fails with the database's permission error. The admin UI never calls them with the mode on. Everything else keeps working: monitoring, storage and purges, **Reset the Sync data** with its slot freed, **Delete**, notes, the event log, and reading the lists.
 
-With [self-hosted accounts](../accounts.md), `ffs_admin` gets only `SELECT` on `ffs.settings` (the sign-up policy, max accounts) and on `ffs.signup_allowlist`. Without the mode it gets `SELECT, INSERT, UPDATE, DELETE` on both. Its procedures for an account (disable, enable, sign out, delete) stay in both modes. `ffs_access` keeps exactly its own grants.
+With [self-hosted accounts](../accounts.md), `ffs_admin` gets only `SELECT` on `ffs.settings` (the sign-up policy, max accounts) and on `ffs.signup_allowlist`. Without the mode it gets `SELECT, INSERT, UPDATE, DELETE` on both. Its procedures for an account (disable, enable, sign out, delete) stay in both modes, with enable and delete leaving access alone with the mode on ([Enable and delete](#enable-and-delete)). `ffs_access` keeps exactly its own grants.
 
 The setup check **Access managed elsewhere: database grants** reads what the admin UI's users hold. It warns when they can still change who may use the server with the mode on. It also warns, in either mode, when they lack what the admin UI calls. It is shown whenever the mode is on, and without it only when something is missing.
 
@@ -392,8 +405,8 @@ With [self-hosted accounts](../accounts.md), your system can keep the sign-up al
 |---|---|
 | `ffs.signup_allowlist` (`entry`: an email or `@domain`, lowercase) | `SELECT, INSERT, DELETE` |
 | `ffs.disable_account_by_email(email)` | `EXECUTE`: disables the account and signs it out everywhere, as Disable in the admin UI |
-| `ffs.enable_account_by_email(email)` | `EXECUTE` |
-| `ffs.delete_account_by_email(email)` | `EXECUTE`: deletes a disabled account, as Delete in the admin UI |
+| `ffs.enable_account_by_email(email)` | `EXECUTE`: enables the account, whatever the sign-up policy says |
+| `ffs.delete_account_by_email(email)` | `EXECUTE`: deletes a disabled account, as Delete in the admin UI. With the mode on, its row of `ffs.signup_allowlist` stays: remove it yourself |
 
 Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The email is the account's primary one, compared without case and spaces. An unknown email answers `no such account`.
 

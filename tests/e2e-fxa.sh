@@ -1242,7 +1242,13 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
     -c "cd /app && $(pytest_sh "/tests/test_fxa_external.py")" < /dev/null
   rc=$?
   [ "${rc}" = 0 ] || admin_log
-  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI"
+  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI; its Enable refused off the list, its Delete leaves the list alone"
+  # ffs_admin itself, not only through the admin UI (docs/admin/accounts.md#the-database-enforces-it-too):
+  # the account test_fxa_external.py left disabled and off the list
+  left_uid=$(fxa_sql "SELECT HEX(uid) FROM fxa.accounts WHERE normalizedEmail LIKE 'ffs-external-left-%' AND disabledAt IS NOT NULL ORDER BY createdAt DESC LIMIT 1")
+  left_email=$(fxa_sql "SELECT normalizedEmail FROM fxa.accounts WHERE uid = UNHEX('${left_uid}')")
+  check "$(as_ffs_admin "CALL ffs.enable_account(UNHEX('${left_uid}'))" | grep -c 'not on the access list managed elsewhere') $(fxa_sql "SELECT disabledAt IS NOT NULL FROM fxa.accounts WHERE uid = UNHEX('${left_uid}')")" "1 1" \
+    "ADMIN_ACCESS_EXTERNAL=1: CALL ffs.enable_account as ffs_admin refused for an email off the list, and says why"
   # the procedures made again at every start: their grants given again, the rows kept
   dc run --rm --no-deps fxa-policy > /dev/null 2>&1
   check "$? $(access_grants) $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 4 @example.com" "fxa-policy again: ffs_access keeps its grants, the rows stay"
@@ -1256,6 +1262,14 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
   dc run --rm --no-deps fxa-policy > /dev/null 2>&1
   check "$? $(fxa_sql "SELECT COUNT(*) FROM mysql.user WHERE user = 'ffs_access'")" "0 0" "FXA_ACCESS_DB_PASSWORD empty again: ffs_access removed"
   check "$(admin_writes)" "0 0 1" "ADMIN_ACCESS_EXTERNAL off again: ffs_admin writes the sign-up policy and its allowlist again"
+  # and the procedures of before: Enable without asking the policy, Delete takes the email off the list
+  as_ffs_admin "CALL ffs.enable_account(UNHEX('${left_uid}'))" > /dev/null
+  check "$(fxa_sql "SELECT disabledAt IS NULL FROM fxa.accounts WHERE uid = UNHEX('${left_uid}')")" 1 "ADMIN_ACCESS_EXTERNAL off again: ffs.enable_account enables an email off the list, as before"
+  fxa_sql "INSERT IGNORE INTO ffs.signup_allowlist (entry) VALUES ('${left_email}')" > /dev/null
+  as_ffs_admin "CALL ffs.disable_account(UNHEX('${left_uid}'))" > /dev/null
+  as_ffs_admin "CALL ffs.delete_account(UNHEX('${left_uid}'))" > /dev/null
+  check "$(fxa_sql "SELECT COUNT(*) FROM fxa.accounts WHERE uid = UNHEX('${left_uid}')") $(fxa_sql "SELECT COUNT(*) FROM ffs.signup_allowlist WHERE entry = '${left_email}'")" "0 0" \
+    "ADMIN_ACCESS_EXTERNAL off again: ffs.delete_account takes the email off the allowlist, as before"
   dc run --rm --no-deps tokenserver_db_init > /dev/null 2>&1
   check "$? $(ts_sql "SELECT config_value FROM config WHERE config_key = 'allowed_accounts'")" "0 off" "the init container without ADMIN_ACCESS_EXTERNAL"
   dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1

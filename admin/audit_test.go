@@ -98,7 +98,7 @@ func TestDisableSetsDisabledAtFirst(t *testing.T) {
 }
 
 func TestMissingFxaProcedureLeavesStandIns(t *testing.T) {
-	stmts := policySQL([]string{"fxa.revokeAccountTokens_1"})
+	stmts := policySQL(fxaPolicySQL, []string{"fxa.revokeAccountTokens_1"})
 	if len(stmts) != len(fxaPolicySQL) {
 		t.Fatal("statements lost")
 	}
@@ -115,7 +115,7 @@ func TestMissingFxaProcedureLeavesStandIns(t *testing.T) {
 		}
 	}
 	// each pinned procedure stubs only what calls it
-	stmts = policySQL([]string{"fxa.verifyEmail_9"})
+	stmts = policySQL(fxaPolicySQL, []string{"fxa.verifyEmail_9"})
 	for _, stmt := range fxaPolicySQL {
 		name, ok := strings.CutPrefix(strings.SplitN(stmt, "(", 2)[0], "CREATE PROCEDURE ")
 		if !ok {
@@ -133,7 +133,7 @@ func TestMissingFxaProcedureLeavesStandIns(t *testing.T) {
 
 func TestConfirmSessionNeedsItsProcedures(t *testing.T) {
 	for _, missing := range []string{"fxa.verifyTokensWithMethod_3", "fxa.verifyToken_3"} {
-		stmts := policySQL([]string{missing})
+		stmts := policySQL(fxaPolicySQL, []string{missing})
 		for _, stmt := range fxaPolicySQL {
 			name, ok := strings.CutPrefix(strings.SplitN(stmt, "(", 2)[0], "CREATE PROCEDURE ")
 			if !ok {
