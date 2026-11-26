@@ -20,12 +20,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.sql import text as sqltext
 
-from test_fxa_admin import ADMIN, Admin, create, exists, failed
+from fxa.core import Client
+from test_fxa_admin import ADMIN, Admin, create, exists, failed, mfa
+from test_fxa_flow import AUTH, wait_for_code
 
 ADDRESS = f"ffs-external-{uuid.uuid4().hex[:10]}@example.org"
 # left disabled and off the list: tests/e2e-fxa.sh enables it once the mode is off
 LEFT = f"ffs-external-left-{uuid.uuid4().hex[:10]}@example.org"
 MEMBER = f"ffs-external-member-{uuid.uuid4().hex[:10]}@example.org"
+# ffs_access's sweep (externalOnlySQL of admin/fxainit.go), and its brake's SQLSTATE (errSweepBrake)
+SWEEP = "ffs.disable_accounts_not_allowed"
+BRAKE = "45001"
 # ffs.enable_account's refusal (errAccessElsewhere of admin/fxainit.go)
 ELSEWHERE = "not on the access list managed elsewhere: the system that manages access enables this account"
 
@@ -161,3 +166,106 @@ def test_admin_signups_read_only():
         res = admin.http.post(f"{ADMIN}{path}", data={"csrf": csrf, **form}, timeout=30)
         assert "managed outside the admin UI (ADMIN_ACCESS_EXTERNAL): nothing changed here" in res.text, (path, res.text[:3000])
     assert requests.get(f"{ADMIN}/healthz", timeout=30).status_code == 200
+
+
+def tag(name):
+    return f"ffs-sweep-{name}-{uuid.uuid4().hex[:8]}@example.org"
+
+
+def state(fxa, uid):
+    """(disabledAt, sessions) of an account"""
+    return tuple(fxa.execute(sqltext("SELECT disabledAt, (SELECT COUNT(*) FROM fxa.sessionTokens s WHERE s.uid = a.uid) FROM fxa.accounts a WHERE a.uid = UNHEX(:u)"),
+                             {"u": uid}).one())
+
+
+def not_allowed(fxa):
+    """The enabled accounts whose current primary email (fxa.emails; the sign-up's without one)
+    the sign-up policy refuses with 'policy': {uid: email}, as the sweep sees them"""
+    found = {}
+    rows = fxa.execute(sqltext("SELECT HEX(a.uid), a.normalizedEmail, (SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1) "
+                               "FROM fxa.accounts a WHERE a.disabledAt IS NULL")).all()
+    for uid, signup, primary in rows:
+        address = primary or signup
+        if fxa.execute(sqltext("SELECT ffs.signup_refusal(:e)"), {"e": address}).scalar() == "policy":
+            found[uid] = address
+    return found
+
+
+def sweep_refused(access, p_max):
+    """(SQLSTATE, message) of a refused sweep: GET DIAGNOSTICS on the same connection, right after
+    it (the drivers give the error number and message only)"""
+    dbapi = getattr(access.dialect, "loaded_dbapi", None) or access.dialect.dbapi
+    cur = access.connection.cursor()
+    try:
+        with pytest.raises(dbapi.Error):
+            cur.execute(f"CALL {SWEEP}({p_max})")
+        cur.execute("GET DIAGNOSTICS CONDITION 1 @ffs_state = RETURNED_SQLSTATE, @ffs_text = MESSAGE_TEXT")
+        cur.execute("SELECT @ffs_state, @ffs_text")
+        return tuple(cur.fetchone())
+    finally:
+        cur.close()
+
+
+def signed_up(address):
+    """A confirmed account with a session, as Firefox signs up"""
+    client = Client(server_url=f"{AUTH}/v1")
+    session = client.create_account(address, uuid.uuid4().hex)
+    session.verify_email_code(wait_for_code(address))
+    return session
+
+
+def change_primary(session, address, new):
+    """The primary email changed as the account settings do: added, confirmed, made primary"""
+    jwt = mfa(session, address, "email")
+    res = requests.post(f"{AUTH}/v1/mfa/recovery_email", json={"email": new}, headers=jwt, timeout=30)
+    assert res.status_code == 200, res.text
+    res = requests.post(f"{AUTH}/v1/mfa/recovery_email/secondary/verify_code", json={"email": new, "code": wait_for_code(new)}, headers=jwt, timeout=30)
+    assert res.status_code == 200, res.text
+    res = requests.post(f"{AUTH}/v1/mfa/recovery_email/set_primary", json={"email": new}, headers=jwt, timeout=30)
+    assert res.status_code == 200, res.text
+
+
+def test_sweep_disables_accounts_off_the_list(access, fxa):
+    domain = f"ffs-sweep-{uuid.uuid4().hex[:8]}.example.org"
+    moved, moved_to, exact, leaver, gone = tag("moved"), tag("moved-to"), tag("exact"), tag("leaver"), tag("gone")
+    member = f"someone-{uuid.uuid4().hex[:8]}@{domain}"
+    # the accounts of the other tests off the list stay out of it: on the list for this test
+    others = not_allowed(fxa)
+    entries = [moved, exact, leaver, gone, f"@{domain}"] + sorted(set(others.values()))
+    for entry in entries:
+        access.execute(sqltext("INSERT IGNORE INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": entry})
+    try:
+        assert not_allowed(fxa) == {}
+        sessions = {address: signed_up(address) for address in (moved, exact, leaver, gone, member)}
+        uid = {address: s.uid.upper() for address, s in sessions.items()}
+        # signed up on the list, then the primary email changed to one that is not
+        change_primary(sessions[moved], moved, moved_to)
+        assert fxa.execute(sqltext("SELECT normalizedEmail FROM fxa.emails WHERE uid = UNHEX(:u) AND isPrimary"), {"u": uid[moved]}).scalar() == moved_to
+        # off the list (the leaver), off the list and disabled already (gone)
+        access.execute(sqltext("CALL ffs.disable_account_by_email(:e)"), {"e": gone})
+        for entry in (leaver, gone):
+            access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": entry})
+        assert not_allowed(fxa) == {uid[moved]: moved_to, uid[leaver]: leaver}
+        before = {address: state(fxa, u) for address, u in uid.items()}
+        assert all(before[a][0] is None and before[a][1] > 0 for a in (moved, exact, leaver, member)) and before[gone][0] is not None, before
+
+        # refused, and nothing changed: the brake (2 to disable, more than 1 and 0), and p_max not a count
+        assert sweep_refused(access, 1) == (BRAKE, "disable_accounts_not_allowed: 2 accounts would be disabled, more than p_max 1")
+        assert sweep_refused(access, 0) == (BRAKE, "disable_accounts_not_allowed: 2 accounts would be disabled, more than p_max 0")
+        for p_max in ("NULL", "-1"):
+            assert sweep_refused(access, p_max) == ("45000", "disable_accounts_not_allowed: p_max must be a number, 0 or more")
+        assert {address: state(fxa, u) for address, u in uid.items()} == before
+
+        # p_max the real count passes: the two disabled and signed out everywhere, the count in its result
+        assert dict(access.execute(sqltext(f"CALL {SWEEP}(:m)"), {"m": 2}).mappings().one()) == {"disabled": 2}
+        after = {address: state(fxa, u) for address, u in uid.items()}
+        for address in (moved, leaver):
+            assert after[address][0] is not None and after[address][1] == 0, (address, after[address])
+        # on the list (exact, @domain): as they were; disabled already: the same disabledAt, not counted
+        for address in (exact, member, gone):
+            assert after[address] == before[address], (address, after[address], before[address])
+        # nothing left to do: 0, with p_max 0
+        assert dict(access.execute(sqltext(f"CALL {SWEEP}(0)")).mappings().one()) == {"disabled": 0}
+    finally:
+        for entry in entries:
+            access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": entry})

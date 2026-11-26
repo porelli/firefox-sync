@@ -329,14 +329,22 @@ func TestExternalProcedures(t *testing.T) {
 	}
 
 	ext := fxaPolicySQLFor(true)
-	if strings.Join(fxaPolicySQL, "\x00") != before || len(ext) != len(fxaPolicySQL) {
+	if strings.Join(fxaPolicySQL, "\x00") != before || len(ext) != len(fxaPolicySQL)+len(externalOnlySQL) {
 		t.Fatal("fxaPolicySQL changed, or statements added or lost")
 	}
-	changed := 0
-	for i := range ext {
-		if ext[i] != fxaPolicySQL[i] {
+	// the same statements, and those of externalOnlySQL right after their DROP
+	changed, j := 0, 0
+	for i := range fxaPolicySQL {
+		if ext[j] != fxaPolicySQL[i] {
 			changed++
 		}
+		if create := externalOnlySQL[fxaPolicySQL[i]]; create != "" {
+			j++
+			if ext[j] != create {
+				t.Errorf("not after its DROP: %s", fxaPolicySQL[i])
+			}
+		}
+		j++
 	}
 	if changed != 2 {
 		t.Errorf("%d statements differ in external mode, want enable_account and delete_account", changed)
@@ -411,5 +419,105 @@ func TestExternalPolicy(t *testing.T) {
 	t.Setenv("FXA_SIGNUP_ALLOWLIST", "alice@example.com")
 	if _, err := applyEnvPolicy(context.Background(), db); err == nil || !strings.Contains(err.Error(), "leave FXA_SIGNUP_ALLOWLIST empty") {
 		t.Errorf("with a list: %v", err)
+	}
+}
+
+// ffs_access's sweep: made and granted with ADMIN_ACCESS_EXTERNAL only, dropped at every start
+func TestSweepOnlyInExternalMode(t *testing.T) {
+	drop := "DROP PROCEDURE IF EXISTS " + sweepProcedure
+	for _, external := range []bool{false, true} {
+		stmts := fxaPolicySQLFor(external)
+		drops, creates, dropAt, createAt := 0, 0, -1, -1
+		for i, s := range stmts {
+			if s == drop {
+				drops, dropAt = drops+1, i
+			}
+			if strings.HasPrefix(s, "CREATE PROCEDURE "+sweepProcedure+"(") {
+				creates, createAt = creates+1, i
+			}
+		}
+		if want := map[bool]int{false: 0, true: 1}[external]; drops != 1 || creates != want || (external && createAt != dropAt+1) {
+			t.Errorf("external %v: %d drops, %d creates (at %d, drop at %d)", external, drops, creates, createAt, dropAt)
+		}
+		grant := "GRANT EXECUTE ON PROCEDURE " + sweepProcedure + " TO 'ffs_access'@'%'"
+		granted := false
+		for _, g := range fxaAccessGrantsFor(external) {
+			granted = granted || g == grant
+		}
+		if granted != external {
+			t.Errorf("external %v: granted %v", external, granted)
+		}
+	}
+	// the grants of before, the REVOKE first, in both modes; fxaAccessGrants itself unchanged
+	ext := fxaAccessGrantsFor(true)
+	if len(fxaAccessGrants) != 5 || strings.Join(ext[:len(fxaAccessGrants)], "\n") != strings.Join(fxaAccessGrants, "\n") ||
+		strings.Join(fxaAccessGrantsFor(false), "\n") != strings.Join(fxaAccessGrants, "\n") {
+		t.Errorf("grants: %v", ext)
+	}
+	// it comes after ffs.disable_account, so that a stand-in of that one makes it one too
+	for _, stmt := range policySQL(fxaPolicySQLFor(true), []string{"fxa.revokeAccountTokens_1"}) {
+		if strings.HasPrefix(stmt, "CREATE PROCEDURE "+sweepProcedure+"(") && !strings.Contains(stmt, "is missing from the accounts database") {
+			t.Errorf("not a stand-in: %s", stmt)
+		}
+	}
+}
+
+// the sweep: the brake before any change, the policy's 'policy' only, the current primary email,
+// ffs.disable_account for each, the count in a result set
+func TestSweepProcedure(t *testing.T) {
+	sweep := policyStmt(t, fxaPolicySQLFor(true), sweepProcedure)
+	header, _, _ := strings.Cut(sweep, "\n")
+	if header != "CREATE PROCEDURE ffs.disable_accounts_not_allowed(p_max INT)" || !strings.Contains(sweep, "SQL SECURITY DEFINER") {
+		t.Errorf("header: %s", sweep)
+	}
+	at := func(s string) int {
+		t.Helper()
+		i := strings.Index(sweep, s)
+		if i < 0 {
+			t.Fatalf("missing %q: %s", s, sweep)
+		}
+		return i
+	}
+	args := at("IF p_max IS NULL OR p_max < 0 THEN")
+	scan := at("FETCH c_enabled INTO v_uid, v_signup, v_primary;")
+	brake := at("IF v_count > p_max THEN")
+	signal := at("SIGNAL SQLSTATE '" + errSweepBrake + "' SET MESSAGE_TEXT = v_msg;")
+	disable := at("CALL ffs.disable_account(v_uid);")
+	count := at("SELECT v_done AS disabled;")
+	if !(args < scan && scan < brake && brake < signal && signal < disable && disable < count) {
+		t.Errorf("order: %d %d %d %d %d %d", args, scan, brake, signal, disable, count)
+	}
+	// no change before the brake: the one write is ffs.disable_account, after it
+	before := sweep[:signal]
+	for _, w := range []string{"UPDATE ", "DELETE ", "INSERT ", "CALL ", "START TRANSACTION", "COMMIT"} {
+		if strings.Contains(before, w) {
+			t.Errorf("%q before the brake", w)
+		}
+	}
+	for _, w := range []string{"UPDATE ", "DELETE ", "INSERT ", "START TRANSACTION", "COMMIT", "ROLLBACK", "'full'"} {
+		if strings.Contains(sweep, w) {
+			t.Errorf("%q in the sweep", w)
+		}
+	}
+	at("FROM fxa.accounts a WHERE a.disabledAt IS NULL")
+	at("(SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)")
+	if strings.Count(sweep, "SET v_refusal = ffs.signup_refusal(v_email);") != 2 || strings.Count(sweep, "v_refusal <=> 'policy'") != 2 {
+		t.Errorf("the policy asked once to count, once again before each: %s", sweep)
+	}
+	at("IF v_found = 1 AND v_disabled IS NULL AND v_refusal <=> 'policy' THEN")
+	at("IF v_count <= p_max THEN")
+	// the brake's message: its prefix, the count and p_max, within MESSAGE_TEXT's 128 characters
+	at("SET v_msg = CONCAT('" + sweepBrakePrefix + "', v_count, ' accounts would be disabled, more than p_max ', p_max);")
+	if n := len(sweepBrakePrefix + "4294967295 accounts would be disabled, more than p_max 2147483647"); n > 128 {
+		t.Errorf("message of %d characters", n)
+	}
+	if errSweepBrake == "45000" || len(errSweepBrake) != 5 || strings.HasPrefix(errSweepBrake, "00") || strings.HasPrefix(errSweepBrake, "01") || strings.HasPrefix(errSweepBrake, "02") {
+		t.Errorf("SQLSTATE %q: not one of its own, or not an error", errSweepBrake)
+	}
+	// without the mode, nothing of it anywhere
+	for _, s := range fxaPolicySQLFor(false) {
+		if strings.Contains(s, "CREATE PROCEDURE "+sweepProcedure) {
+			t.Error("created without the mode")
+		}
 	}
 }

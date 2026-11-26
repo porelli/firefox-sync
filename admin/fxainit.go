@@ -438,6 +438,9 @@ var fxaPolicySQL = []string{
 		END IF;
 		CALL ffs.delete_account(v_uid);
 	END`,
+	// ffs_access's sweep, made with ADMIN_ACCESS_EXTERNAL only (externalOnlySQL): dropped at
+	// every start, so a start without the mode leaves none behind
+	"DROP PROCEDURE IF EXISTS " + sweepProcedure,
 	"DROP TRIGGER IF EXISTS fxa.ffs_signup_policy",
 	// the gate in front of the accounts API answers with a proper error first, this
 	// catches whatever reaches the auth server another way. With a limit, sign-ups wait
@@ -497,13 +500,108 @@ var externalPolicySQL = map[string]string{
 	END`,
 }
 
-// fxaPolicySQLFor: fxaPolicySQL as ADMIN_ACCESS_EXTERNAL says (externalPolicySQL)
+// sweepProcedure: ffs_access's sweep of the accounts its list no longer allows (externalOnlySQL)
+const sweepProcedure = "ffs.disable_accounts_not_allowed"
+
+// errSweepBrake: the SQLSTATE of the sweep's brake, its own (the other refusals are 45000), so
+// that the system calling it can tell it apart. Its MESSAGE_TEXT: sweepBrakePrefix, then
+// "<n> accounts would be disabled, more than p_max <p_max>"
+const (
+	errSweepBrake    = "45001"
+	sweepBrakePrefix = "disable_accounts_not_allowed: "
+)
+
+// externalOnlySQL: procedures that exist with ADMIN_ACCESS_EXTERNAL only, each made right after
+// its DROP of fxaPolicySQL (which every start runs: without the mode, none is left).
+//
+// ffs.disable_accounts_not_allowed(p_max): for the system that keeps the sign-up allowlist, which
+// changes an email or a domain on its list, while an account's primary email can change after its
+// sign-up (the *_by_email procedures match the sign-up's, fxa.accounts.normalizedEmail, which
+// FxA's set_primary leaves as it was). It disables, and signs out everywhere with
+// ffs.disable_account, every enabled account whose current primary email (its row of fxa.emails;
+// the sign-up's without one) the sign-up policy refuses ('policy', as ffs.enable_account above: not 'full'). The allowlist the
+// system already keeps decides, not a list passed in: one source, nothing to parse in SQL.
+// The brake: counted first, before any change; more than p_max refuses with errSweepBrake and
+// changes nothing, so an allowlist emptied by mistake cannot disable everybody. p_max equal to
+// the count passes, a NULL or negative one is refused. The uids counted are kept (16 bytes each,
+// p_max at most) and checked again one by one before each is disabled: never more than counted.
+// No transaction of its own, and none could hold it: fxa.revokeAccountTokens_1 and
+// ffs.sign_out_all each run START TRANSACTION, which commits any open one (the caller's too),
+// so each account is committed as it is disabled (docs/admin/accounts.md#the-sweep).
+// The count of those disabled in a result set of one row, as ffs.prune: column disabled
+var externalOnlySQL = map[string]string{
+	"DROP PROCEDURE IF EXISTS " + sweepProcedure: `CREATE PROCEDURE ` + sweepProcedure + `(p_max INT)
+	MODIFIES SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_end BOOLEAN DEFAULT FALSE;
+		DECLARE v_uid BINARY(16) DEFAULT NULL;
+		DECLARE v_signup, v_primary, v_email VARCHAR(255) DEFAULT NULL;
+		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
+		DECLARE v_found INT DEFAULT 0;
+		DECLARE v_disabled BIGINT DEFAULT NULL;
+		DECLARE v_count, v_i, v_done INT DEFAULT 0;
+		DECLARE v_uids LONGBLOB;
+		DECLARE v_msg VARCHAR(128) DEFAULT NULL;
+		-- the current primary email is the row of fxa.emails: changing it (set_primary) leaves
+		-- fxa.accounts.normalizedEmail, the email of the sign-up, as it was
+		DECLARE c_enabled CURSOR FOR SELECT a.uid, a.normalizedEmail,
+			(SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)
+			FROM fxa.accounts a WHERE a.disabledAt IS NULL;
+		DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_end = TRUE;
+		IF p_max IS NULL OR p_max < 0 THEN
+			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + sweepBrakePrefix + `p_max must be a number, 0 or more';
+		END IF;
+		SET v_uids = '';
+		-- counted, nothing changed yet
+		OPEN c_enabled;
+		scan: LOOP
+			SET v_end = FALSE;
+			FETCH c_enabled INTO v_uid, v_signup, v_primary;
+			IF v_end THEN
+				LEAVE scan;
+			END IF;
+			-- in variables, as in ffs.enable_account: the columns, the function's value and a
+			-- literal may have different collations, which MySQL refuses to compare (1267)
+			SET v_email = IF(v_primary IS NULL, v_signup, v_primary);
+			SET v_refusal = ffs.signup_refusal(v_email);
+			IF v_refusal <=> 'policy' THEN
+				SET v_count = v_count + 1;
+				IF v_count <= p_max THEN
+					SET v_uids = CONCAT(v_uids, v_uid);
+				END IF;
+			END IF;
+		END LOOP;
+		CLOSE c_enabled;
+		IF v_count > p_max THEN
+			SET v_msg = CONCAT('` + sweepBrakePrefix + `', v_count, ' accounts would be disabled, more than p_max ', p_max);
+			SIGNAL SQLSTATE '` + errSweepBrake + `' SET MESSAGE_TEXT = v_msg;
+		END IF;
+		-- each one checked again (enabled meanwhile, or its email on the list now: left alone)
+		WHILE v_i < v_count DO
+			SET v_uid = SUBSTRING(v_uids, v_i * 16 + 1, 16);
+			SET v_i = v_i + 1;
+			SELECT COUNT(*), MAX(disabledAt) INTO v_found, v_disabled FROM fxa.accounts WHERE uid = v_uid;
+			SET v_signup = (SELECT normalizedEmail FROM fxa.accounts WHERE uid = v_uid);
+			SET v_primary = (SELECT normalizedEmail FROM fxa.emails WHERE uid = v_uid AND isPrimary LIMIT 1);
+			SET v_email = IF(v_primary IS NULL, v_signup, v_primary);
+			SET v_refusal = ffs.signup_refusal(v_email);
+			IF v_found = 1 AND v_disabled IS NULL AND v_refusal <=> 'policy' THEN
+				CALL ffs.disable_account(v_uid);
+				SET v_done = v_done + 1;
+			END IF;
+		END WHILE;
+		SELECT v_done AS disabled;
+	END`,
+}
+
+// fxaPolicySQLFor: fxaPolicySQL as ADMIN_ACCESS_EXTERNAL says (externalPolicySQL, externalOnlySQL)
 func fxaPolicySQLFor(external bool) []string {
 	if !external {
 		return fxaPolicySQL
 	}
-	stmts := make([]string, len(fxaPolicySQL))
-	for i, stmt := range fxaPolicySQL {
+	stmts := make([]string, 0, len(fxaPolicySQL)+len(externalOnlySQL))
+	for _, stmt := range fxaPolicySQL {
 		header, _, _ := strings.Cut(stmt, "\n")
 		name, _, _ := strings.Cut(strings.TrimPrefix(header, "CREATE PROCEDURE "), "(")
 		switch {
@@ -513,7 +611,10 @@ func fxaPolicySQLFor(external bool) []string {
 		case name == "ffs.delete_account":
 			stmt = strings.Replace(stmt, deleteAllowlistRow, "-- ADMIN_ACCESS_EXTERNAL: the allowlist is the other system's", 1)
 		}
-		stmts[i] = stmt
+		stmts = append(stmts, stmt)
+		if create := externalOnlySQL[stmt]; create != "" {
+			stmts = append(stmts, create)
+		}
 	}
 	return stmts
 }
@@ -599,6 +700,20 @@ var fxaAccessGrants = []string{
 	"GRANT EXECUTE ON PROCEDURE ffs.disable_account_by_email TO 'ffs_access'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.enable_account_by_email TO 'ffs_access'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.delete_account_by_email TO 'ffs_access'@'%'",
+}
+
+// fxaAccessExternalGrants: with ADMIN_ACCESS_EXTERNAL, the procedures of externalOnlySQL too
+var fxaAccessExternalGrants = []string{
+	"GRANT EXECUTE ON PROCEDURE " + sweepProcedure + " TO 'ffs_access'@'%'",
+}
+
+// fxaAccessGrantsFor: ffs_access's grants as ADMIN_ACCESS_EXTERNAL says. Without the mode the
+// sweep does not exist (fxaPolicySQL drops it, and its grant with it)
+func fxaAccessGrantsFor(external bool) []string {
+	if !external {
+		return fxaAccessGrants
+	}
+	return append(append([]string{}, fxaAccessGrants...), fxaAccessExternalGrants...)
 }
 
 // fxaObsoleteGrants: what the previous version granted, revoked one by one where
@@ -761,7 +876,7 @@ func fxaInit(ctx context.Context) error {
 		}
 	}
 	if password := env("FXA_ACCESS_DB_PASSWORD", ""); password != "" {
-		if err := fxaUser(ctx, db, fxaAccessUser, password, fxaAccessGrants, nil); err != nil {
+		if err := fxaUser(ctx, db, fxaAccessUser, password, fxaAccessGrantsFor(external), nil); err != nil {
 			return err
 		}
 		log.Printf("%s: the user of the system that manages who may sign up (FXA_ACCESS_DB_PASSWORD)", fxaAccessUser)

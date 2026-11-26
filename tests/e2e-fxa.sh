@@ -1213,8 +1213,8 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
   dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-access.log" 2>&1
   check "$? $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 @example.com" "fxa-policy with ADMIN_ACCESS_EXTERNAL: the allowlist's rows left as they are"
   as_ffs_access() { dc exec -T -e MYSQL_PWD="${ACCESS_PW}" fxa-db "${DB_CLIENT}" -uffs_access -h 127.0.0.1 --protocol=tcp -sN -e "$1" < /dev/null 2>&1 | grep -v '^WARNING: '; }
-  access_grants() { as_ffs_access 'SHOW GRANTS' | grep -cE 'GRANT (SELECT, INSERT, DELETE ON `?ffs`?\.`?signup_allowlist`?|EXECUTE ON PROCEDURE `?ffs`?\.`?(disable|enable|delete)_account_by_email`?) '; }
-  check "$(access_grants) $(as_ffs_access 'SHOW GRANTS' | grep -c ' ON ')" "4 5" "ffs_access: the allowlist's rows and the three procedures by email, nothing else"
+  access_grants() { as_ffs_access 'SHOW GRANTS' | grep -cE 'GRANT (SELECT, INSERT, DELETE ON `?ffs`?\.`?signup_allowlist`?|EXECUTE ON PROCEDURE `?ffs`?\.`?((disable|enable|delete)_account_by_email|disable_accounts_not_allowed)`?) '; }
+  check "$(access_grants) $(as_ffs_access 'SHOW GRANTS' | grep -c ' ON ')" "5 6" "ffs_access: the allowlist's rows, the three procedures by email and the sweep, nothing else"
   # the database enforces it too (docs/admin/accounts.md#the-database-enforces-it-too): the admin
   # UI's ffs_admin reads the sign-up policy and its allowlist, and changes neither
   admin_writes() {
@@ -1242,7 +1242,7 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
     -c "cd /app && $(pytest_sh "/tests/test_fxa_external.py")" < /dev/null
   rc=$?
   [ "${rc}" = 0 ] || admin_log
-  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI; its Enable refused off the list, its Delete leaves the list alone"
+  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI; its Enable refused off the list, its Delete leaves the list alone; the sweep disables an account whose primary email left the list, its brake refuses (SQLSTATE 45001) and changes nothing"
   # ffs_admin itself, not only through the admin UI (docs/admin/accounts.md#the-database-enforces-it-too):
   # the account test_fxa_external.py left disabled and off the list
   left_uid=$(fxa_sql "SELECT HEX(uid) FROM fxa.accounts WHERE normalizedEmail LIKE 'ffs-external-left-%' AND disabledAt IS NOT NULL ORDER BY createdAt DESC LIMIT 1")
@@ -1251,10 +1251,16 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
     "ADMIN_ACCESS_EXTERNAL=1: CALL ffs.enable_account as ffs_admin refused for an email off the list, and says why"
   # the procedures made again at every start: their grants given again, the rows kept
   dc run --rm --no-deps fxa-policy > /dev/null 2>&1
-  check "$? $(access_grants) $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 4 @example.com" "fxa-policy again: ffs_access keeps its grants, the rows stay"
+  check "$? $(access_grants) $(fxa_sql "SELECT GROUP_CONCAT(entry) FROM ffs.signup_allowlist")" "0 5 @example.com" "fxa-policy again: ffs_access keeps its grants, the rows stay"
   set_env FXA_SIGNUP_ALLOWLIST alice@example.org
   dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-access.log" 2>&1
   check "$? $(grep -c 'leave FXA_SIGNUP_ALLOWLIST empty' "${WORK}/fxa-policy-access.log")" "1 1" "fxa-policy refuses a FXA_SIGNUP_ALLOWLIST with ADMIN_ACCESS_EXTERNAL, and says why"
+  # the mode off, the password kept: no sweep, ffs_access keeps the allowlist and the procedures by email
+  set_env ADMIN_ACCESS_EXTERNAL ""
+  set_env FXA_SIGNUP_ALLOWLIST @example.com
+  dc run --rm --no-deps fxa-policy > /dev/null 2>&1
+  check "$? $(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'ffs' AND ROUTINE_NAME = 'disable_accounts_not_allowed'") $(access_grants) $(as_ffs_access 'SHOW GRANTS' | grep -c 'disable_accounts_not_allowed') $(as_ffs_access 'CALL ffs.disable_accounts_not_allowed(1000)' | grep -cE '^ERROR (1370|1305) ')" \
+    "0 0 4 0 1" "ADMIN_ACCESS_EXTERNAL off, FXA_ACCESS_DB_PASSWORD kept: ffs.disable_accounts_not_allowed dropped, ffs_access has no grant on it, a CALL refused"
   # off again: no password, no ffs_access
   set_env FXA_ACCESS_DB_PASSWORD ""
   set_env ADMIN_ACCESS_EXTERNAL ""

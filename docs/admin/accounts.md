@@ -407,8 +407,9 @@ With [self-hosted accounts](../accounts.md), your system can keep the sign-up al
 | `ffs.disable_account_by_email(email)` | `EXECUTE`: disables the account and signs it out everywhere, as Disable in the admin UI |
 | `ffs.enable_account_by_email(email)` | `EXECUTE`: enables the account, whatever the sign-up policy says |
 | `ffs.delete_account_by_email(email)` | `EXECUTE`: deletes a disabled account, as Delete in the admin UI. With the mode on, its row of `ffs.signup_allowlist` stays: remove it yourself |
+| `ffs.disable_accounts_not_allowed(p_max)` | `EXECUTE`, with the mode on only: disables every enabled account your list no longer allows, at most `p_max` ([The sweep](#the-sweep)) |
 
-Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The email is the account's primary one, compared without case and spaces. An unknown email answers `no such account`.
+Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The email of the procedures by email is the one the account signed up with, compared without case and spaces: when someone changes their primary email in the account settings, the accounts keep the first one there. An unknown email answers `no such account`.
 
 - Without `FXA_ACCESS_DB_PASSWORD`, `fxa-policy` drops the user. Give the password at every start: in `.env`, which `--upgrade` keeps, or in your values or `existingSecret` with Helm.
 - `fxa-policy` makes the procedures again at every start, which drops their grants, and then gives them again. The rows of `ffs.signup_allowlist` stay: its table is never made again.
@@ -417,9 +418,33 @@ Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their de
 
 With the mode on, `fxa-policy` sets `FXA_SIGNUPS` at every start (`allowlist`, for this) and leaves the rows of the sign-up allowlist alone. It refuses a `FXA_SIGNUP_ALLOWLIST`, which would be a second list. It gives the admin UI's `ffs_admin` only `SELECT` on `ffs.settings` and `ffs.signup_allowlist` ([The database enforces it too](#the-database-enforces-it-too)).
 
-An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`. The access tokens Firefox already holds stay valid until they expire (`FXA_ACCESS_TOKEN_LIFETIME`): the database cannot reach their copies in Redis, which Disable in the admin UI also removes. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
+An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`, or let [the sweep](#the-sweep) find it. The access tokens Firefox already holds stay valid until they expire (`FXA_ACCESS_TOKEN_LIFETIME`): the database cannot reach their copies in Redis, which Disable in the admin UI also removes. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
 
 With this, `SYNC_ALLOWED_ACCOUNTS` can stay off: every account of the server is one your system let sign up.
+
+#### The sweep
+
+Someone can change their account's primary email after signing up, to one your list never had. Your system then knows no email that finds the account. `ffs.disable_accounts_not_allowed(p_max)` finds them all: it disables, and signs out everywhere as `ffs.disable_account_by_email` does, every enabled account whose current primary email the sign-up policy refuses. It asks `ffs.signup_refusal`, so the emails and `@domain` rows of `ffs.signup_allowlist` count as for a sign-up, compared the same way. Max accounts does not count here. Accounts already disabled stay as they are and are not counted.
+
+Call it at the end of every reconcile, after the `COMMIT` of your allowlist changes, with `p_max` the number of people you expect to leave plus a small margin:
+
+```sql
+CALL ffs.disable_accounts_not_allowed(5);
+```
+
+- **The count**: the call returns one row with one column, `disabled`, the number of accounts it disabled. Read it like the result of a `SELECT`.
+- **The brake**: it counts first and changes nothing yet. If more than `p_max` accounts would be disabled, it disables none and fails with SQLSTATE `45001`, error 1644, and the message `disable_accounts_not_allowed: 7 accounts would be disabled, more than p_max 5`. `p_max` equal to the count passes. So a list emptied by mistake, or `FXA_SIGNUPS=closed`, cannot disable everyone, while a group you emptied on purpose passes with the right `p_max`. A `NULL` or negative `p_max` fails with SQLSTATE `45000` and `disable_accounts_not_allowed: p_max must be a number, 0 or more`. Some drivers give only the error number and the message, Python's for one: match the message's start, `disable_accounts_not_allowed: `, and the words `would be disabled` then.
+- **Your list decides**, not a list passed in. You already keep the allowlist: one source, and nothing to parse in SQL. With `FXA_SIGNUPS=open` the sweep finds no one.
+- **The current primary email**: someone who changes it to an email off your list is disabled by the next sweep, even if their first email is still on it. Enable them with `ffs.enable_account_by_email` and their first email, after you add the new one to your list.
+
+It is not one transaction, and it opens none of its own:
+
+- It runs in your session. The brake, a bad `p_max` and a sweep with no one to disable change nothing and commit nothing: a transaction of yours stays open, as it was.
+- Each account it disables commits. Signing out runs `START TRANSACTION` in Mozilla's `revokeAccountTokens_1` and again for the OAuth tokens, and in MySQL and MariaDB that commits whatever transaction is open. Called inside your transaction, the first account disabled also commits your changes before it. Call it after your `COMMIT`.
+- A failure halfway, such as a lock wait timeout or a lost connection: the accounts before it stay disabled and signed out, and the rest are untouched. The account it was at is disabled, and may still have sessions or OAuth tokens: sign it out with **Sign out everywhere** on its page in the admin UI. The call fails, with no count. Call it again for the rest. The disabled account is not counted again.
+- Between the count and the changes, each account is checked again. One whose email went back on your list meanwhile stays enabled, and the sweep never disables more than it counted.
+
+`fxa-policy` makes the sweep, and gives `ffs_access` its `EXECUTE`, only with `ADMIN_ACCESS_EXTERNAL` on. A start without the mode drops it, and with it the grant.
 
 ### Sign-in to the admin UI
 
