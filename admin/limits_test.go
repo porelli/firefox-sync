@@ -265,9 +265,9 @@ func TestSignupRefusalSQL(t *testing.T) {
 	sql := strings.Join(fxaPolicySQL, "\n")
 	for _, want := range []string{
 		// the gate's question and the trigger's: the same function
-		"CREATE FUNCTION ffs.signup_refusal(address VARCHAR(255)) RETURNS VARCHAR(16)",
+		"CREATE FUNCTION ffs.signup_refusal(address VARCHAR(255) CHARACTER SET utf8mb4) RETURNS VARCHAR(16)",
 		"RETURN ffs.signup_refusal(address) IS NULL",
-		"SET refusal = ffs.signup_refusal(NEW.normalizedEmail);",
+		"SET refusal = ffs.signup_refusal(NEW.email);",
 		// the limit, read without a warning when there is none
 		"SET max_accounts = (SELECT value FROM ffs.settings WHERE name = 'max_accounts');",
 		"max_accounts <> 'unlimited'", ">= CAST(max_accounts AS UNSIGNED)",
@@ -428,5 +428,85 @@ func TestNavAndSchemaAndBackups(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "accounts databases") {
 		t.Error("Quadlets without the accounts: the accounts databases")
+	}
+}
+
+// the sign-up allowlist byte for byte: the table, the function, and every email compared in the
+// procedures (the server's default collation equates alice@exámple.org and alice@example.org)
+func TestSignupAllowlistByteExact(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		stmts := fxaPolicySQLFor(external)
+		all := strings.Join(stmts, "\n")
+		for _, want := range []string{
+			"entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY",
+			"DECLARE trimmed, normalized VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;",
+			"SET trimmed = TRIM(address);", "SET normalized = LOWER(trimmed);",
+			"WHERE entry = normalized COLLATE utf8mb4_bin",
+			"OR (local_ascii AND entry = domain COLLATE utf8mb4_bin)",
+			// nothing lower-casing changed in size: the Kelvin sign is no k
+			"AND LENGTH(normalized) = LENGTH(trimmed)",
+			"SET local_ascii = CHAR_LENGTH(normalized) - CHAR_LENGTH(domain) = LENGTH(normalized) - LENGTH(domain);",
+			"CREATE FUNCTION ffs.signup_allowed(address VARCHAR(255) CHARACTER SET utf8mb4) RETURNS BOOLEAN",
+		} {
+			if !strings.Contains(all, want) {
+				t.Errorf("external %v: no %q", external, want)
+			}
+		}
+		// every comparison of an email or an entry: COLLATE utf8mb4_bin on it, in utf8mb4
+		cmp := regexp.MustCompile(`(?i)\b(entry|normalizedEmail|email)\s*(=|<=>|LIKE|IN)\s*([^\n;]*)`)
+		for _, s := range stmts {
+			for _, m := range cmp.FindAllStringSubmatch(s, -1) {
+				if strings.HasPrefix(s, "CREATE OR REPLACE") || strings.HasPrefix(s, "CREATE TABLE") {
+					continue
+				}
+				if !strings.Contains(m[3], "COLLATE utf8mb4_bin") {
+					t.Errorf("external %v: %q without COLLATE utf8mb4_bin", external, m[0])
+				}
+			}
+			// the variables compared so are utf8mb4: COLLATE utf8mb4_bin on another one is an error
+			for _, v := range regexp.MustCompile(`DECLARE ([\w, ]+) VARCHAR\(\d+\)( CHARACTER SET \w+)?`).FindAllStringSubmatch(s, -1) {
+				for _, name := range strings.Split(v[1], ",") {
+					if name = strings.TrimSpace(name); strings.Contains(s, name+" COLLATE utf8mb4_bin") && v[2] != " CHARACTER SET utf8mb4" {
+						t.Errorf("external %v: %s compared in utf8mb4_bin, declared %q", external, name, v[0])
+					}
+				}
+			}
+		}
+	}
+	// the trigger asks with the email as given, not the auth server's toLowerCase()
+	if trigger := strings.Join(fxaPolicySQL, "\n"); !strings.Contains(trigger, "SET refusal = ffs.signup_refusal(NEW.email);") {
+		t.Error("the trigger does not ask with NEW.email")
+	}
+	if enable := policyStmt(t, fxaPolicySQLFor(true), "ffs.enable_account"); !strings.Contains(enable, "MAX(email) INTO v_found, v_email") {
+		t.Errorf("external enable: %s", enable)
+	}
+}
+
+// an install made before: the column converted at the next start, once; none when it is right
+func TestAllowlistBinary(t *testing.T) {
+	for _, c := range []struct {
+		charset, collation string
+		alter              bool
+	}{
+		{"utf8mb4", "utf8mb4_0900_ai_ci", true}, {"utf8mb4", "utf8mb4_uca1400_ai_ci", true}, {"latin1", "latin1_swedish_ci", true},
+		{"utf8mb3", "utf8mb3_bin", true}, {"utf8mb4", "utf8mb4_bin", false},
+	} {
+		fake := &fakeFxa{}
+		fake.answer = func(query string, _ []driver.Value) *fakeRows {
+			if strings.Contains(query, "information_schema.COLUMNS") && strings.Contains(query, "'signup_allowlist'") {
+				return &fakeRows{cols: []string{"charset", "collation"}, rows: [][]driver.Value{{c.charset, c.collation}}}
+			}
+			return nil
+		}
+		if err := allowlistBinary(t.Context(), sql.OpenDB(fake)); err != nil {
+			t.Fatal(err)
+		}
+		altered := strings.Join(fake.statements(), "\n") == allowlistAlter
+		if altered != c.alter || (!c.alter && len(fake.statements()) != 0) {
+			t.Errorf("%s: %q", c.collation, fake.statements())
+		}
+	}
+	if !strings.Contains(allowlistAlter, "MODIFY entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL") {
+		t.Error(allowlistAlter)
 	}
 }

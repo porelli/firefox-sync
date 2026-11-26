@@ -179,10 +179,10 @@ def state(fxa, uid):
 
 
 def not_allowed(fxa):
-    """The enabled accounts whose current primary email (fxa.emails; the sign-up's without one)
-    the sign-up policy refuses with 'policy': {uid: email}, as the sweep sees them"""
+    """The enabled accounts whose current primary email (fxa.emails; the sign-up's without one),
+    as given, the sign-up policy refuses with 'policy': {uid: email}, as the sweep sees them"""
     found = {}
-    rows = fxa.execute(sqltext("SELECT HEX(a.uid), a.normalizedEmail, (SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1) "
+    rows = fxa.execute(sqltext("SELECT HEX(a.uid), a.email, (SELECT e.email FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1) "
                                "FROM fxa.accounts a WHERE a.disabledAt IS NULL")).all()
     for uid, signup, primary in rows:
         address = primary or signup
@@ -230,8 +230,9 @@ def test_sweep_disables_accounts_off_the_list(access, fxa):
     moved, moved_to, exact, leaver, gone = tag("moved"), tag("moved-to"), tag("exact"), tag("leaver"), tag("gone")
     member = f"someone-{uuid.uuid4().hex[:8]}@{domain}"
     # the accounts of the other tests off the list stay out of it: on the list for this test
+    # (lower-cased, as the policy compares)
     others = not_allowed(fxa)
-    entries = [moved, exact, leaver, gone, f"@{domain}"] + sorted(set(others.values()))
+    entries = [moved, exact, leaver, gone, f"@{domain}"] + sorted({e.strip().lower() for e in others.values()})
     for entry in entries:
         access.execute(sqltext("INSERT IGNORE INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": entry})
     try:
@@ -245,7 +246,7 @@ def test_sweep_disables_accounts_off_the_list(access, fxa):
         access.execute(sqltext("CALL ffs.disable_account_by_email(:e)"), {"e": gone})
         for entry in (leaver, gone):
             access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": entry})
-        assert not_allowed(fxa) == {uid[moved]: moved_to, uid[leaver]: leaver}
+        assert {u: e.lower() for u, e in not_allowed(fxa).items()} == {uid[moved]: moved_to, uid[leaver]: leaver}
         before = {address: state(fxa, u) for address, u in uid.items()}
         assert all(before[a][0] is None and before[a][1] > 0 for a in (moved, exact, leaver, member)) and before[gone][0] is not None, before
 

@@ -217,7 +217,7 @@ What each script checks of the admin UI. The pages themselves: [The admin UI](..
 
 - the SMTP health row and a test email; the public URLs through the HTTPS proxy and the sign-up gate (the probe creates no account with open sign-ups); the schema levels;
 - invitations, Connect a device, the Configuration page (the accounts' values, no secret);
-- sign-ups refused through the gate and directly, the allowlist, closing and reopening sign-ups;
+- sign-ups refused through the gate and directly, the allowlist, closing and reopening sign-ups; the allowlist byte for byte (`test_fxa_admin.py` and `e2e-fxa.sh`): accented and full-width look-alikes of an email and of an `@domain` refused through the gate and directly, the same in capitals allowed, a Kelvin sign refused, beyond ASCII only an entry that spells it out, a Unicode domain and its `xn--` form apart, and a column of before (`utf8mb4_unicode_ci`) converted by `fxa-policy` once, every row kept;
 - the accounts list, disabling an account, max users and max accounts (full: the gate, the database refusal, the line, the health row, the event and Prometheus; room again; no limit);
 - `FXA_MAX_ACCOUNTS` like `SYNC_MAX_USERS`: written by `prepare_environment.sh`, refused when not valid, kept from the page with `initial:`, replaced by a plain number, `ffs.signup_refusal` with 0 and unlimited;
 - what an account stores, the metrics and the event log, health and database sizes, the badges, rate-limit blocks lifted;

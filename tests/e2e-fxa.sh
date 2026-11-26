@@ -1198,6 +1198,32 @@ set_env FXA_MAX_ACCOUNTS lots
 dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-bad.log" 2>&1
 check "$? $(grep -c 'FXA_MAX_ACCOUNTS="lots" is not valid' "${WORK}/fxa-policy-bad.log")" "1 1" "fxa-policy refuses FXA_MAX_ACCOUNTS=lots, and says why"
 check "$(fxa_max)" 500 "max accounts unchanged by a FXA_MAX_ACCOUNTS not valid"
+# the allowlist byte for byte after lower-casing, whatever the server's collation: a table of
+# before (the server's default, accent- and width-blind) converted by the next fxa-policy, once
+allowlist_collation() { fxa_sql "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'ffs' AND TABLE_NAME = 'signup_allowlist' AND COLUMN_NAME = 'entry'"; }
+entries_before=$(fxa_sql "SELECT COUNT(*) FROM ffs.signup_allowlist")
+fxa_sql "ALTER TABLE ffs.signup_allowlist MODIFY entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL" > /dev/null
+check "$(allowlist_collation)" utf8mb4_unicode_ci "ffs.signup_allowlist as an install of before has it"
+dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-collation.log" 2>&1
+check "$? $(allowlist_collation) $(grep -c 'entry converted from utf8mb4_unicode_ci to utf8mb4_bin' "${WORK}/fxa-policy-collation.log") $(fxa_sql "SELECT COUNT(*) FROM ffs.signup_allowlist")" \
+  "0 utf8mb4_bin 1 ${entries_before}" "fxa-policy converts ffs.signup_allowlist.entry to utf8mb4_bin, every row kept"
+dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-collation.log" 2>&1
+check "$? $(grep -c 'entry converted' "${WORK}/fxa-policy-collation.log")" "0 0" "and only once"
+# no accented or full-width look-alike of an entry; beyond ASCII only an entry that spells it out,
+# and a Unicode domain and its xn-- form are two addresses (as the auth server keeps them). In hex:
+# whatever the client's character set
+u8() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+u8sql() { echo "CONVERT(UNHEX('$(u8 "$1")') USING utf8mb4)"; }
+refusals() { for e in "$@"; do fxa_sql "SELECT COALESCE(ffs.signup_refusal($(u8sql "$e")), 'allowed')"; done | paste -sd' ' -; }
+lookalike_entries=("e2e-exact@example.org" "e2e-kim@example.org" "@exämple.net" "@xn--exmple-cua.org")
+for e in "${lookalike_entries[@]}"; do fxa_sql "INSERT IGNORE INTO ffs.signup_allowlist (entry) VALUES ($(u8sql "$e"))" > /dev/null; done
+check "$(refusals e2e-exact@example.org ' E2E-Exact@Example.ORG' e2e-exact@exámple.org e2e-exact@ｅxample.org e2é-exact@example.org e2e-kim@example.org "$(printf 'e2e-\342\204\252im@example.org')")" \
+  "allowed allowed policy policy policy allowed policy" "an exact entry: in capitals allowed, its accented, full-width and Kelvin-sign look-alikes refused"
+check "$(refusals someone@example.com someone@exámple.com someone@ｅxample.com jösé@example.com)" "allowed policy policy policy" \
+  "a domain entry (@example.com): its look-alikes and an address beyond ASCII before it refused"
+check "$(refusals someone@exämple.net someone@EXÄMPLE.NET someone@xn--exmple-cua.net someone@xn--exmple-cua.org someone@exämple.org)" "allowed allowed policy allowed policy" \
+  "a Unicode domain entry allows its own addresses only, in Unicode; an xn-- entry its xn-- form only"
+for e in "${lookalike_entries[@]}"; do fxa_sql "DELETE FROM ffs.signup_allowlist WHERE entry = $(u8sql "$e")" > /dev/null; done
 # the trigger on its own: full refuses an insert that skips the gate and the auth server
 set_env FXA_MAX_ACCOUNTS initial:unlimited
 fxa_sql "UPDATE ffs.settings SET value = '0' WHERE name = 'max_accounts'" > /dev/null

@@ -24,8 +24,10 @@ var fxaPolicySQL = []string{
 		value TEXT NOT NULL,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 	)`,
+	// entry byte for byte (utf8mb4_bin): the server's default collation would match
+	// alice@exämple.org or a full-width ｅ to alice@example.org. An older table: allowlistBinary
 	`CREATE TABLE IF NOT EXISTS ffs.signup_allowlist (
-		entry VARCHAR(255) PRIMARY KEY,
+		entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
 	"DROP FUNCTION IF EXISTS ffs.signup_allowed",
@@ -33,17 +35,29 @@ var fxaPolicySQL = []string{
 	// why a sign-up is refused, NULL when it is allowed. 'policy': not an email or a
 	// domain (@example.com) of the allowlist, or anything but open, allowlist or closed
 	// (e.g. a missing setting). 'full': FXA_MAX_ACCOUNTS accounts or more (a number, or
-	// unlimited; missing: no limit, as before it existed; 0: nobody new)
-	`CREATE FUNCTION ffs.signup_refusal(address VARCHAR(255)) RETURNS VARCHAR(16)
+	// unlimited; missing: no limit, as before it existed; 0: nobody new).
+	// The allowlist matches byte for byte after LOWER(TRIM()), in utf8mb4_bin whatever the
+	// server's collation: no accented or full-width look-alike of an entry. Beyond ASCII, the
+	// entry must spell out every such character: a domain entry for an address whose part
+	// before the domain is ASCII (the auth server takes no other), and nothing lower-casing
+	// changed in size (LOWER turns the Kelvin sign into a k: a look-alike of an ASCII entry)
+	`CREATE FUNCTION ffs.signup_refusal(address VARCHAR(255) CHARACTER SET utf8mb4) RETURNS VARCHAR(16)
 	READS SQL DATA
 	SQL SECURITY DEFINER
 	BEGIN
 		DECLARE mode VARCHAR(16) DEFAULT NULL;
 		DECLARE max_accounts VARCHAR(32) DEFAULT NULL;
-		DECLARE normalized VARCHAR(255) DEFAULT LOWER(TRIM(address));
+		DECLARE trimmed, normalized VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;
+		DECLARE domain VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;
+		DECLARE local_ascii BOOLEAN DEFAULT FALSE;
+		SET trimmed = TRIM(address);
+		SET normalized = LOWER(trimmed);
+		SET domain = CONCAT('@', SUBSTRING_INDEX(normalized, '@', -1));
+		SET local_ascii = CHAR_LENGTH(normalized) - CHAR_LENGTH(domain) = LENGTH(normalized) - LENGTH(domain);
 		SET mode = (SELECT value FROM ffs.settings WHERE name = 'signups');
-		IF NOT (mode <=> 'open' OR (mode <=> 'allowlist' AND EXISTS (SELECT 1 FROM ffs.signup_allowlist
-				WHERE entry = normalized OR entry = CONCAT('@', SUBSTRING_INDEX(normalized, '@', -1))))) THEN
+		IF NOT (mode <=> 'open' OR (mode <=> 'allowlist' AND LENGTH(normalized) = LENGTH(trimmed)
+				AND EXISTS (SELECT 1 FROM ffs.signup_allowlist WHERE entry = normalized COLLATE utf8mb4_bin
+					OR (local_ascii AND entry = domain COLLATE utf8mb4_bin)))) THEN
 			RETURN 'policy';
 		END IF;
 		SET max_accounts = (SELECT value FROM ffs.settings WHERE name = 'max_accounts');
@@ -53,7 +67,7 @@ var fxaPolicySQL = []string{
 		END IF;
 		RETURN NULL;
 	END`,
-	`CREATE FUNCTION ffs.signup_allowed(address VARCHAR(255)) RETURNS BOOLEAN
+	`CREATE FUNCTION ffs.signup_allowed(address VARCHAR(255) CHARACTER SET utf8mb4) RETURNS BOOLEAN
 	READS SQL DATA
 	SQL SECURITY DEFINER
 	RETURN ffs.signup_refusal(address) IS NULL`,
@@ -302,7 +316,7 @@ var fxaPolicySQL = []string{
 	BEGIN
 		DECLARE v_found INT DEFAULT 0;
 		DECLARE v_disabled BIGINT DEFAULT NULL;
-		DECLARE v_email VARCHAR(255) DEFAULT NULL;
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
 		DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 		SELECT COUNT(*), MAX(disabledAt), MAX(normalizedEmail) INTO v_found, v_disabled, v_email
 			FROM fxa.accounts WHERE uid = p_uid;
@@ -396,43 +410,50 @@ var fxaPolicySQL = []string{
 	END`,
 	// The accounts by email, for a system that manages who may sign up (ffs_access,
 	// FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): the account whose
-	// primary email it is (normalized as the accounts do), through the procedures above, so that
+	// primary email it is (normalized as the accounts do, then byte for byte: no look-alike finds
+	// another account), through the procedures above, so that
 	// ffs_access needs nothing of fxa.*. Disable signs it out everywhere (ffs.disable_account);
 	// delete takes a disabled account only (ffs.delete_account), not its Sync data. Enable is
 	// its own UPDATE, not ffs.enable_account: with ADMIN_ACCESS_EXTERNAL that one asks the
 	// sign-up policy, and the system that decides who has access must not be refused by it
 	// (FXA_SIGNUPS=closed, an email it enables before adding it again)
 	"DROP PROCEDURE IF EXISTS ffs.disable_account_by_email",
-	`CREATE PROCEDURE ffs.disable_account_by_email(p_email VARCHAR(255))
+	`CREATE PROCEDURE ffs.disable_account_by_email(p_email VARCHAR(255) CHARACTER SET utf8mb4)
 	MODIFIES SQL DATA
 	SQL SECURITY DEFINER
 	BEGIN
 		DECLARE v_uid BINARY(16) DEFAULT NULL;
-		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;
+		SET v_email = LOWER(TRIM(p_email));
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = v_email COLLATE utf8mb4_bin LIMIT 1;
 		IF v_uid IS NULL THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
 		CALL ffs.disable_account(v_uid);
 	END`,
 	"DROP PROCEDURE IF EXISTS ffs.enable_account_by_email",
-	`CREATE PROCEDURE ffs.enable_account_by_email(p_email VARCHAR(255))
+	`CREATE PROCEDURE ffs.enable_account_by_email(p_email VARCHAR(255) CHARACTER SET utf8mb4)
 	MODIFIES SQL DATA
 	SQL SECURITY DEFINER
 	BEGIN
 		DECLARE v_uid BINARY(16) DEFAULT NULL;
-		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;
+		SET v_email = LOWER(TRIM(p_email));
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = v_email COLLATE utf8mb4_bin LIMIT 1;
 		IF v_uid IS NULL THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
 		UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = v_uid;
 	END`,
 	"DROP PROCEDURE IF EXISTS ffs.delete_account_by_email",
-	`CREATE PROCEDURE ffs.delete_account_by_email(p_email VARCHAR(255))
+	`CREATE PROCEDURE ffs.delete_account_by_email(p_email VARCHAR(255) CHARACTER SET utf8mb4)
 	MODIFIES SQL DATA
 	SQL SECURITY DEFINER
 	BEGIN
 		DECLARE v_uid BINARY(16) DEFAULT NULL;
-		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = LOWER(TRIM(p_email)) LIMIT 1;
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;
+		SET v_email = LOWER(TRIM(p_email));
+		SELECT uid INTO v_uid FROM fxa.accounts WHERE normalizedEmail = v_email COLLATE utf8mb4_bin LIMIT 1;
 		IF v_uid IS NULL THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
@@ -452,7 +473,9 @@ var fxaPolicySQL = []string{
 		DECLARE locked VARCHAR(32) DEFAULT NULL;
 		DECLARE CONTINUE HANDLER FOR NOT FOUND SET locked = NULL;
 		SELECT value INTO locked FROM ffs.settings WHERE name = 'max_accounts' FOR UPDATE;
-		SET refusal = ffs.signup_refusal(NEW.normalizedEmail);
+		-- the email as given: normalizedEmail is the auth server's toLowerCase(), which turns
+		-- the Kelvin sign into a k too
+		SET refusal = ffs.signup_refusal(NEW.email);
 		IF refusal = 'full' THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Sign-up refused: the server is full (FXA_MAX_ACCOUNTS)';
 		ELSEIF refusal IS NOT NULL THEN
@@ -462,7 +485,7 @@ var fxaPolicySQL = []string{
 }
 
 // deleteAllowlistRow: the last statement of ffs.delete_account without ADMIN_ACCESS_EXTERNAL
-const deleteAllowlistRow = "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email);"
+const deleteAllowlistRow = "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email) COLLATE utf8mb4_bin;"
 
 // errAccessElsewhere: ffs.enable_account's refusal with ADMIN_ACCESS_EXTERNAL, which the admin
 // UI shows as it is (procedureError)
@@ -484,9 +507,10 @@ var externalPolicySQL = map[string]string{
 	SQL SECURITY DEFINER
 	BEGIN
 		DECLARE v_found INT DEFAULT 0;
-		DECLARE v_email VARCHAR(255) DEFAULT NULL;
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
 		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
-		SELECT COUNT(*), MAX(normalizedEmail) INTO v_found, v_email FROM fxa.accounts WHERE uid = p_uid;
+		-- the email as given, as the trigger asks
+		SELECT COUNT(*), MAX(email) INTO v_found, v_email FROM fxa.accounts WHERE uid = p_uid;
 		IF v_found = 0 THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
@@ -536,7 +560,7 @@ var externalOnlySQL = map[string]string{
 	BEGIN
 		DECLARE v_end BOOLEAN DEFAULT FALSE;
 		DECLARE v_uid BINARY(16) DEFAULT NULL;
-		DECLARE v_signup, v_primary, v_email VARCHAR(255) DEFAULT NULL;
+		DECLARE v_signup, v_primary, v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
 		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
 		DECLARE v_found INT DEFAULT 0;
 		DECLARE v_disabled BIGINT DEFAULT NULL;
@@ -544,9 +568,9 @@ var externalOnlySQL = map[string]string{
 		DECLARE v_uids LONGBLOB;
 		DECLARE v_msg VARCHAR(128) DEFAULT NULL;
 		-- the current primary email is the row of fxa.emails: changing it (set_primary) leaves
-		-- fxa.accounts.normalizedEmail, the email of the sign-up, as it was
-		DECLARE c_enabled CURSOR FOR SELECT a.uid, a.normalizedEmail,
-			(SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)
+		-- fxa.accounts, the email of the sign-up, as it was. As given, as the trigger asks
+		DECLARE c_enabled CURSOR FOR SELECT a.uid, a.email,
+			(SELECT e.email FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)
 			FROM fxa.accounts a WHERE a.disabledAt IS NULL;
 		DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_end = TRUE;
 		IF p_max IS NULL OR p_max < 0 THEN
@@ -582,8 +606,8 @@ var externalOnlySQL = map[string]string{
 			SET v_uid = SUBSTRING(v_uids, v_i * 16 + 1, 16);
 			SET v_i = v_i + 1;
 			SELECT COUNT(*), MAX(disabledAt) INTO v_found, v_disabled FROM fxa.accounts WHERE uid = v_uid;
-			SET v_signup = (SELECT normalizedEmail FROM fxa.accounts WHERE uid = v_uid);
-			SET v_primary = (SELECT normalizedEmail FROM fxa.emails WHERE uid = v_uid AND isPrimary LIMIT 1);
+			SET v_signup = (SELECT email FROM fxa.accounts WHERE uid = v_uid);
+			SET v_primary = (SELECT email FROM fxa.emails WHERE uid = v_uid AND isPrimary LIMIT 1);
 			SET v_email = IF(v_primary IS NULL, v_signup, v_primary);
 			SET v_refusal = ffs.signup_refusal(v_email);
 			IF v_found = 1 AND v_disabled IS NULL AND v_refusal <=> 'policy' THEN
@@ -855,6 +879,9 @@ func fxaInit(ctx context.Context) error {
 			return fmt.Errorf("%s: %w", strings.SplitN(stmt, "\n", 2)[0], err)
 		}
 	}
+	if err := allowlistBinary(ctx, db); err != nil {
+		return fmt.Errorf("ffs.signup_allowlist: %w", err)
+	}
 	view, err := schemaLevelsView(ctx, db)
 	if err != nil {
 		return err
@@ -890,6 +917,32 @@ func fxaInit(ctx context.Context) error {
 	}
 	log.Printf("sign-ups: %s", describePolicy(policy))
 	return applyEnvMaxAccounts(ctx, db)
+}
+
+// allowlistAlter: ffs.signup_allowlist.entry byte for byte, as the CREATE TABLE of fxaPolicySQL
+// makes it. NOT NULL as before (its primary key)
+const allowlistAlter = "ALTER TABLE ffs.signup_allowlist MODIFY entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL"
+
+// allowlistBinary: a table made before by CREATE TABLE IF NOT EXISTS keeps the server's collation
+// (utf8mb4_0900_ai_ci on MySQL, utf8mb4_uca1400_ai_ci on MariaDB 11.6+, latin1 on older ones: all
+// blind to accents or widths). Converted once, at the first start that finds it, and only then. The
+// primary key cannot conflict: entries distinct in a collation that equates more stay distinct byte
+// for byte, and latin1 converts to utf8mb4 without loss
+func allowlistBinary(ctx context.Context, db *sql.DB) error {
+	var charset, collation string
+	err := db.QueryRowContext(ctx, `SELECT COALESCE(CHARACTER_SET_NAME, ''), COALESCE(COLLATION_NAME, '') FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = 'ffs' AND TABLE_NAME = 'signup_allowlist' AND COLUMN_NAME = 'entry'`).Scan(&charset, &collation)
+	if err != nil {
+		return err
+	}
+	if charset == "utf8mb4" && collation == "utf8mb4_bin" {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, allowlistAlter); err != nil {
+		return err
+	}
+	log.Printf("ffs.signup_allowlist: entry converted from %s to utf8mb4_bin, the allowlist now matches byte for byte (no accented or full-width look-alike)", collation)
+	return nil
 }
 
 // fxaUser: a user of the accounts database with exactly its grants (the first, a REVOKE ALL),

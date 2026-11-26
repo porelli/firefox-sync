@@ -134,6 +134,8 @@ Anybody who can reach your accounts pages can create an account, and with it use
 | `allowlist` | only the emails (`alice@example.com`) and domains (`@example.com`) of `FXA_SIGNUP_ALLOWLIST`, comma-separated |
 | `closed` | nobody |
 
+An email matches an entry byte for byte after lower-casing, never an accented or full-width look-alike of it, and one beyond ASCII only an entry that spells it out: see [Sign-ups](admin/accounts.md#sign-ups).
+
 `prepare_environment.sh` asks for the allowlist (empty: `open`). Existing accounts are never affected: disable them in the admin UI instead, see [Sign out and disable](admin/accounts.md#sign-out-and-disable).
 
 How many accounts can be created at all, whoever signs up, is `FXA_MAX_ACCOUNTS`, see [Limits](limits.md#fxa_max_accounts).

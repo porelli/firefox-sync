@@ -157,6 +157,23 @@ def test_allowlist_matches_emails_and_domains():
     assert res.status_code == 400, res.text
 
 
+def test_allowlist_refuses_look_alikes():
+    # @example.com on the list, byte for byte: an accented or full-width look-alike of it is
+    # refused, through the gate and straight to the auth server (which takes Unicode domains)
+    for domain in ("ex\u00e4mple.com", "\uff45xample.com"):
+        for server in (AUTH, DIRECT):
+            address = email(domain)
+            res = create(address, server=server)
+            assert res.status_code >= 400, (domain, server, res.text)
+            if server == AUTH:
+                assert res.json()["errno"] == 125, res.text
+            assert not exists(address)
+    # in capitals: compared after lower-casing, as before
+    address = email("example.com").upper()
+    assert create(address).status_code == 200
+    assert exists(address)
+
+
 def test_signups_closed_and_reopened(admin):
     admin.post("/accounts/signups", mode="closed", allowlist="")
     res = create(email("example.com"))

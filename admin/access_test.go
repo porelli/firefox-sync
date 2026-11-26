@@ -297,7 +297,8 @@ func TestAccessUserGrants(t *testing.T) {
 			"enable_account_by_email": "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = v_uid", "delete_account_by_email": "CALL ffs.delete_account(v_uid)"} {
 			if strings.HasPrefix(stmt, "CREATE PROCEDURE ffs."+name+"(") {
 				found++
-				if !strings.Contains(stmt, "SQL SECURITY DEFINER") || !strings.Contains(stmt, inner) || !strings.Contains(stmt, "normalizedEmail = LOWER(TRIM(p_email))") {
+				if !strings.Contains(stmt, "SQL SECURITY DEFINER") || !strings.Contains(stmt, inner) || !strings.Contains(stmt, "SET v_email = LOWER(TRIM(p_email));") ||
+					!strings.Contains(stmt, "WHERE normalizedEmail = v_email COLLATE utf8mb4_bin LIMIT 1") {
 					t.Errorf("%s: %s", name, stmt)
 				}
 			}
@@ -321,7 +322,7 @@ func TestExternalProcedures(t *testing.T) {
 	if got := fxaPolicySQLFor(false); strings.Join(got, "\x00") != before {
 		t.Error("without the mode: not fxaPolicySQL")
 	}
-	if del := policyStmt(t, fxaPolicySQL, "ffs.delete_account"); !strings.Contains(del, "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email);") {
+	if del := policyStmt(t, fxaPolicySQL, "ffs.delete_account"); !strings.Contains(del, deleteAllowlistRow) {
 		t.Errorf("without the mode, delete takes the email off the allowlist: %s", del)
 	}
 	if enable := policyStmt(t, fxaPolicySQL, "ffs.enable_account"); strings.Contains(enable, "signup_refusal") {
@@ -500,7 +501,7 @@ func TestSweepProcedure(t *testing.T) {
 		}
 	}
 	at("FROM fxa.accounts a WHERE a.disabledAt IS NULL")
-	at("(SELECT e.normalizedEmail FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)")
+	at("(SELECT e.email FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)")
 	if strings.Count(sweep, "SET v_refusal = ffs.signup_refusal(v_email);") != 2 || strings.Count(sweep, "v_refusal <=> 'policy'") != 2 {
 		t.Errorf("the policy asked once to count, once again before each: %s", sweep)
 	}

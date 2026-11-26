@@ -64,6 +64,12 @@ Under the policy, the page lists the emails of the allowlist, and the domains ap
 - each with when it was added, and whether it signed up yet (`signed up on <date>`, matched without case, as the policy does);
 - each with a Remove link to a confirm page (`/accounts/allowlist/remove?entry=...`, whose form posts to `/accounts/allowlist/remove`).
 
+An email matches the allowlist byte for byte, after spaces are trimmed and letters lower-cased. `Alice@Example.com` matches `alice@example.com`. `alice@exämple.com`, or one with a full-width `ｅ`, matches neither it nor `@example.com`, whatever the collation of your database server. Beyond ASCII:
+
+- An email with a character beyond ASCII needs an entry that spells it out: the exact email, or its domain (`@exämple.com`) when the part before the `@` is ASCII. An ASCII entry never matches such an email.
+- An email whose lower-casing changes a character's size is refused: the Kelvin sign `K` lower-cases to the letter `k`, a look-alike of an ASCII entry.
+- A Unicode domain and its `xn--` form are two different domains. The accounts keep the domain as it was typed, and the policy compares that, so list the form people sign up with. This page and `FXA_SIGNUP_ALLOWLIST` take the `xn--` form only; `ffs_access` can write either ([Access managed elsewhere](#self-hosted-accounts)).
+
 Removing an entry stops new sign-ups with it: an account already created stays. To keep someone out who already has an account, [disable it](#sign-out-and-disable).
 
 Saving the policy removes only the entries the page showed. An invitation sent from another tab, or by another admin after you loaded the page, stays on the allowlist.
