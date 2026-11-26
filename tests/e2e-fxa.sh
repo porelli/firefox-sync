@@ -1198,6 +1198,7 @@ set_env FXA_MAX_ACCOUNTS lots
 dc run --rm --no-deps fxa-policy > "${WORK}/fxa-policy-bad.log" 2>&1
 check "$? $(grep -c 'FXA_MAX_ACCOUNTS="lots" is not valid' "${WORK}/fxa-policy-bad.log")" "1 1" "fxa-policy refuses FXA_MAX_ACCOUNTS=lots, and says why"
 check "$(fxa_max)" 500 "max accounts unchanged by a FXA_MAX_ACCOUNTS not valid"
+set_env FXA_MAX_ACCOUNTS initial:unlimited
 # the allowlist byte for byte after lower-casing, whatever the server's collation: a table of
 # before (the server's default, accent- and width-blind) converted by the next fxa-policy, once
 allowlist_collation() { fxa_sql "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'ffs' AND TABLE_NAME = 'signup_allowlist' AND COLUMN_NAME = 'entry'"; }
@@ -1225,7 +1226,6 @@ check "$(refusals someone@exämple.net someone@EXÄMPLE.NET someone@xn--exmple-c
   "a Unicode domain entry allows its own addresses only, in Unicode; an xn-- entry its xn-- form only"
 for e in "${lookalike_entries[@]}"; do fxa_sql "DELETE FROM ffs.signup_allowlist WHERE entry = $(u8sql "$e")" > /dev/null; done
 # the trigger on its own: full refuses an insert that skips the gate and the auth server
-set_env FXA_MAX_ACCOUNTS initial:unlimited
 fxa_sql "UPDATE ffs.settings SET value = '0' WHERE name = 'max_accounts'" > /dev/null
 check "$(fxa_sql "SELECT ffs.signup_refusal('nobody@example.com'), ffs.signup_allowed('nobody@example.com')" | tr '\t' ' ')" "full 0" "max accounts 0: ffs.signup_refusal says full"
 fxa_sql "UPDATE ffs.settings SET value = 'unlimited' WHERE name = 'max_accounts'" > /dev/null
