@@ -12,6 +12,7 @@ Environment (besides those of test_fxa_admin.py):
 """
 
 import os
+import time
 import uuid
 
 import pytest
@@ -22,7 +23,7 @@ from sqlalchemy.sql import text as sqltext
 
 from fxa.core import Client
 from test_fxa_admin import ADMIN, Admin, create, exists, failed, mfa
-from test_fxa_flow import AUTH, wait_for_code
+from test_fxa_flow import AUTH, SYNC, authorize, storage, sync_token, wait_for_code
 
 ADDRESS = f"ffs-external-{uuid.uuid4().hex[:10]}@example.org"
 # left disabled and off the list: tests/e2e-fxa.sh enables it once the mode is off
@@ -33,6 +34,9 @@ SWEEP = "ffs.disable_accounts_not_allowed"
 BRAKE = "45001"
 # ffs.enable_account's refusal (errAccessElsewhere of admin/fxainit.go)
 ELSEWHERE = "not on the access list managed elsewhere: the system that manages access enables this account"
+# the access tokens of an account disabled by ffs_access refused within this many seconds: the
+# admin UI revokes the queue in Redis every 5 (revokeInterval of admin/revoke.go)
+REVOKED_WITHIN = 30
 
 
 def connect(url):
@@ -65,7 +69,9 @@ def test_access_user_grants(access):
     # nothing of the accounts, nor the settings, nor the admin UI's procedures
     for query in ("SELECT COUNT(*) FROM fxa.accounts", "SELECT value FROM ffs.settings", "UPDATE ffs.settings SET value = 'open' WHERE name = 'signups'",
                   "UPDATE ffs.signup_allowlist SET entry = 'x' WHERE entry = 'y'", "CALL ffs.sign_out_all(UNHEX('00'))",
-                  "CALL ffs.disable_account(UNHEX('00'))", "SELECT COUNT(*) FROM ffs.emails"):
+                  "CALL ffs.disable_account(UNHEX('00'))", "SELECT COUNT(*) FROM ffs.emails",
+                  # the queue of the access tokens to revoke is the admin UI's
+                  "SELECT COUNT(*) FROM ffs.pending_revocations", "DELETE FROM ffs.pending_revocations"):
         assert "denied" in refused(access, query), query
 
 
@@ -89,6 +95,62 @@ def listed(access, address):
 def sessions(fxa):
     return fxa.execute(sqltext("SELECT COUNT(*) FROM fxa.sessionTokens s JOIN fxa.accounts a ON a.uid = s.uid WHERE a.normalizedEmail = :e"),
                        {"e": ADDRESS}).scalar()
+
+
+def verify(token):
+    """fxa-auth's /v1/verify, which the tokenserver asks for an access token it has not seen"""
+    return requests.post(f"{AUTH}/v1/verify", json={"token": token}, timeout=30)
+
+
+def tokenserver(bearer, key_id):
+    return requests.get(f"{SYNC}/1.0/sync/1.5", headers={"Authorization": f"Bearer {bearer}", "X-KeyID": key_id}, timeout=30)
+
+
+def queued(fxa, uid):
+    return fxa.execute(sqltext("SELECT COUNT(*) FROM ffs.pending_revocations WHERE uid = UNHEX(:u)"), {"u": uid}).scalar()
+
+
+def revoked(fxa, uid, tokens, within=REVOKED_WITHIN):
+    """Every access token refused by fxa-auth's /v1/verify within `within` seconds, and the
+    account no longer queued: how long it took"""
+    start = time.time()
+    while True:
+        answers = [verify(t) for t in tokens]
+        if all(r.status_code != 200 for r in answers) and queued(fxa, uid) == 0:
+            return time.time() - start
+        assert time.time() - start < within, (f"still valid {within} s after the disable", [r.text for r in answers], queued(fxa, uid))
+        time.sleep(1)
+
+
+def test_disable_by_email_revokes_access_tokens(access, fxa):
+    # an account syncing, then disabled by ffs_access: SQL cannot reach the access tokens in
+    # fxa-auth's Redis, the admin UI revokes them (docs/admin/accounts.md#sign-out-and-disable)
+    address = tag("revoke")
+    access.execute(sqltext("INSERT INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": address})
+    try:
+        created = int(time.time() * 1000)
+        session = Client(server_url=f"{AUTH}/v1").create_account(address, uuid.uuid4().hex, keys=True)
+        session.verify_email_code(wait_for_code(address))
+        used, key_id = sync_token(session, created)
+        res = tokenserver(used, key_id)
+        assert res.status_code == 200, res.text
+        token = res.json()
+        assert storage(token, "GET", "/info/collections").status_code == 200
+        # another one, never shown to the tokenserver (which caches what /v1/verify said for 5 minutes)
+        unused = authorize(session)
+        assert verify(unused).status_code == 200
+
+        access.execute(sqltext("CALL ffs.disable_account_by_email(:e)"), {"e": address})
+        took = revoked(fxa, session.uid, [used, unused])
+        print(f"access tokens refused {took:.1f} s after ffs.disable_account_by_email")
+        # the tokenserver too, with the X-KeyID it took before: no new Sync token
+        res = tokenserver(unused, key_id)
+        assert res.status_code == 401, res.text
+        # what cannot be revoked: the Sync token handed out before works on the storage node until
+        # it expires (its signature and expiry only, up to an hour)
+        assert storage(token, "GET", "/info/collections").status_code == 200
+    finally:
+        access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": address})
 
 
 def test_disable_enable_delete_by_email(access, fxa):
@@ -283,6 +345,9 @@ def test_sweep_disables_accounts_off_the_list(access, fxa):
         assert {u: e.lower() for u, e in not_allowed(fxa).items()} == {uid[moved]: moved_to, uid[leaver]: leaver}
         before = {address: state(fxa, u) for address, u in uid.items()}
         assert all(before[a][0] is None and before[a][1] > 0 for a in (moved, exact, leaver, member)) and before[gone][0] is not None, before
+        # access tokens Firefox would hold: of those to disable, and of one that stays
+        tokens = {address: authorize(sessions[address]) for address in (moved, leaver, exact)}
+        assert all(verify(t).status_code == 200 for t in tokens.values())
 
         # refused, and nothing changed: the brake (2 to disable, more than 1 and 0), and p_max not a count
         assert sweep_refused(access, 1) == (BRAKE, "disable_accounts_not_allowed: 2 accounts would be disabled, more than p_max 1")
@@ -299,6 +364,11 @@ def test_sweep_disables_accounts_off_the_list(access, fxa):
         # on the list (exact, @domain): as they were; disabled already: the same disabledAt, not counted
         for address in (exact, member, gone):
             assert after[address] == before[address], (address, after[address], before[address])
+        # the access tokens of the two disabled revoked in Redis by the admin UI, the other's kept
+        for address in (moved, leaver):
+            took = revoked(fxa, uid[address], [tokens[address]])
+            print(f"{address}: access token refused {took:.1f} s after the sweep")
+        assert verify(tokens[exact]).status_code == 200
         # nothing left to do: 0, with p_max 0
         assert dict(access.execute(sqltext(f"CALL {SWEEP}(0)")).mappings().one()) == {"disabled": 0}
     finally:

@@ -30,6 +30,16 @@ var fxaPolicySQL = []string{
 		entry VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`,
+	// the accounts signed out everywhere (ffs.sign_out_all, so Disable, the procedures by email
+	// and the sweep too) or deleted, whose access tokens are still in Redis: SQL cannot reach
+	// them there. The admin UI revokes them within seconds and deletes the rows
+	// (revocationsTable, docs/admin/accounts.md#sign-out-and-disable). One row per request
+	`CREATE TABLE IF NOT EXISTS ` + revocationsTable + ` (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		uid BINARY(16) NOT NULL,
+		requested_at BIGINT NOT NULL,
+		KEY uid (uid)
+	)`,
 	"DROP FUNCTION IF EXISTS ffs.signup_allowed",
 	"DROP FUNCTION IF EXISTS ffs.signup_refusal",
 	// why a sign-up is refused, NULL when it is allowed. 'policy': not an email or a
@@ -193,7 +203,9 @@ var fxaPolicySQL = []string{
 	END`,
 	// signing out everywhere: Mozilla's own procedure (sessions, key fetch, account reset,
 	// password change and forgot tokens, devices and their commands, unverified tokens,
-	// unblock codes, in its own transaction), then the OAuth tokens it does not know about
+	// unblock codes, in its own transaction), then the OAuth tokens it does not know about.
+	// The access tokens are in Redis only (fxa-auth v1.350.0): queued in the same transaction
+	// for the admin UI, which revokes them there (revocationsTable)
 	"DROP PROCEDURE IF EXISTS ffs.sign_out_all",
 	`CREATE PROCEDURE ffs.sign_out_all(p_uid BINARY(16))
 	MODIFIES SQL DATA
@@ -210,6 +222,7 @@ var fxaPolicySQL = []string{
 		DELETE FROM fxa_oauth.codes WHERE userId = p_uid;
 		DELETE FROM fxa_oauth.refreshTokens WHERE userId = p_uid;
 		DELETE FROM fxa_oauth.tokens WHERE userId = p_uid;
+		` + queueRevocation + `
 		COMMIT;
 	END`,
 	// disabledAt first, which refuses new sign-ins, then everything signed out: a sign-in
@@ -359,6 +372,7 @@ var fxaPolicySQL = []string{
 		DELETE FROM fxa_profile.avatars WHERE userId = p_uid;
 		DELETE FROM fxa_profile.profile WHERE userId = p_uid;
 		DELETE FROM pushbox.pushboxv1 WHERE user_id IN (LOWER(HEX(p_uid)), HEX(p_uid));
+		` + queueRevocation + `
 		COMMIT;
 		CALL fxa.deleteAccount_24(p_uid, 'fxa_admin_requested_account_delete');
 		` + deleteAllowlistRow + `
@@ -507,6 +521,15 @@ var fxaPolicySQL = []string{
 		END IF;
 	END`,
 }
+
+// revocationsTable: the accounts whose access tokens the admin UI revokes in Redis
+// (revokePending), queued by ffs.sign_out_all and ffs.delete_account (queueRevocation). Only
+// ffs_admin reads and deletes its rows; ffs_access has nothing on it
+const revocationsTable = "ffs.pending_revocations"
+
+// queueRevocation: the statement of the procedures that queue an account (p_uid), inside their
+// transaction: committed with the sign-out, never without it
+const queueRevocation = "INSERT INTO " + revocationsTable + " (uid, requested_at) VALUES (p_uid, FLOOR(UNIX_TIMESTAMP(NOW(3)) * 1000));"
 
 // deleteAllowlistRow: the last statement of ffs.delete_account without ADMIN_ACCESS_EXTERNAL
 const deleteAllowlistRow = "DELETE FROM ffs.signup_allowlist WHERE entry = LOWER(v_email) COLLATE utf8mb4_bin;"
@@ -670,6 +693,8 @@ var fxaAdminGrants = []string{
 	// the setup migrations of the accounts' database server (setupmigrations.go)
 	"GRANT SELECT ON ffs.ffs_setup_migrations TO 'ffs_admin'@'%'",
 	"GRANT SELECT ON ffs.ffs_setup_state TO 'ffs_admin'@'%'",
+	// the access tokens to revoke in Redis: read, and the rows done deleted
+	"GRANT SELECT, DELETE ON " + revocationsTable + " TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON FUNCTION ffs.signup_allowed TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON FUNCTION ffs.signup_refusal TO 'ffs_admin'@'%'",
 	"GRANT EXECUTE ON PROCEDURE ffs.sign_out_session TO 'ffs_admin'@'%'",

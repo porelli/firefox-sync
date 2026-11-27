@@ -1145,6 +1145,8 @@ check "$(as_ffs_admin 'DELETE FROM fxa.sessionTokens WHERE uid IS NULL' | grep -
 check "$(as_ffs_admin 'UPDATE fxa.accounts SET disabledAt = NULL WHERE uid IS NULL' | grep -c 'command denied')" 1 "ffs_admin cannot change fxa.accounts itself"
 check "$(as_ffs_admin 'DELETE FROM fxa.unverifiedTokens WHERE uid IS NULL' | grep -c 'command denied')" 1 "ffs_admin cannot confirm a sign-in itself (fxa.unverifiedTokens)"
 check "$(as_ffs_admin 'SHOW GRANTS' | grep -cE 'GRANT .*(UPDATE|DELETE|INSERT).* ON `?fxa(_oauth)?`?\.')" 0 "no grant to change FxA's tables for ffs_admin"
+check "$(as_ffs_admin 'SELECT COUNT(*) >= 0 FROM ffs.pending_revocations') $(as_ffs_admin "INSERT INTO ffs.pending_revocations (uid, requested_at) VALUES (UNHEX('00'), 0)" | grep -c 'command denied')" "1 1" \
+  "ffs_admin reads the queue of the access tokens to revoke (and deletes its rows), adds none"
 check "$(as_ffs_admin 'SHOW GRANTS' | grep -cE 'GRANT EXECUTE ON PROCEDURE `?ffs`?\.`?(disable_account|enable_account|sign_out_all|delete_account|delete_unconfirmed|prune|confirm_email|confirm_session)`?')" 8 "ffs_admin runs the procedures to disable, enable, sign out, delete, prune and confirm"
 check "$(fxa_sql "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = 'ffs' AND ROUTINE_NAME IN ('disable_account', 'enable_account', 'sign_out_all', 'remove_totp', 'remove_recovery_key', 'confirm_email', 'confirm_session', 'delete_account', 'delete_unconfirmed', 'prune')")" 10 "fxa-policy installed the account procedures"
 # what they run on is Mozilla's: no stand-in refusing (a procedure of FxA missing, or no EXECUTE on fxa.*)
@@ -1256,6 +1258,10 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
   dc up -d --no-deps ffs-admin > "${WORK}/admin-external.log" 2>&1
   for _ in $(seq 1 60); do [ "$(state ffs-admin Health.Status)" = healthy ] && break; sleep 5; done
   check "$(state ffs-admin Health.Status)" healthy "the admin UI restarted with ADMIN_ACCESS_EXTERNAL=1"
+  # room on the Sync server for the account test_fxa_external.py syncs (max users is read-only
+  # in the admin UI with the mode), as it was afterwards
+  max_users_before=$(ts_sql "SELECT config_value FROM config WHERE config_key = 'max_users'")
+  ts_sql "UPDATE config SET config_value = 'unlimited' WHERE config_key = 'max_users'" > /dev/null
   dc run --rm -T --no-deps --user root \
     -v "${TESTS}:/tests:ro" -v "${PROJECT}_caddy-ca:/caddy-ca:ro" \
     -e REQUESTS_CA_BUNDLE=/caddy-ca/root.crt \
@@ -1267,8 +1273,9 @@ if [ "${FXA_DB_CONTAINERS:-1}" = 1 ] && runs admin; then
     --entrypoint /bin/sh syncstorage \
     -c "cd /app && $(pytest_sh "/tests/test_fxa_external.py")" < /dev/null
   rc=$?
+  ts_sql "UPDATE config SET config_value = '${max_users_before}' WHERE config_key = 'max_users'" > /dev/null
   [ "${rc}" = 0 ] || admin_log
-  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the sign-ups read-only in the admin UI; its Enable refused off the list, its Delete leaves the list alone; the sweep disables an account whose primary email left the list, its brake refuses (SQLSTATE 45001) and changes nothing"
+  check "${rc}" 0 "a sign-up refused, allowed once ffs_access adds it; disabled (signed out), enabled and deleted by email; the access tokens of an account disabled by email or by the sweep refused by fxa-auth and the tokenserver within 30 s (the admin UI revokes them in Redis); the sign-ups read-only in the admin UI; its Enable refused off the list, its Delete leaves the list alone; the sweep disables an account whose primary email left the list, its brake refuses (SQLSTATE 45001) and changes nothing"
   # ffs_admin itself, not only through the admin UI (docs/admin/accounts.md#the-database-enforces-it-too):
   # the account test_fxa_external.py left disabled and off the list
   left_uid=$(fxa_sql "SELECT HEX(uid) FROM fxa.accounts WHERE normalizedEmail LIKE 'ffs-external-left-%' AND disabledAt IS NOT NULL ORDER BY createdAt DESC LIMIT 1")

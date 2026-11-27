@@ -541,8 +541,8 @@ func (f *FxaDB) DeleteAccount(ctx context.Context, uid string) error {
 	if _, err := f.db.ExecContext(ctx, "CALL ffs.delete_account(?)", id); err != nil {
 		return procedureError(err)
 	}
-	if _, err := revokeRedisTokens(ctx, f.redis, uid); err != nil {
-		return &partialError{fmt.Errorf("account deleted, but its access tokens are still valid until they expire: %w", err)}
+	if err := f.revokeNow(ctx, uid); err != nil {
+		return &partialError{fmt.Errorf("account deleted, but its access tokens are still valid until Redis answers again (retried every %s): %w", revokeInterval, err)}
 	}
 	if err := dropProfileCache(ctx, f.redis, uid); err != nil {
 		return &partialError{fmt.Errorf("account deleted, but the profile server may show it for a while: %w", err)}

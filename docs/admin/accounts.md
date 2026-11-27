@@ -107,13 +107,39 @@ Three actions, from the strongest:
 
 **Firefox keeps syncing for up to about an hour after any of them.** The Sync server remembers a verified access token for 5 minutes, and a Sync token it handed out stays valid for up to 1 hour. After signing out a single device, the access tokens it already has also keep working until they expire (`FXA_ACCESS_TOKEN_LIFETIME`, `60 minutes`). To lock every device out at once, sign out everywhere.
 
-`FXA_ACCESS_TOKEN_LIFETIME` takes any duration (`2 hours`). Revoking makes it irrelevant for disabled accounts. A short one is a backstop in case revoking fails (the page tells you), at the cost of Firefox asking for a new token every hour, which a small server does not notice. Mozilla's default is `365 minutes`.
+`FXA_ACCESS_TOKEN_LIFETIME` takes any duration (`2 hours`). Revoking makes it irrelevant for disabled accounts. A short one is a backstop in case revoking fails, or the admin UI is not running, at the cost of Firefox asking for a new token every hour, which a small server does not notice. Mozilla's default is `365 minutes`.
 
 Keep the lifetime as it is if you turn on JWT access tokens (`JWT_ACCESS_TOKENS_ENABLED_CLIENT_IDS`, off by default). Those living 6 hours or less are checked by their signature only, and cannot be revoked.
 
-Signing out goes through Mozilla's own procedure, `revokeAccountTokens_1`: sessions, key fetch, account reset, password change and password reset tokens, unconfirmed sign-ins, unblock codes and devices, then the OAuth tokens and codes. Mozilla's own admin panel, not part of this stack, disables accounts the same way, without revoking the tokens.
+Signing out goes through Mozilla's own procedure, `revokeAccountTokens_1`: sessions, key fetch, account reset, password change and password reset tokens, unconfirmed sign-ins, unblock codes and devices, then the OAuth tokens and codes. Mozilla's own admin panel, not part of this stack, disables accounts the same way, without revoking the access tokens.
 
 **If an action answers with an error**, a Mozilla procedure it needs may be missing. `fxa-policy` checks at every start that they exist, and logs a warning with the name of a missing one. The accounts keep working, but what needs it fails. Update the admin UI image, or, on your own database server, grant `EXECUTE` on `fxa.*` to the policy user. How the admin UI reaches the accounts database is in [The accounts](../reference/database-users.md#the-accounts).
+
+### What is revoked when
+
+Disable and Sign out everywhere, in the admin UI or by the [procedures by email and the sweep](#self-hosted-accounts) of a system that manages access, all end in `ffs.sign_out_all`. With the stack's defaults:
+
+| What | When |
+|---|---|
+| Sessions, devices, refresh tokens and OAuth codes (the accounts database) | at once, in the procedure's transaction. Firefox can get no new access token |
+| New sign-ins (Disable only) | refused at once |
+| Access tokens, which fxa-auth keeps in its Redis only | revoked by the admin UI. Its own Disable and Sign out everywhere revoke them before the page answers. For the procedures by email and the sweep, the admin UI checks every 5 seconds: about 5 seconds after the call. Without the admin UI, see below |
+| New Sync tokens for an access token the Sync server has verified already | up to 5 minutes after the revoke: the Sync server keeps what fxa-auth's `/v1/verify` said that long |
+| Sync tokens already handed out | not revoked: each works until it expires, up to 1 hour after it was handed out |
+
+So Firefox syncs for up to about 65 minutes after the action, with what it already holds. After that, it asks for a new access token, gets none, and asks its user to sign in again.
+
+How the access tokens are revoked: SQL cannot reach Redis. So `ffs.sign_out_all` and `ffs.delete_account` add the account to `ffs.pending_revocations`, in the same transaction as the sign-out. The admin UI reads that table every 5 seconds. It revokes each account's access tokens as fxa-auth does itself (the `at:<uid>` set and its tokens, as in `removeAccessTokensForUser`), then deletes the rows it read. When Redis does not answer, the rows stay, the admin UI logs it once, and it tries again every 5 seconds. Its own actions then say that the access tokens are still valid until Redis answers again.
+
+**Without the admin UI running**, nothing reaches Redis. The rows wait, and the access tokens work until they expire: up to `FXA_ACCESS_TOKEN_LIFETIME` after they were issued, then up to an hour more for the last Sync token. That is about 2 hours with the default 60 minutes. The admin UI revokes the waiting rows when it starts: those still valid then die at once, the others had expired anyway. `fxa-policy` cannot do it: it runs once at every start, then stops. Run the admin UI (`COMPOSE_PROFILES=admin`, Helm `admin.enabled`) wherever accounts are disabled by a system of yours.
+
+What cannot be revoked:
+
+- **A Sync token.** The Sync server checks only its signature and its expiry, on every request. It reads neither the account nor the tokenserver's rows. Retiring the account's row would not stop it, and its next sign-in would get a new, empty storage. Only a new `SYNC_MASTER_SECRET` would, for every account at once.
+- **The Sync server's 5 minutes.** The cache is in each process of the Sync server. A restart of `syncstorage` empties it.
+- **JWT access tokens**, if you turn them on (above).
+
+fxa-auth's `/v1/verify` does not look at `disabledAt`: an access token works as long as it is in Redis.
 
 ### Devices and sessions
 
@@ -424,7 +450,7 @@ Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their de
 
 With the mode on, `fxa-policy` sets `FXA_SIGNUPS` at every start (`allowlist`, for this) and leaves the rows of the sign-up allowlist alone. It refuses a `FXA_SIGNUP_ALLOWLIST`, which would be a second list. It gives the admin UI's `ffs_admin` only `SELECT` on `ffs.settings` and `ffs.signup_allowlist` ([The database enforces it too](#the-database-enforces-it-too)).
 
-An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`, or let [the sweep](#the-sweep) find it. The access tokens Firefox already holds stay valid until they expire (`FXA_ACCESS_TOKEN_LIFETIME`): the database cannot reach their copies in Redis, which Disable in the admin UI also removes. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
+An account whose email leaves the list stays, and keeps working: the list decides who may create an account, not who has one. Disable it with `ffs.disable_account_by_email`, or let [the sweep](#the-sweep) find it. The access tokens Firefox already holds are in Redis, which the database cannot reach: the procedures queue the account, and the admin UI revokes them within about 5 seconds. Without the admin UI running they stay valid until they expire, and Firefox's Sync tokens live up to an hour more in both cases: see [What is revoked when](#what-is-revoked-when). `ffs_access` gets nothing on that queue, nor on Redis. `ffs.delete_account_by_email` deletes the account, not its Sync data: delete that on its page in the admin UI, which stays as long as tokenserver rows are left.
 
 With this, `SYNC_ALLOWED_ACCOUNTS` can stay off: every account of the server is one your system let sign up.
 

@@ -301,6 +301,9 @@ func serve(ctx context.Context) error {
 	}
 	go app.health.run(ctx)
 	go app.maintain(ctx)
+	if fxaDB != nil {
+		go app.revokePending(ctx)
+	}
 	select {
 	case err := <-errs:
 		return err

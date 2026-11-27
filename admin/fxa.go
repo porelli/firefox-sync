@@ -342,8 +342,8 @@ func (f *FxaDB) SetDisabled(ctx context.Context, uid string, disabled bool) erro
 	if _, err := f.db.ExecContext(ctx, "CALL ffs.disable_account(?)", id); err != nil {
 		return procedureError(err)
 	}
-	if _, err := revokeRedisTokens(ctx, f.redis, strings.ToLower(uid)); err != nil {
-		return &partialError{fmt.Errorf("account disabled, but its access tokens are still valid until they expire: %w", err)}
+	if err := f.revokeNow(ctx, strings.ToLower(uid)); err != nil {
+		return &partialError{fmt.Errorf("account disabled, but its access tokens are still valid until Redis answers again (retried every %s): %w", revokeInterval, err)}
 	}
 	return nil
 }
@@ -360,8 +360,8 @@ func (f *FxaDB) SignOutAll(ctx context.Context, uid string) error {
 	if _, err := f.db.ExecContext(ctx, "CALL ffs.sign_out_all(?)", id); err != nil {
 		return procedureError(err)
 	}
-	if _, err := revokeRedisTokens(ctx, f.redis, strings.ToLower(uid)); err != nil {
-		return &partialError{fmt.Errorf("signed out, but its access tokens are still valid until they expire: %w", err)}
+	if err := f.revokeNow(ctx, strings.ToLower(uid)); err != nil {
+		return &partialError{fmt.Errorf("signed out, but its access tokens are still valid until Redis answers again (retried every %s): %w", revokeInterval, err)}
 	}
 	return nil
 }

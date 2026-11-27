@@ -345,6 +345,9 @@ def test_sign_out_everywhere(admin):
     first.verify_email_code(wait_for_code(address))
     second = client.login(address, password)
     refresh = authorize(first, full=True, offline=True)["refresh_token"]
+    # an access token Firefox already holds: in fxa-auth's Redis only
+    access = authorize(second)
+    assert requests.post(f"{AUTH}/v1/verify", json={"token": access}, timeout=30).status_code == 200
     for s in (first, second):
         assert requests.get(f"{AUTH}/v1/recovery_email/status", headers=bearer(s), timeout=30).status_code == 200
     uid = first.uid
@@ -358,6 +361,9 @@ def test_sign_out_everywhere(admin):
         assert res.status_code == 401, res.text
     res = requests.post(f"{AUTH}/v1/oauth/token", json={"grant_type": "refresh_token", "client_id": FIREFOX_CLIENT_ID, "refresh_token": refresh}, timeout=30)
     assert res.status_code in (400, 401), res.text
+    # the access token revoked in Redis before the page answered (docs/admin/accounts.md#sign-out-and-disable)
+    verified = requests.post(f"{AUTH}/v1/verify", json={"token": access}, timeout=30)
+    assert verified.status_code != 200, verified.text
     # still active: a new sign-in works right away, and a password reset
     row = account_row(admin, address)
     # the usual state is kept for screen readers only
