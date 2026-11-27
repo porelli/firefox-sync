@@ -477,7 +477,7 @@ func TestSignupAllowlistByteExact(t *testing.T) {
 	if trigger := strings.Join(fxaPolicySQL, "\n"); !strings.Contains(trigger, "SET refusal = ffs.signup_refusal(NEW.email);") {
 		t.Error("the trigger does not ask with NEW.email")
 	}
-	if enable := policyStmt(t, fxaPolicySQLFor(true), "ffs.enable_account"); !strings.Contains(enable, "MAX(email) INTO v_found, v_email") {
+	if enable := policyStmt(t, fxaPolicySQLFor(true), "ffs.enable_account"); !strings.Contains(enable, "IF "+accessRefusedFunction+"(p_uid) THEN") {
 		t.Errorf("external enable: %s", enable)
 	}
 }

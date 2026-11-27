@@ -341,7 +341,7 @@ With self-hosted accounts, two of the admin UI's account actions would otherwise
 
 | Action | With the mode on | Without it |
 |---|---|---|
-| **Enable** | refused when the sign-up policy refuses the account's email, as a new sign-up of it would be: off the allowlist with `FXA_SIGNUPS=allowlist`, everyone with `closed`. The page says `not on the access list managed elsewhere: the system that manages access enables this account`, and the account stays disabled. Max accounts does not refuse it: the account is already counted, enabling adds none | enables the account |
+| **Enable** | refused when the sign-up policy refuses the account's current primary email, as a new sign-up with it would be, and as [the sweep](#the-sweep) judges it: an account enabled here is one the next sweep keeps. Refused: off the allowlist with `FXA_SIGNUPS=allowlist`, everyone with `closed`. The page says `not on the access list managed elsewhere: the system that manages access enables this account`, and the account stays disabled. Max accounts does not refuse it: the account is already counted, enabling adds none | enables the account |
 | **Delete** | deletes the account and leaves `ffs.signup_allowlist` as it is: a current member can sign up again, and your system removes the row if it wants to | also removes the account's exact email from the allowlist |
 
 **Disable** stays as it is in both modes, for incident response. An account the admin UI disabled whose email is still on the list can be enabled there again. Your system's `ffs.enable_account_by_email` never asks the policy: it enables whatever your list says, even before you add the email again or with `FXA_SIGNUPS=closed`.
@@ -415,7 +415,7 @@ With [self-hosted accounts](../accounts.md), your system can keep the sign-up al
 | `ffs.delete_account_by_email(email)` | `EXECUTE`: deletes a disabled account, as Delete in the admin UI. With the mode on, its row of `ffs.signup_allowlist` stays: remove it yourself |
 | `ffs.disable_accounts_not_allowed(p_max)` | `EXECUTE`, with the mode on only: disables every enabled account your list no longer allows, at most `p_max` ([The sweep](#the-sweep)) |
 
-Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The email of the procedures by email is the one the account signed up with, compared without case and spaces: when someone changes their primary email in the account settings, the accounts keep the first one there. An unknown email answers `no such account`.
+Nothing on `fxa.*` and nothing on `ffs.settings`: the procedures run as their definer. The procedures by email find the account by the email it signed up with, compared without case and spaces, then byte for byte. That is the email your list let in, and it never changes: when someone changes their primary email in the account settings, the accounts keep the first one. So call them with the email you know. A new primary email finds nothing (`no such account`), nor does any other email of the account: the accounts keep the emails of sign-up and the others in two tables, each unique on its own, so another account could have the same one. Who still has access is another question, which Enable and [the sweep](#the-sweep) answer with the current primary email.
 
 - Without `FXA_ACCESS_DB_PASSWORD`, `fxa-policy` drops the user. Give the password at every start: in `.env`, which `--upgrade` keeps, or in your values or `existingSecret` with Helm.
 - `fxa-policy` makes the procedures again at every start, which drops their grants, and then gives them again. The rows of `ffs.signup_allowlist` stay: its table is never made again.
@@ -430,7 +430,7 @@ With this, `SYNC_ALLOWED_ACCOUNTS` can stay off: every account of the server is 
 
 #### The sweep
 
-Someone can change their account's primary email after signing up, to one your list never had. Your system then knows no email that finds the account. `ffs.disable_accounts_not_allowed(p_max)` finds them all: it disables, and signs out everywhere as `ffs.disable_account_by_email` does, every enabled account whose current primary email the sign-up policy refuses. It asks `ffs.signup_refusal`, so the emails and `@domain` rows of `ffs.signup_allowlist` count as for a sign-up, compared the same way. Max accounts does not count here. Accounts already disabled stay as they are and are not counted.
+Someone can change their account's primary email after signing up, to one your list never had, and keep using the account while their first email stays on your list. Disabling by email only catches the people your system knows have left. `ffs.disable_accounts_not_allowed(p_max)` finds every account your list no longer allows: it disables, and signs out everywhere as `ffs.disable_account_by_email` does, every enabled account whose current primary email the sign-up policy refuses. It asks `ffs.signup_refusal`, so the emails and `@domain` rows of `ffs.signup_allowlist` count as for a sign-up, compared the same way. Max accounts does not count here. Accounts already disabled stay as they are and are not counted.
 
 Call it at the end of every reconcile, after the `COMMIT` of your allowlist changes, with `p_max` the number of people you expect to leave plus a small margin:
 
@@ -441,7 +441,7 @@ CALL ffs.disable_accounts_not_allowed(5);
 - **The count**: the call returns one row with one column, `disabled`, the number of accounts it disabled. Read it like the result of a `SELECT`.
 - **The brake**: it counts first and changes nothing yet. If more than `p_max` accounts would be disabled, it disables none and fails with SQLSTATE `45001`, error 1644, and the message `disable_accounts_not_allowed: 7 accounts would be disabled, more than p_max 5`. `p_max` equal to the count passes. So a list emptied by mistake, or `FXA_SIGNUPS=closed`, cannot disable everyone, while a group you emptied on purpose passes with the right `p_max`. A `NULL` or negative `p_max` fails with SQLSTATE `45000` and `disable_accounts_not_allowed: p_max must be a number, 0 or more`. Some drivers give only the error number and the message, Python's for one: match the message's start, `disable_accounts_not_allowed: `, and the words `would be disabled` then.
 - **Your list decides**, not a list passed in. You already keep the allowlist: one source, and nothing to parse in SQL. With `FXA_SIGNUPS=open` the sweep finds no one.
-- **The current primary email**: someone who changes it to an email off your list is disabled by the next sweep, even if their first email is still on it. Enable them with `ffs.enable_account_by_email` and their first email, after you add the new one to your list.
+- **The current primary email**: someone who changes it to an email off your list is disabled by the next sweep, even if their first email is still on it. The admin UI's Enable asks the same, so it refuses them too. Add the new email to your list, then enable them with `ffs.enable_account_by_email` and their first email, or with Enable in the admin UI.
 
 It is not one transaction, and it opens none of its own:
 

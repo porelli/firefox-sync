@@ -355,8 +355,8 @@ func TestExternalProcedures(t *testing.T) {
 		t.Errorf("external delete: %s", del)
 	}
 	enable := policyStmt(t, ext, "ffs.enable_account")
-	r, u := strings.Index(enable, "IF v_refusal <=> 'policy' THEN"), strings.Index(enable, "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid")
-	if r < 0 || u < r || !strings.Contains(enable, "SET v_refusal = ffs.signup_refusal(v_email);") || strings.Contains(enable, "'full'") || !strings.Contains(enable, "SQL SECURITY DEFINER") ||
+	r, u := strings.Index(enable, "IF "+accessRefusedFunction+"(p_uid) THEN"), strings.Index(enable, "UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid")
+	if r < 0 || u < r || strings.Contains(enable, "signup_refusal") || strings.Contains(enable, "'full'") || !strings.Contains(enable, "SQL SECURITY DEFINER") ||
 		!strings.Contains(enable, "MESSAGE_TEXT = '"+errAccessElsewhere+"'") || !strings.Contains(enable, "MESSAGE_TEXT = 'no such account'") {
 		t.Errorf("external enable: %s", enable)
 	}
@@ -480,7 +480,7 @@ func TestSweepProcedure(t *testing.T) {
 		return i
 	}
 	args := at("IF p_max IS NULL OR p_max < 0 THEN")
-	scan := at("FETCH c_enabled INTO v_uid, v_signup, v_primary;")
+	scan := at("FETCH c_enabled INTO v_uid;")
 	brake := at("IF v_count > p_max THEN")
 	signal := at("SIGNAL SQLSTATE '" + errSweepBrake + "' SET MESSAGE_TEXT = v_msg;")
 	disable := at("CALL ffs.disable_account(v_uid);")
@@ -500,12 +500,12 @@ func TestSweepProcedure(t *testing.T) {
 			t.Errorf("%q in the sweep", w)
 		}
 	}
-	at("FROM fxa.accounts a WHERE a.disabledAt IS NULL")
-	at("(SELECT e.email FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)")
-	if strings.Count(sweep, "SET v_refusal = ffs.signup_refusal(v_email);") != 2 || strings.Count(sweep, "v_refusal <=> 'policy'") != 2 {
+	at("CURSOR FOR SELECT uid FROM fxa.accounts WHERE disabledAt IS NULL;")
+	// the rule of ffs.enable_account, once to count, once again before each; never its own
+	if strings.Count(sweep, accessRefusedFunction+"(v_uid)") != 2 || strings.Contains(sweep, "signup_refusal") || strings.Contains(sweep, "fxa.emails") {
 		t.Errorf("the policy asked once to count, once again before each: %s", sweep)
 	}
-	at("IF v_found = 1 AND v_disabled IS NULL AND v_refusal <=> 'policy' THEN")
+	at("IF v_found = 1 AND v_disabled IS NULL AND " + accessRefusedFunction + "(v_uid) THEN")
 	at("IF v_count <= p_max THEN")
 	// the brake's message: its prefix, the count and p_max, within MESSAGE_TEXT's 128 characters
 	at("SET v_msg = CONCAT('" + sweepBrakePrefix + "', v_count, ' accounts would be disabled, more than p_max ', p_max);")
@@ -519,6 +519,48 @@ func TestSweepProcedure(t *testing.T) {
 	for _, s := range fxaPolicySQLFor(false) {
 		if strings.Contains(s, "CREATE PROCEDURE "+sweepProcedure) {
 			t.Error("created without the mode")
+		}
+	}
+}
+
+// ADMIN_ACCESS_EXTERNAL's Enable and the sweep: one rule, the account's current primary email
+func TestAccessRefusedRule(t *testing.T) {
+	var fn string
+	drop, create := -1, -1
+	for i, s := range fxaPolicySQL {
+		if s == "DROP FUNCTION IF EXISTS "+accessRefusedFunction {
+			drop = i
+		}
+		if strings.HasPrefix(s, "CREATE FUNCTION "+accessRefusedFunction+"(p_uid BINARY(16)) RETURNS BOOLEAN") {
+			fn, create = s, i
+		}
+	}
+	if drop < 0 || create != drop+1 {
+		t.Fatalf("drop %d, create %d", drop, create)
+	}
+	for _, want := range []string{
+		"SQL SECURITY DEFINER",
+		"SET v_email = (SELECT email FROM fxa.emails WHERE uid = p_uid AND isPrimary LIMIT 1);",
+		"SET v_email = (SELECT email FROM fxa.accounts WHERE uid = p_uid);",
+		"DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;",
+		"SET v_refusal = ffs.signup_refusal(v_email);", "RETURN v_refusal <=> 'policy';",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("no %q: %s", want, fn)
+		}
+	}
+	if strings.Contains(fn, "'full'") {
+		t.Error("'full' refuses an account counted already")
+	}
+	// the primary first, the sign-up's only without one
+	if p, a := strings.Index(fn, "FROM fxa.emails"), strings.Index(fn, "FROM fxa.accounts"); p > a {
+		t.Error("the sign-up email before the primary")
+	}
+	// the only places that judge an account: enable (external) and the sweep, both through it
+	ext := fxaPolicySQLFor(true)
+	for _, name := range []string{"ffs.enable_account", sweepProcedure} {
+		if !strings.Contains(policyStmt(t, ext, name), accessRefusedFunction+"(") {
+			t.Errorf("%s does not ask %s", name, accessRefusedFunction)
 		}
 	}
 }

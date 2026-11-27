@@ -225,6 +225,40 @@ def change_primary(session, address, new):
     assert res.status_code == 200, res.text
 
 
+def test_admin_enable_asks_the_current_primary_email(access, fxa):
+    # the admin UI's Enable and the sweep: one rule, the current primary email, so the admin UI
+    # never enables an account the next sweep disables again
+    admin = Admin()
+    off, off_to, on, on_to = tag("enable-off"), tag("enable-off-to"), tag("enable-on"), tag("enable-on-to")
+    entries = [off, on, on_to]
+    for entry in entries:
+        access.execute(sqltext("INSERT INTO ffs.signup_allowlist (entry) VALUES (:e)"), {"e": entry})
+    try:
+        sessions = {address: signed_up(address) for address in (off, on)}
+        # off: signed up on the list, primary changed to an email off it (the first stays on it)
+        change_primary(sessions[off], off, off_to)
+        # on: primary changed to an email on the list, the first one taken off it
+        change_primary(sessions[on], on, on_to)
+        access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": on})
+        uid = {address: s.uid for address, s in sessions.items()}
+        for address in (off, on):
+            admin.confirm(f"/accounts/{uid[address]}/disable")
+            assert disabled(fxa, address) == 1
+        res = admin.http.post(f"{ADMIN}/accounts/{uid[off]}/enable", data={"csrf": admin.csrf(), "back": f"/users/{uid[off]}"}, timeout=30)
+        assert res.status_code == 200 and failed(res.text) == [ELSEWHERE], failed(res.text)
+        assert disabled(fxa, off) == 1
+        admin.post(f"/accounts/{uid[on]}/enable")
+        assert disabled(fxa, on) == 0
+        # ffs_access finds both by the email they signed up with, which the accounts keep;
+        # the new primary one finds none
+        assert "no such account" in refused(access, f"CALL ffs.disable_account_by_email('{on_to}')")
+        access.execute(sqltext("CALL ffs.disable_account_by_email(:e)"), {"e": on})
+        assert disabled(fxa, on) == 1
+    finally:
+        for entry in entries:
+            access.execute(sqltext("DELETE FROM ffs.signup_allowlist WHERE entry = :e"), {"e": entry})
+
+
 def test_sweep_disables_accounts_off_the_list(access, fxa):
     domain = f"ffs-sweep-{uuid.uuid4().hex[:8]}.example.org"
     moved, moved_to, exact, leaver, gone = tag("moved"), tag("moved-to"), tag("exact"), tag("leaver"), tag("gone")

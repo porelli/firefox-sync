@@ -71,6 +71,27 @@ var fxaPolicySQL = []string{
 	READS SQL DATA
 	SQL SECURITY DEFINER
 	RETURN ffs.signup_refusal(address) IS NULL`,
+	"DROP FUNCTION IF EXISTS " + accessRefusedFunction,
+	// whether the sign-up policy refuses an account as it is now ('policy', not 'full': it is
+	// counted already): its current primary email, as given (the row of fxa.emails: changing it,
+	// set_primary, leaves fxa.accounts, the email of the sign-up, as it was; that one without a
+	// row). The one rule of ADMIN_ACCESS_EXTERNAL's ffs.enable_account and of the sweep, so that
+	// an account the admin UI enables is one the next sweep keeps. In variables: the columns, the
+	// function's value and a literal may have different collations, which MySQL refuses to
+	// compare (1267)
+	`CREATE FUNCTION ` + accessRefusedFunction + `(p_uid BINARY(16)) RETURNS BOOLEAN
+	READS SQL DATA
+	SQL SECURITY DEFINER
+	BEGIN
+		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
+		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
+		SET v_email = (SELECT email FROM fxa.emails WHERE uid = p_uid AND isPrimary LIMIT 1);
+		IF v_email IS NULL THEN
+			SET v_email = (SELECT email FROM fxa.accounts WHERE uid = p_uid);
+		END IF;
+		SET v_refusal = ffs.signup_refusal(v_email);
+		RETURN v_refusal <=> 'policy';
+	END`,
 	// sizes of the accounts databases for the admin UI, which has no access to their
 	// tables: the view runs with the privileges of its definer
 	`CREATE OR REPLACE SQL SECURITY DEFINER VIEW ffs.database_sizes AS
@@ -409,9 +430,12 @@ var fxaPolicySQL = []string{
 			v_codes AS oauth_codes, v_events AS security_events;
 	END`,
 	// The accounts by email, for a system that manages who may sign up (ffs_access,
-	// FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): the account whose
-	// primary email it is (normalized as the accounts do, then byte for byte: no look-alike finds
-	// another account), through the procedures above, so that
+	// FXA_ACCESS_DB_PASSWORD, docs/admin/accounts.md#access-managed-elsewhere): the account that
+	// signed up with the email (fxa.accounts.normalizedEmail: one account per email, and it never
+	// changes, set_primary leaves it as it was; the email the system's list let in), normalized as
+	// the accounts do, then byte for byte: no look-alike finds another account. Not any of its
+	// emails: fxa.accounts and fxa.emails each have a unique key of their own, none over both,
+	// so another account's email could be the same. Through the procedures above, so that
 	// ffs_access needs nothing of fxa.*. Disable signs it out everywhere (ffs.disable_account);
 	// delete takes a disabled account only (ffs.delete_account), not its Sync data. Enable is
 	// its own UPDATE, not ffs.enable_account: with ADMIN_ACCESS_EXTERNAL that one asks the
@@ -493,7 +517,8 @@ const errAccessElsewhere = "not on the access list managed elsewhere: the system
 
 // externalPolicySQL: with ADMIN_ACCESS_EXTERNAL (docs/admin/accounts.md#access-managed-elsewhere)
 // another system decides who has access, and the admin UI's own procedures must not undo it.
-// ffs.enable_account refuses an account whose email the sign-up policy refuses ('policy': not on
+// ffs.enable_account refuses an account whose current primary email the sign-up policy refuses
+// (accessRefusedFunction, the sweep's rule; 'policy': not on
 // the allowlist, FXA_SIGNUPS=closed), as a sign-up of it would be. Not 'full': the account is one
 // of fxa.accounts, which FXA_MAX_ACCOUNTS counts disabled or not, enabling it adds none. Disable
 // stays as it is (incident response), and ffs.enable_account_by_email of that system does not
@@ -506,23 +531,20 @@ var externalPolicySQL = map[string]string{
 	MODIFIES SQL DATA
 	SQL SECURITY DEFINER
 	BEGIN
-		DECLARE v_found INT DEFAULT 0;
-		DECLARE v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
-		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
-		-- the email as given, as the trigger asks
-		SELECT COUNT(*), MAX(email) INTO v_found, v_email FROM fxa.accounts WHERE uid = p_uid;
-		IF v_found = 0 THEN
+		IF NOT EXISTS (SELECT 1 FROM fxa.accounts WHERE uid = p_uid) THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no such account';
 		END IF;
-		-- a variable, as in the trigger: the function's value and a literal may have two
-		-- collations (the database's, the connection's), which MySQL refuses to compare
-		SET v_refusal = ffs.signup_refusal(v_email);
-		IF v_refusal <=> 'policy' THEN
+		-- the sweep's rule (` + accessRefusedFunction + `): its current primary email
+		IF ` + accessRefusedFunction + `(p_uid) THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + errAccessElsewhere + `';
 		END IF;
 		UPDATE fxa.accounts SET disabledAt = NULL WHERE uid = p_uid;
 	END`,
 }
+
+// accessRefusedFunction: the policy's question about an account as it is now, for
+// ADMIN_ACCESS_EXTERNAL's ffs.enable_account and the sweep (fxaPolicySQL)
+const accessRefusedFunction = "ffs.access_refused"
 
 // sweepProcedure: ffs_access's sweep of the accounts its list no longer allows (externalOnlySQL)
 const sweepProcedure = "ffs.disable_accounts_not_allowed"
@@ -542,9 +564,9 @@ const (
 // changes an email or a domain on its list, while an account's primary email can change after its
 // sign-up (the *_by_email procedures match the sign-up's, fxa.accounts.normalizedEmail, which
 // FxA's set_primary leaves as it was). It disables, and signs out everywhere with
-// ffs.disable_account, every enabled account whose current primary email (its row of fxa.emails;
-// the sign-up's without one) the sign-up policy refuses ('policy', as ffs.enable_account above: not 'full'). The allowlist the
-// system already keeps decides, not a list passed in: one source, nothing to parse in SQL.
+// ffs.disable_account, every enabled account the sign-up policy refuses as it is now
+// (accessRefusedFunction: its current primary email; the rule of ffs.enable_account above, so the
+// admin UI never enables one the next sweep disables). The allowlist the system already keeps decides, not a list passed in: one source, nothing to parse in SQL.
 // The brake: counted first, before any change; more than p_max refuses with errSweepBrake and
 // changes nothing, so an allowlist emptied by mistake cannot disable everybody. p_max equal to
 // the count passes, a NULL or negative one is refused. The uids counted are kept (16 bytes each,
@@ -560,18 +582,12 @@ var externalOnlySQL = map[string]string{
 	BEGIN
 		DECLARE v_end BOOLEAN DEFAULT FALSE;
 		DECLARE v_uid BINARY(16) DEFAULT NULL;
-		DECLARE v_signup, v_primary, v_email VARCHAR(255) CHARACTER SET utf8mb4 DEFAULT NULL;
-		DECLARE v_refusal VARCHAR(16) DEFAULT NULL;
 		DECLARE v_found INT DEFAULT 0;
 		DECLARE v_disabled BIGINT DEFAULT NULL;
 		DECLARE v_count, v_i, v_done INT DEFAULT 0;
 		DECLARE v_uids LONGBLOB;
 		DECLARE v_msg VARCHAR(128) DEFAULT NULL;
-		-- the current primary email is the row of fxa.emails: changing it (set_primary) leaves
-		-- fxa.accounts, the email of the sign-up, as it was. As given, as the trigger asks
-		DECLARE c_enabled CURSOR FOR SELECT a.uid, a.email,
-			(SELECT e.email FROM fxa.emails e WHERE e.uid = a.uid AND e.isPrimary LIMIT 1)
-			FROM fxa.accounts a WHERE a.disabledAt IS NULL;
+		DECLARE c_enabled CURSOR FOR SELECT uid FROM fxa.accounts WHERE disabledAt IS NULL;
 		DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_end = TRUE;
 		IF p_max IS NULL OR p_max < 0 THEN
 			SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '` + sweepBrakePrefix + `p_max must be a number, 0 or more';
@@ -581,15 +597,12 @@ var externalOnlySQL = map[string]string{
 		OPEN c_enabled;
 		scan: LOOP
 			SET v_end = FALSE;
-			FETCH c_enabled INTO v_uid, v_signup, v_primary;
+			FETCH c_enabled INTO v_uid;
 			IF v_end THEN
 				LEAVE scan;
 			END IF;
-			-- in variables, as in ffs.enable_account: the columns, the function's value and a
-			-- literal may have different collations, which MySQL refuses to compare (1267)
-			SET v_email = IF(v_primary IS NULL, v_signup, v_primary);
-			SET v_refusal = ffs.signup_refusal(v_email);
-			IF v_refusal <=> 'policy' THEN
+			-- the rule of ffs.enable_account too: its current primary email
+			IF ` + accessRefusedFunction + `(v_uid) THEN
 				SET v_count = v_count + 1;
 				IF v_count <= p_max THEN
 					SET v_uids = CONCAT(v_uids, v_uid);
@@ -606,11 +619,7 @@ var externalOnlySQL = map[string]string{
 			SET v_uid = SUBSTRING(v_uids, v_i * 16 + 1, 16);
 			SET v_i = v_i + 1;
 			SELECT COUNT(*), MAX(disabledAt) INTO v_found, v_disabled FROM fxa.accounts WHERE uid = v_uid;
-			SET v_signup = (SELECT email FROM fxa.accounts WHERE uid = v_uid);
-			SET v_primary = (SELECT email FROM fxa.emails WHERE uid = v_uid AND isPrimary LIMIT 1);
-			SET v_email = IF(v_primary IS NULL, v_signup, v_primary);
-			SET v_refusal = ffs.signup_refusal(v_email);
-			IF v_found = 1 AND v_disabled IS NULL AND v_refusal <=> 'policy' THEN
+			IF v_found = 1 AND v_disabled IS NULL AND ` + accessRefusedFunction + `(v_uid) THEN
 				CALL ffs.disable_account(v_uid);
 				SET v_done = v_done + 1;
 			END IF;
